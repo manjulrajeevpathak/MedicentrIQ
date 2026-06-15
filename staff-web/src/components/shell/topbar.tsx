@@ -80,7 +80,11 @@ export function Topbar({
 
         <ThemeToggle />
 
+        {/* TODO: Restore StatusPill (live/demo indicator + timestamp) once production
+            data source is wired. Remove `live` and `generatedAt` props from Topbar
+            when this is permanently removed.
         <StatusPill live={live} generatedAt={generatedAt} />
+        */}
 
         <div className="h-6 w-px bg-line" />
 
