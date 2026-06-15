@@ -1,0 +1,24 @@
+{
+  "name": "@healthcareos/core-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Core HealthcareOS product API.",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc --outDir dist",
+    "start": "node dist/main.js",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.contract.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pg": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

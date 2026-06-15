@@ -1,0 +1,599 @@
+import type {
+  AiRecommendation,
+  Appointment,
+  AccessRequest,
+  AuditEvent,
+  Branch,
+  DocumentMetadata,
+  FollowUp,
+  Household,
+  Interaction,
+  JourneyEvent,
+  JourneyTask,
+  JourneyTemplate,
+  MobileLinkSession,
+  Organization,
+  PatientJourney,
+  Patient,
+  ServiceApiKey,
+  User,
+  WorkbenchTask
+} from "./types.js";
+
+const now = new Date("2026-06-11T09:00:00.000Z");
+const minutesFromNow = (minutes: number) => new Date(now.getTime() + minutes * 60_000).toISOString();
+const daysFromNow = (days: number) => new Date(now.getTime() + days * 24 * 60 * 60_000).toISOString();
+
+export const DEMO_TENANT_ID = "org_demo_healthcare";
+export const DEMO_BRANCH_IND = "blr-indiranagar";
+export const DEMO_BRANCH_WFD = "blr-whitefield";
+export const DEMO_STAFF_USER_ID = "user_demo_frontdesk";
+export const DEMO_SERVICE_API_KEY = "core_demo_service_key";
+
+export type SeedData = {
+  organizations: Organization[];
+  branches: Branch[];
+  users: User[];
+  apiKeys: ServiceApiKey[];
+  households: Household[];
+  patients: Patient[];
+  interactions: Interaction[];
+  accessRequests: AccessRequest[];
+  appointments: Appointment[];
+  tasks: WorkbenchTask[];
+  sessions: MobileLinkSession[];
+  documents: DocumentMetadata[];
+  followUps: FollowUp[];
+  journeyTemplates: JourneyTemplate[];
+  patientJourneys: PatientJourney[];
+  journeyTasks: JourneyTask[];
+  journeyEvents: JourneyEvent[];
+  recommendations: AiRecommendation[];
+  auditEvents: AuditEvent[];
+};
+
+export const createSeedData = (): SeedData => ({
+  organizations: [
+    {
+      id: DEMO_TENANT_ID,
+      displayName: "Demo Specialty Care Network",
+      status: "active",
+      createdAt: daysFromNow(-120)
+    }
+  ],
+  branches: [
+    {
+      id: DEMO_BRANCH_IND,
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Indiranagar Eye Centre",
+      city: "Bengaluru",
+      status: "active",
+      createdAt: daysFromNow(-120)
+    },
+    {
+      id: DEMO_BRANCH_WFD,
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Whitefield Diabetes Centre",
+      city: "Bengaluru",
+      status: "active",
+      createdAt: daysFromNow(-120)
+    }
+  ],
+  users: [
+    {
+      id: DEMO_STAFF_USER_ID,
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Demo Front Desk",
+      email: "frontdesk.demo@healthcareos.local",
+      roles: ["front_desk", "call_center"],
+      branchIds: [DEMO_BRANCH_IND, DEMO_BRANCH_WFD],
+      status: "active",
+      createdAt: daysFromNow(-90)
+    },
+    {
+      id: "user_demo_coordinator",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Demo Care Coordinator",
+      email: "coordinator.demo@healthcareos.local",
+      roles: ["care_coordinator", "nurse"],
+      branchIds: [DEMO_BRANCH_IND, DEMO_BRANCH_WFD],
+      status: "active",
+      createdAt: daysFromNow(-90)
+    },
+    {
+      id: "user_demo_doctor",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Dr. Demo Rao",
+      email: "doctor.demo@healthcareos.local",
+      roles: ["doctor"],
+      branchIds: [DEMO_BRANCH_IND],
+      status: "active",
+      createdAt: daysFromNow(-90)
+    },
+    {
+      id: "user_demo_admin",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Demo Org Admin",
+      email: "admin.demo@healthcareos.local",
+      roles: ["org_admin", "admin"],
+      branchIds: [DEMO_BRANCH_IND, DEMO_BRANCH_WFD],
+      status: "active",
+      createdAt: daysFromNow(-90)
+    }
+  ],
+  apiKeys: [
+    {
+      id: "api_key_demo_integration",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Demo Integration Gateway",
+      key: DEMO_SERVICE_API_KEY,
+      role: "integration_service",
+      status: "active",
+      createdAt: daysFromNow(-30)
+    },
+    {
+      id: "api_key_demo_datacentriq",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Demo DatacentrIQ Gateway",
+      key: "dciq_demo_service_key",
+      role: "datacentriq_service",
+      status: "active",
+      createdAt: daysFromNow(-30)
+    },
+    {
+      id: "api_key_demo_workflow",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Demo Workflow Worker",
+      key: "workflow_demo_service_key",
+      role: "workflow_service",
+      status: "active",
+      createdAt: daysFromNow(-30)
+    }
+  ],
+  households: [
+    {
+      id: "household_demo_sharma",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Sharma household",
+      primaryPhone: "+919812340001",
+      alternatePhones: ["+919876543210"],
+      preferredLanguage: "Hindi",
+      defaultCaregiverId: "caregiver_demo_001",
+      riskNotes: ["Shared caregiver number", "Elderly post-op patient", "Caregiver-first communication"],
+      members: [
+        {
+          patientId: "patient_demo_001",
+          displayName: "Anita Sharma",
+          relationship: "mother",
+          branchId: DEMO_BRANCH_IND,
+          primaryContact: true
+        }
+      ],
+      caregiverPermissions: [
+        {
+          caregiverId: "caregiver_demo_001",
+          caregiverName: "Rohit Sharma",
+          relationship: "son",
+          phone: "+919812340001",
+          consentStatus: "granted",
+          permissions: ["book", "reschedule", "receive_reminders", "upload_documents"]
+        }
+      ],
+      createdAt: daysFromNow(-20),
+      updatedAt: daysFromNow(-1)
+    },
+    {
+      id: "household_demo_mehta",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Mehta household",
+      primaryPhone: "+919900001111",
+      alternatePhones: [],
+      preferredLanguage: "English",
+      riskNotes: ["Self-managed chronic care follow-up"],
+      members: [
+        {
+          patientId: "patient_demo_002",
+          displayName: "Rahul Mehta",
+          relationship: "self",
+          branchId: DEMO_BRANCH_WFD,
+          primaryContact: true
+        }
+      ],
+      caregiverPermissions: [],
+      createdAt: daysFromNow(-60),
+      updatedAt: daysFromNow(-3)
+    }
+  ],
+  patients: [
+    {
+      id: "patient_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      householdId: "household_demo_sharma",
+      displayName: "Anita Sharma",
+      age: 63,
+      gender: "female",
+      primaryPhone: "+919876543210",
+      preferredLanguage: "Hindi",
+      branchId: DEMO_BRANCH_IND,
+      uhid: "EYE-2026-0001",
+      identityStatus: "verified",
+      tags: ["cataract", "post_op", "high_follow_up_value"],
+      caregivers: [
+        {
+          id: "caregiver_demo_001",
+          displayName: "Rohit Sharma",
+          relationship: "son",
+          phone: "+919812340001",
+          consentStatus: "granted"
+        }
+      ],
+      consent: {
+        communications: "granted",
+        aiProcessing: "granted",
+        documentSharing: "granted"
+      },
+      createdAt: daysFromNow(-20),
+      updatedAt: daysFromNow(-1)
+    },
+    {
+      id: "patient_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      householdId: "household_demo_mehta",
+      displayName: "Rahul Mehta",
+      age: 48,
+      gender: "male",
+      primaryPhone: "+919900001111",
+      preferredLanguage: "English",
+      branchId: DEMO_BRANCH_WFD,
+      uhid: "DIA-2026-0142",
+      identityStatus: "suggested_match",
+      tags: ["diabetes", "hba1c_due"],
+      caregivers: [],
+      consent: {
+        communications: "granted",
+        aiProcessing: "unknown",
+        documentSharing: "unknown"
+      },
+      createdAt: daysFromNow(-60),
+      updatedAt: daysFromNow(-3)
+    }
+  ],
+  interactions: [
+    {
+      id: "interaction_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      channel: "missed_call",
+      direction: "inbound",
+      status: "triaged",
+      subject: "Missed follow-up callback",
+      body: "Missed call from caregiver after post-op reminder.",
+      from: "+919812340001",
+      to: "+918000000001",
+      language: "Hindi",
+      intent: "post_op_follow_up",
+      urgency: "high",
+      receivedAt: minutesFromNow(-90),
+      createdTaskIds: ["task_demo_001"],
+      sourceExternalId: "tel_demo_001"
+    },
+    {
+      id: "interaction_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_002",
+      channel: "whatsapp",
+      direction: "inbound",
+      status: "new",
+      subject: "Asking for diabetes review",
+      body: "Doctor ne HbA1c test bola tha. Appointment kab milega?",
+      from: "+919900001111",
+      to: "+918000000002",
+      language: "Hinglish",
+      intent: "book_follow_up",
+      urgency: "medium",
+      receivedAt: minutesFromNow(-35),
+      createdTaskIds: [],
+      sourceExternalId: "wa_demo_002"
+    }
+  ],
+  accessRequests: [
+    {
+      id: "access_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_002",
+      householdId: "household_demo_mehta",
+      interactionId: "interaction_demo_002",
+      requesterName: "Rahul Mehta",
+      requesterPhone: "+919900001111",
+      requestedSpecialty: "Diabetology",
+      requestedBranchId: DEMO_BRANCH_WFD,
+      reason: "Diabetes review and HbA1c follow-up",
+      priority: "medium",
+      status: "booked",
+      candidateSlot: {
+        doctorName: "Dr. Vikram Iyer",
+        specialty: "Diabetology",
+        branchId: DEMO_BRANCH_WFD,
+        scheduledAt: daysFromNow(3)
+      },
+      appointmentId: "appointment_demo_002",
+      mobileLinkToken: "mls_demo_rahul",
+      notes: ["Seeded from inbound WhatsApp request."],
+      createdAt: minutesFromNow(-35),
+      updatedAt: daysFromNow(-1)
+    }
+  ],
+  appointments: [
+    {
+      id: "appointment_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      doctorName: "Dr. Neha Rao",
+      specialty: "Ophthalmology",
+      branchId: DEMO_BRANCH_IND,
+      scheduledAt: daysFromNow(1),
+      status: "scheduled",
+      reason: "7-day post cataract review",
+      noShowRisk: "high",
+      createdAt: daysFromNow(-2),
+      updatedAt: daysFromNow(-1)
+    },
+    {
+      id: "appointment_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_002",
+      doctorName: "Dr. Vikram Iyer",
+      specialty: "Diabetology",
+      branchId: DEMO_BRANCH_WFD,
+      scheduledAt: daysFromNow(3),
+      status: "scheduled",
+      reason: "Diabetes review and HbA1c follow-up",
+      noShowRisk: "medium",
+      createdAt: daysFromNow(-1),
+      updatedAt: daysFromNow(-1)
+    }
+  ],
+  tasks: [
+    {
+      id: "task_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      interactionId: "interaction_demo_001",
+      appointmentId: "appointment_demo_001",
+      title: "Recover missed cataract follow-up",
+      priority: "high",
+      dueAt: minutesFromNow(30),
+      status: "open",
+      ownerRole: "care_coordinator",
+      reason: "Patient missed the first post-op callback and has high no-show risk.",
+      recommendedAction: "Call caregiver first, then send a Hindi WhatsApp reminder if not reachable.",
+      source: "datacentriq-control-tower",
+      createdAt: minutesFromNow(-80),
+      updatedAt: minutesFromNow(-80)
+    },
+    {
+      id: "task_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_002",
+      interactionId: "interaction_demo_002",
+      title: "Book diabetes review",
+      priority: "medium",
+      dueAt: minutesFromNow(90),
+      status: "open",
+      ownerRole: "front_desk",
+      reason: "Patient asked for follow-up after HbA1c recommendation.",
+      recommendedAction: "Offer next available diabetology slot and request latest HbA1c report.",
+      source: "datacentriq-copilot",
+      createdAt: minutesFromNow(-25),
+      updatedAt: minutesFromNow(-25)
+    }
+  ],
+  sessions: [
+    {
+      token: "mls_demo_anita",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      expiresAt: daysFromNow(7),
+      allowedActions: [
+        "confirm_appointment",
+        "upload_document_metadata",
+        "confirm_follow_up",
+        "reschedule_request",
+        "update_checklist",
+        "update_consent",
+        "opt_out"
+      ],
+      createdAt: daysFromNow(-1)
+    },
+    {
+      token: "mls_demo_rahul",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_002",
+      expiresAt: daysFromNow(7),
+      allowedActions: ["confirm_appointment", "upload_document_metadata", "confirm_follow_up", "opt_out"],
+      createdAt: daysFromNow(-1)
+    }
+  ],
+  documents: [],
+  followUps: [
+    {
+      id: "followup_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      appointmentId: "appointment_demo_001",
+      title: "Post-op symptom check",
+      dueAt: daysFromNow(1),
+      status: "due",
+      instructions: "Confirm vision, pain, redness, drops usage, and travel feasibility.",
+      createdAt: daysFromNow(-1),
+      updatedAt: daysFromNow(-1)
+    },
+    {
+      id: "followup_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_002",
+      appointmentId: "appointment_demo_002",
+      title: "HbA1c report collection",
+      dueAt: daysFromNow(2),
+      status: "due",
+      instructions: "Ask patient to upload latest HbA1c report before appointment.",
+      createdAt: daysFromNow(-1),
+      updatedAt: daysFromNow(-1)
+    }
+  ],
+  journeyTemplates: [
+    {
+      id: "journey_template_post_op_cataract",
+      tenantId: DEMO_TENANT_ID,
+      name: "Cataract post-op journey",
+      condition: "cataract",
+      status: "active",
+      defaultOwnerRole: "care_coordinator",
+      steps: [
+        {
+          key: "day_1_symptom_check",
+          title: "Day 1 symptom check",
+          offsetDays: 1,
+          instructions: "Confirm vision, pain, redness, drops usage, and travel feasibility."
+        },
+        {
+          key: "day_7_review",
+          title: "Day 7 review readiness",
+          offsetDays: 7,
+          instructions: "Confirm appointment attendance and collect any post-op documents."
+        }
+      ],
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-5)
+    }
+  ],
+  patientJourneys: [
+    {
+      id: "journey_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      templateId: "journey_template_post_op_cataract",
+      title: "Anita Sharma cataract post-op",
+      status: "active",
+      ownerRole: "care_coordinator",
+      startedAt: daysFromNow(-1),
+      createdAt: daysFromNow(-1),
+      updatedAt: daysFromNow(-1)
+    }
+  ],
+  journeyTasks: [
+    {
+      id: "journey_task_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      journeyId: "journey_demo_001",
+      patientId: "patient_demo_001",
+      followUpId: "followup_demo_001",
+      title: "Post-op symptom check",
+      status: "pending",
+      dueAt: daysFromNow(1),
+      ownerRole: "care_coordinator",
+      instructions: "Confirm vision, pain, redness, drops usage, and travel feasibility.",
+      createdAt: daysFromNow(-1),
+      updatedAt: daysFromNow(-1)
+    }
+  ],
+  journeyEvents: [
+    {
+      id: "journey_event_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      journeyId: "journey_demo_001",
+      patientId: "patient_demo_001",
+      type: "created",
+      payload: {
+        source: "seed"
+      },
+      occurredAt: daysFromNow(-1)
+    }
+  ],
+  recommendations: [
+    {
+      id: "recommendation_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      source: "control_tower",
+      patientId: "patient_demo_001",
+      interactionId: "interaction_demo_001",
+      appointmentId: "appointment_demo_001",
+      title: "Prioritize clinical escalation",
+      summary: "Recent cataract surgery patient missed callback and needs nurse review.",
+      priority: "urgent",
+      recommendedAction: "Move to nurse queue, call caregiver, and send urgent review message.",
+      confidence: 0.92,
+      traceId: "trace_demo_escalation",
+      status: "received",
+      receivedAt: minutesFromNow(-18),
+      rawPayload: {
+        source: "seed",
+        evidence: "Recent surgery, missed callback, high no-show risk"
+      }
+    },
+    {
+      id: "recommendation_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      source: "copilot",
+      patientId: "patient_demo_002",
+      interactionId: "interaction_demo_002",
+      appointmentId: "appointment_demo_002",
+      title: "Prevent chronic care drop-off",
+      summary: "Diabetes follow-up is due and HbA1c report is not uploaded.",
+      priority: "medium",
+      recommendedAction: "Send HbA1c upload link and schedule callback if not uploaded by 6 PM.",
+      confidence: 0.78,
+      traceId: "trace_demo_hba1c",
+      status: "received",
+      receivedAt: minutesFromNow(-14),
+      rawPayload: {
+        source: "seed",
+        evidence: "Quarterly diabetes journey due, report missing"
+      }
+    }
+  ],
+  auditEvents: []
+});
+
+export const normalizeSeedData = (data: SeedData): SeedData => {
+  const seed = createSeedData();
+  const withTenant = <T extends { tenantId?: string }>(records: T[]) =>
+    records.map((record) => ({
+      ...record,
+      tenantId: record.tenantId ?? DEMO_TENANT_ID
+    }));
+  const normalizeSessions = (records: SeedData["sessions"]) =>
+    withTenant(records).map((session) => {
+      const seeded = seed.sessions.find((entry) => entry.token === session.token);
+      if (!seeded) {
+        return session;
+      }
+      return {
+        ...seeded,
+        ...session,
+        allowedActions: [...new Set([...seeded.allowedActions, ...session.allowedActions])]
+      };
+    });
+
+  return {
+    organizations: data.organizations?.length ? data.organizations : seed.organizations,
+    branches: data.branches?.length ? withTenant(data.branches) : seed.branches,
+    users: data.users?.length ? withTenant(data.users) : seed.users,
+    apiKeys: data.apiKeys?.length ? withTenant(data.apiKeys) : seed.apiKeys,
+    households: data.households?.length ? withTenant(data.households) : seed.households,
+    patients: withTenant(data.patients ?? []),
+    interactions: withTenant(data.interactions ?? []),
+    accessRequests: withTenant(data.accessRequests ?? []),
+    appointments: withTenant(data.appointments ?? []),
+    tasks: withTenant(data.tasks ?? []),
+    sessions: normalizeSessions(data.sessions ?? []),
+    documents: withTenant(data.documents ?? []),
+    followUps: withTenant(data.followUps ?? []),
+    journeyTemplates: withTenant(data.journeyTemplates ?? []),
+    patientJourneys: withTenant(data.patientJourneys ?? []),
+    journeyTasks: withTenant(data.journeyTasks ?? []),
+    journeyEvents: withTenant(data.journeyEvents ?? []),
+    recommendations: data.recommendations?.length ? withTenant(data.recommendations) : seed.recommendations,
+    auditEvents: withTenant(data.auditEvents ?? [])
+  };
+};

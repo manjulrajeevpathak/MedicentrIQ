@@ -1,0 +1,356 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { URL } from "node:url";
+import { ApiError, type CoreService } from "../services/core-service.js";
+import type { Permission, RequestContext } from "../domain/types.js";
+
+type RouteHandler = (context: {
+  request: IncomingMessage;
+  response: ServerResponse;
+  auth: RequestContext;
+  params: Record<string, string>;
+  query: URLSearchParams;
+  body: unknown;
+}) => unknown | Promise<unknown>;
+
+type Route = {
+  method: string;
+  pattern: RegExp;
+  paramNames: string[];
+  permission?: Permission;
+  handler: RouteHandler;
+};
+
+const parseJsonBody = async (request: IncomingMessage): Promise<unknown> => {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return undefined;
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  const raw = Buffer.concat(chunks).toString("utf8");
+  if (!raw.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new ApiError(400, "Request body must be valid JSON");
+  }
+};
+
+const toRecord = (body: unknown): Record<string, unknown> => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return {};
+  }
+  return body as Record<string, unknown>;
+};
+
+const route = (method: string, path: string, permission: Permission | undefined, handler: RouteHandler): Route => {
+  const paramNames: string[] = [];
+  const expression = path
+    .split("/")
+    .map((part) => {
+      if (part.startsWith(":")) {
+        paramNames.push(part.slice(1));
+        return "([^/]+)";
+      }
+      return part;
+    })
+    .join("/");
+
+  return {
+    method,
+    pattern: new RegExp(`^${expression}$`),
+    paramNames,
+    permission,
+    handler
+  };
+};
+
+const createRoutes = (service: CoreService): Route[] => [
+  route("GET", "/health", undefined, () => service.health()),
+  route("GET", "/auth/me", "auth:read_self", ({ auth }) => service.getCurrentUser(auth)),
+  route("GET", "/api/staff/dashboard", "patients:read", ({ auth }) => service.getStaffDashboard(auth)),
+  route("GET", "/audit/events", "audit:read", ({ auth, query }) =>
+    service.listAuditEvents(auth, {
+      patientId: query.get("patientId") ?? undefined,
+      action: query.get("action") ?? undefined
+    })
+  ),
+
+  route("GET", "/patients", "patients:read", ({ auth }) => service.listPatients(auth)),
+  route("POST", "/patients", "patients:create", ({ auth, body }) => service.createPatient(auth, toRecord(body))),
+  route("GET", "/patients/:patientId", "patients:read", ({ auth, params }) => service.getPatient(auth, params.patientId)),
+  route("GET", "/patients/:patientId/timeline", "patients:read", ({ auth, params }) =>
+    service.getPatientTimeline(auth, params.patientId)
+  ),
+  route("GET", "/households", "patients:read", ({ auth }) => service.listHouseholds(auth)),
+  route("GET", "/households/:householdId", "patients:read", ({ auth, params }) => service.getHousehold(auth, params.householdId)),
+  route("POST", "/households/:householdId/caregivers", "identity:resolve", ({ auth, params, body }) =>
+    service.upsertHouseholdCaregiver(auth, params.householdId, toRecord(body))
+  ),
+  route("PATCH", "/patients/:patientId/household", "identity:resolve", ({ auth, params, body }) =>
+    service.updatePatientHousehold(auth, params.patientId, toRecord(body))
+  ),
+  route("GET", "/identity/search", "patients:read", ({ auth, query }) =>
+    service.searchIdentities(auth, {
+      query: query.get("query") ?? undefined,
+      phone: query.get("phone") ?? undefined,
+      uhid: query.get("uhid") ?? undefined,
+      abhaId: query.get("abhaId") ?? undefined
+    })
+  ),
+  route("GET", "/identity/match-candidates", "patients:read", ({ auth, query }) =>
+    service.listIdentityMatchCandidates(auth, {
+      interactionId: query.get("interactionId") ?? undefined,
+      phone: query.get("phone") ?? undefined,
+      patientId: query.get("patientId") ?? undefined
+    })
+  ),
+  route("POST", "/identity/resolve", "identity:resolve", ({ auth, body }) => service.resolveIdentity(auth, toRecord(body))),
+
+  route("GET", "/interactions", "interactions:read", ({ auth, query }) =>
+    service.listInteractions(auth, {
+      status: query.get("status") ?? undefined,
+      patientId: query.get("patientId") ?? undefined
+    })
+  ),
+  route("POST", "/interactions", "interactions:create", ({ auth, body }) => service.createInteraction(auth, toRecord(body))),
+  route("POST", "/interactions/:interactionId/assign", "tasks:update", ({ auth, params, body }) =>
+    service.assignInteraction(auth, params.interactionId, toRecord(body))
+  ),
+  route("GET", "/inbox", "interactions:read", ({ auth }) => service.listInbox(auth)),
+  route("GET", "/inbox/:interactionId", "interactions:read", ({ auth, params }) =>
+    service.getInboxThread(auth, params.interactionId)
+  ),
+  route("PATCH", "/inbox/:interactionId", "interactions:update", ({ auth, params, body }) =>
+    service.updateInboxThread(auth, params.interactionId, toRecord(body))
+  ),
+  route("POST", "/inbox/:interactionId/notes", "interactions:update", ({ auth, params, body }) =>
+    service.addInboxThreadNote(auth, params.interactionId, toRecord(body))
+  ),
+  route("POST", "/inbox/:interactionId/drafts", "interactions:update", ({ auth, params, body }) =>
+    service.upsertInboxThreadDraft(auth, params.interactionId, toRecord(body))
+  ),
+
+  route("GET", "/access/requests", "access_requests:read", ({ auth, query }) =>
+    service.listAccessRequests(auth, {
+      status: query.get("status") ?? undefined,
+      patientId: query.get("patientId") ?? undefined
+    })
+  ),
+  route("POST", "/access/requests", "access_requests:update", ({ auth, body }) =>
+    service.createAccessRequest(auth, toRecord(body))
+  ),
+  route("GET", "/access/requests/:accessRequestId", "access_requests:read", ({ auth, params }) =>
+    service.getAccessRequest(auth, params.accessRequestId)
+  ),
+  route("POST", "/access/requests/:accessRequestId/slot", "access_requests:update", ({ auth, params, body }) =>
+    service.offerAccessSlot(auth, params.accessRequestId, toRecord(body))
+  ),
+  route("POST", "/access/requests/:accessRequestId/book", "access_requests:update", ({ auth, params, body }) =>
+    service.bookAccessRequest(auth, params.accessRequestId, toRecord(body))
+  ),
+  route("POST", "/access/requests/:accessRequestId/mobile-link", "access_requests:update", ({ auth, params, body }) =>
+    service.sendAccessMobileLink(auth, params.accessRequestId, toRecord(body))
+  ),
+  route("POST", "/access/requests/:accessRequestId/confirm", "appointments:confirm", ({ auth, params, body }) =>
+    service.confirmAccessRequest(auth, params.accessRequestId, toRecord(body))
+  ),
+  route("POST", "/access/requests/:accessRequestId/reschedule", "access_requests:update", ({ auth, params, body }) =>
+    service.rescheduleAccessRequest(auth, params.accessRequestId, toRecord(body))
+  ),
+
+  route("GET", "/workbench/tasks", "tasks:read", ({ auth, query }) =>
+    service.listWorkbenchTasks(auth, {
+      status: query.get("status") ?? undefined,
+      ownerRole: query.get("ownerRole") ?? undefined,
+      patientId: query.get("patientId") ?? undefined
+    })
+  ),
+  route("PATCH", "/workbench/tasks/:taskId", "tasks:update", ({ auth, params, body }) =>
+    service.updateTask(auth, params.taskId, toRecord(body))
+  ),
+
+  route("GET", "/appointments", "appointments:read", ({ auth, query }) =>
+    service.listAppointments(auth, {
+      patientId: query.get("patientId") ?? undefined,
+      status: query.get("status") ?? undefined
+    })
+  ),
+  route("POST", "/appointments", "appointments:create", ({ auth, body }) => service.createAppointment(auth, toRecord(body))),
+  route("POST", "/appointments/:appointmentId/confirm", "appointments:confirm", ({ auth, params, body }) =>
+    service.confirmAppointment(auth, params.appointmentId, toRecord(body))
+  ),
+  route("PATCH", "/appointments/:appointmentId", "appointments:create", ({ auth, params, body }) =>
+    service.updateAppointment(auth, params.appointmentId, toRecord(body))
+  ),
+
+  route("GET", "/mobile-link-sessions/:token", "mobile_links:use", ({ auth, params }) =>
+    service.lookupMobileLinkSession(auth, params.token)
+  ),
+  route("POST", "/mobile-link-sessions/:token/appointments/:appointmentId/confirm", "appointments:confirm", ({ auth, params, body }) =>
+    service.confirmAppointment(auth, params.appointmentId, toRecord(body), params.token)
+  ),
+  route("POST", "/mobile-link-sessions/:token/appointments/:appointmentId/reschedule-requests", "mobile_links:use", ({ auth, params, body }) =>
+    service.requestAppointmentReschedule(auth, params.token, params.appointmentId, toRecord(body))
+  ),
+  route("POST", "/mobile-link-sessions/:token/checklist/:itemId", "mobile_links:use", ({ auth, params, body }) =>
+    service.updateMobileChecklist(auth, params.token, params.itemId, toRecord(body))
+  ),
+  route("POST", "/mobile-link-sessions/:token/document-metadata", "documents:create", ({ auth, params, body }) =>
+    service.createDocumentMetadata(auth, params.token, toRecord(body))
+  ),
+  route("POST", "/mobile-link-sessions/:token/follow-ups/:followUpId/confirm", "followups:confirm", ({ auth, params, body }) =>
+    service.confirmFollowUp(auth, params.token, params.followUpId, toRecord(body))
+  ),
+  route("POST", "/mobile-link-sessions/:token/consent", "mobile_links:use", ({ auth, params, body }) =>
+    service.updateMobileConsent(auth, params.token, toRecord(body))
+  ),
+  route("POST", "/mobile-link-sessions/:token/opt-out", "mobile_links:use", ({ auth, params, body }) =>
+    service.optOutMobileLink(auth, params.token, toRecord(body))
+  ),
+
+  route("GET", "/ai/recommendations", "ai_recommendations:read", ({ auth, query }) =>
+    service.listRecommendations(auth, {
+      patientId: query.get("patientId") ?? undefined,
+      status: (query.get("status") as never) ?? undefined
+    })
+  ),
+  route("POST", "/ai/recommendations", "ai_recommendations:create", ({ auth, body }) =>
+    service.intakeAiRecommendation(auth, toRecord(body))
+  ),
+  route("POST", "/ai/recommendations/:recommendationId/actions", "ai_recommendations:create", ({ auth, params, body }) =>
+    service.actOnRecommendation(auth, params.recommendationId, toRecord(body))
+  ),
+
+  route("POST", "/workflows/trigger", "tasks:update", ({ auth, body }) => service.triggerWorkflow(auth, toRecord(body))),
+
+  route("GET", "/journey-templates", "journeys:read", ({ auth }) => service.listJourneyTemplates(auth)),
+  route("POST", "/journey-templates", "journeys:update", ({ auth, body }) => service.createJourneyTemplate(auth, toRecord(body))),
+  route("GET", "/patient-journeys", "journeys:read", ({ auth, query }) =>
+    service.listPatientJourneys(auth, {
+      patientId: query.get("patientId") ?? undefined,
+      status: query.get("status") ?? undefined
+    })
+  ),
+  route("POST", "/patient-journeys", "journeys:update", ({ auth, body }) => service.createPatientJourney(auth, toRecord(body))),
+  route("GET", "/patient-journeys/:journeyId", "journeys:read", ({ auth, params }) =>
+    service.getPatientJourney(auth, params.journeyId)
+  ),
+  route("PATCH", "/patient-journeys/:journeyId", "journeys:update", ({ auth, params, body }) =>
+    service.updatePatientJourney(auth, params.journeyId, toRecord(body))
+  ),
+  route("POST", "/patient-journeys/:journeyId/tasks", "journeys:update", ({ auth, params, body }) =>
+    service.createJourneyTask(auth, params.journeyId, toRecord(body))
+  ),
+  route("POST", "/patient-journeys/:journeyId/events", "journeys:update", ({ auth, params, body }) =>
+    service.createJourneyEvent(auth, params.journeyId, toRecord(body))
+  ),
+  route("PATCH", "/journey-tasks/:taskId", "journeys:update", ({ auth, params, body }) =>
+    service.updateJourneyTask(auth, params.taskId, toRecord(body))
+  ),
+
+  route("POST", "/service-events/integration", "service_events:ingest", ({ auth, body }) =>
+    service.intakeIntegrationEvent(auth, toRecord(body))
+  ),
+  route("POST", "/service-events/workflow-callback", "service_events:ingest", ({ auth, body }) =>
+    service.intakeWorkflowCallback(auth, toRecord(body))
+  )
+];
+
+const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-headers": "content-type,authorization,x-demo-user-id,x-demo-tenant-id,x-service-api-key"
+  });
+  response.end(JSON.stringify(payload, null, 2));
+};
+
+const requestHeaders = (request: IncomingMessage): Record<string, string | undefined> => {
+  const value = (name: string) => {
+    const header = request.headers[name];
+    return Array.isArray(header) ? header[0] : header;
+  };
+
+  return {
+    authorization: value("authorization"),
+    "x-demo-user-id": value("x-demo-user-id"),
+    "x-demo-tenant-id": value("x-demo-tenant-id"),
+    "x-service-api-key": value("x-service-api-key")
+  };
+};
+
+export const createApiServer = (service: CoreService) =>
+  createServer(async (request, response) => {
+    try {
+      if (request.method === "OPTIONS") {
+        sendJson(response, 204, {});
+        return;
+      }
+
+      const url = new URL(request.url ?? "/", "http://localhost");
+      const method = request.method ?? "GET";
+
+      if (method === "GET" && url.pathname === "/health") {
+        sendJson(response, 200, { data: service.health() });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/auth/sessions") {
+        const body = await parseJsonBody(request);
+        sendJson(response, 200, { data: service.createStaffSession(toRecord(body)) });
+        return;
+      }
+
+      const routes = createRoutes(service);
+      const matchedRoute = routes.find((candidate) => candidate.method === method && candidate.pattern.test(url.pathname));
+
+      if (!matchedRoute) {
+        throw new ApiError(404, `Route not found: ${method} ${url.pathname}`);
+      }
+
+      const match = matchedRoute.pattern.exec(url.pathname);
+      const params = Object.fromEntries(
+        matchedRoute.paramNames.map((name, index) => [name, decodeURIComponent(match?.[index + 1] ?? "")])
+      );
+      const mobileLinkToken = url.pathname.startsWith("/mobile-link-sessions/") ? params.token : undefined;
+      const auth = service.authenticate(requestHeaders(request), mobileLinkToken);
+      if (matchedRoute.permission) {
+        service.ensurePermission(auth, matchedRoute.permission);
+      }
+      const body = await parseJsonBody(request);
+      const result = await matchedRoute.handler({
+        request,
+        response,
+        auth,
+        params,
+        query: url.searchParams,
+        body
+      });
+
+      sendJson(response, 200, { data: result });
+    } catch (error) {
+      if (error instanceof ApiError) {
+        sendJson(response, error.statusCode, {
+          error: {
+            message: error.message,
+            details: error.details
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 500, {
+        error: {
+          message: "Unexpected server error"
+        }
+      });
+    }
+  });

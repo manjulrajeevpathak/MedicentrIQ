@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "staff-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "staff-web", "run", "dev"],
+      "port": 3200
+    },
+    {
+      "name": "patient-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "patient-web", "run", "dev"],
+      "port": 3201
+    }
+  ]
+}

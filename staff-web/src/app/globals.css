@@ -1,0 +1,268 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ----------------------------------------------------------------------------
+   HealthcareOS design tokens — "refined clinical"
+   Warm neutral canvas, deep ink, one blue brand family, semantic state colors,
+   and a single AI signature material. Light is default; .dark overrides the
+   same semantic variables so every utility themes automatically.
+   ------------------------------------------------------------------------- */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  /* Brand — refined medical blue */
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe8ff;
+  --color-brand-200: #bdd4ff;
+  --color-brand-300: #92b6ff;
+  --color-brand-400: #5f8ef7;
+  --color-brand-500: #356fe8;
+  --color-brand-600: #2257d2;
+  --color-brand-700: #1c46ad;
+  --color-brand-800: #1d3d8a;
+  --color-brand-900: #1d386f;
+  --color-brand-950: #152347;
+
+  /* Canvas + surfaces — warm bone neutrals, not template blue-grey */
+  --color-canvas: #f7f6f3;
+  --color-surface: #ffffff;
+  --color-surface-muted: #faf9f6;
+  --color-line: #e9e7e1;
+  --color-line-strong: #d9d6cd;
+  --color-fill: #efede8;
+  --color-fill-strong: #e2dfd7;
+
+  /* Ink */
+  --color-ink: #1a1c20;
+  --color-ink-soft: #43484f;
+  --color-ink-muted: #6e747e;
+  --color-ink-faint: #9aa0aa;
+
+  /* Semantic state */
+  --color-critical: #e5484d;
+  --color-critical-soft: #fdecec;
+  --color-high: #dd8615;
+  --color-high-soft: #fdf2e0;
+  --color-medium: #356fe8;
+  --color-medium-soft: #e8f0fe;
+  --color-low: #64748b;
+  --color-low-soft: #eef1f5;
+  --color-good: #18936b;
+  --color-good-soft: #e4f5ee;
+
+  --radius-card: 0.75rem;
+
+  --shadow-card: 0 1px 2px rgba(26, 28, 32, 0.05);
+  --shadow-lift: 0 2px 8px rgba(26, 28, 32, 0.07), 0 8px 24px rgba(26, 28, 32, 0.06);
+  --shadow-pop: 0 8px 32px rgba(26, 28, 32, 0.16);
+}
+
+/* Dark theme — same semantic tokens, re-pointed. */
+.dark {
+  --color-canvas: #0f1115;
+  --color-surface: #15181d;
+  --color-surface-muted: #191d23;
+  --color-line: #262a31;
+  --color-line-strong: #343a44;
+  --color-fill: #232830;
+  --color-fill-strong: #2f3540;
+
+  --color-ink: #eceef1;
+  --color-ink-soft: #c4c9d1;
+  --color-ink-muted: #8d93a0;
+  --color-ink-faint: #686e7e;
+
+  --color-brand-50: #1a2440;
+  --color-brand-100: #20305b;
+  --color-brand-200: #2a3f78;
+  --color-brand-600: #3a6ff0;
+  --color-brand-700: #8fb0fa;
+  --color-brand-900: #dbe8ff;
+
+  --color-critical: #ef5e64;
+  --color-critical-soft: #3a1f22;
+  --color-high: #e9a23b;
+  --color-high-soft: #3a2c14;
+  --color-medium: #6f97f5;
+  --color-medium-soft: #1d2a4a;
+  --color-low: #98a2b3;
+  --color-low-soft: #262b33;
+  --color-good: #2fb888;
+  --color-good-soft: #15302a;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lift: 0 2px 8px rgba(0, 0, 0, 0.45), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scrollbar-gutter: stable;
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    background-color: var(--color-brand-200);
+    color: var(--color-brand-900);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-line-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .surface-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .hover-lift {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lift);
+  }
+
+  /* ---- AI signature material -------------------------------------------
+     The ONE distinctive treatment, reserved exclusively for AI-generated
+     surfaces: a hairline iridescent border over a normal surface. */
+  .ai-surface {
+    position: relative;
+    background-color: var(--color-surface);
+  }
+  .ai-surface::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, #5f8ef7, #8b5cf6 55%, #06b6d4);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    opacity: 0.5;
+  }
+  .dark .ai-surface::before {
+    opacity: 0.65;
+  }
+  .ai-hero {
+    background:
+      radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, #5f8ef7 9%, transparent), transparent 55%),
+      radial-gradient(100% 130% at 100% 100%, color-mix(in srgb, #06b6d4 6%, transparent), transparent 50%),
+      var(--color-surface);
+  }
+  .bg-ai-gradient {
+    background: linear-gradient(135deg, #5f8ef7, #8b5cf6 55%, #06b6d4);
+  }
+
+  .bg-grid {
+    background-image: linear-gradient(rgba(53, 111, 232, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(53, 111, 232, 0.05) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      box-shadow: 0 0 0 0 rgba(53, 111, 232, 0.45);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(53, 111, 232, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(53, 111, 232, 0);
+    }
+  }
+  .animate-pulse-ring {
+    animation: pulse-ring 2.4s infinite;
+  }
+
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-in {
+    animation: rise-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Staggered list/grid entrance — first dozen children cascade in. */
+  .stagger > * {
+    animation: rise-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 35ms; }
+  .stagger > *:nth-child(3) { animation-delay: 70ms; }
+  .stagger > *:nth-child(4) { animation-delay: 105ms; }
+  .stagger > *:nth-child(5) { animation-delay: 140ms; }
+  .stagger > *:nth-child(6) { animation-delay: 175ms; }
+  .stagger > *:nth-child(7) { animation-delay: 210ms; }
+  .stagger > *:nth-child(8) { animation-delay: 245ms; }
+  .stagger > *:nth-child(9) { animation-delay: 280ms; }
+  .stagger > *:nth-child(10) { animation-delay: 315ms; }
+  .stagger > *:nth-child(11) { animation-delay: 350ms; }
+  .stagger > *:nth-child(12) { animation-delay: 385ms; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-in,
+    .stagger > *,
+    .animate-pulse-ring {
+      animation: none;
+    }
+    .hover-lift,
+    .hover-lift:hover {
+      transition: none;
+      transform: none;
+    }
+  }
+}
