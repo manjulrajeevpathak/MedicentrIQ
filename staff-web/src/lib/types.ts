@@ -128,6 +128,8 @@ export type PatientSummary = {
   timeline: TimelineItem[];
 };
 
+export type PatientChannel = "Campaign" | "Referral" | "Walk-in" | "Call" | "WhatsApp" | "Web" | "Other";
+
 export type DirectoryPatient = {
   id: string;
   name: string;
@@ -141,6 +143,8 @@ export type DirectoryPatient = {
   risk: QueuePriority;
   lastSeen: string;
   tags: string[];
+  /** How the patient was acquired / which channel they came through. */
+  source?: PatientChannel;
 };
 
 export type MatchCandidate = {

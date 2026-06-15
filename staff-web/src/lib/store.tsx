@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import type { AccessState, AuditEvent, DashboardData, DirectoryPatient, PatientSummary, PermissionKey, QueuePriority } from "./types";
+import type { AccessState, AuditEvent, DashboardData, DirectoryPatient, PatientChannel, PatientSummary, PermissionKey, QueuePriority } from "./types";
 
 /** Fields collected by the Add-patient form. */
 export type NewPatientInput = {
@@ -13,6 +13,7 @@ export type NewPatientInput = {
   doctor: string;
   language: string;
   risk: QueuePriority;
+  source?: PatientChannel;
 };
 
 /* ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ type AppContextValue = {
 
   /** Adds a patient to the directory + Patient 360 and returns the new id. */
   addPatient: (input: NewPatientInput) => string;
+  /** Bulk-adds patients from a CSV import and returns the count added. */
+  addPatientsBulk: (rows: Array<{ name: string; phone: string; source?: PatientChannel }>) => number;
   resolveTask: (id: string) => void;
   assignConversation: (id: string, owner?: string) => void;
   escalateConversation: (id: string) => void;
@@ -95,7 +98,8 @@ export function AppProvider({ initial, children }: { initial: DashboardData; chi
         condition: input.condition || "Intake pending",
         risk: input.risk,
         lastSeen: "Just now",
-        tags
+        tags,
+        source: input.source
       };
       const profile: PatientSummary = {
         id,
@@ -122,6 +126,36 @@ export function AppProvider({ initial, children }: { initial: DashboardData; chi
         auditEvents: [audit("patient.create", id, `Created patient ${input.name} (${uhid}).`), ...d.auditEvents]
       }));
       return id;
+    },
+    [audit, branch.name]
+  );
+
+  const addPatientsBulk = useCallback(
+    (rows: Array<{ name: string; phone: string; source?: PatientChannel }>): number => {
+      const newPatients: DirectoryPatient[] = rows.map((row) => ({
+        id: `pt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        name: row.name,
+        age: 0,
+        gender: "unknown",
+        phone: row.phone,
+        uhid: `UH-${Math.floor(100000 + Math.random() * 899999)}`,
+        branch: branch.name,
+        doctor: "Unassigned",
+        condition: "Intake pending",
+        risk: "low" as QueuePriority,
+        lastSeen: "Just now",
+        tags: row.source ? [row.source] : [],
+        source: row.source
+      }));
+      setData((d) => ({
+        ...d,
+        directory: [...newPatients, ...d.directory],
+        auditEvents: [
+          audit("patient.create", "bulk", `Bulk imported ${newPatients.length} patients via CSV.`),
+          ...d.auditEvents
+        ]
+      }));
+      return newPatients.length;
     },
     [audit, branch.name]
   );
@@ -275,6 +309,7 @@ export function AppProvider({ initial, children }: { initial: DashboardData; chi
     badges,
     patientIdByName,
     addPatient,
+    addPatientsBulk,
     resolveTask,
     assignConversation,
     escalateConversation,

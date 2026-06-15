@@ -1,8 +1,8 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Menu, Search, Sparkles } from "lucide-react";
+import { LogOut, Menu, Search, Sparkles } from "lucide-react";
 import { findNavItem } from "@/lib/ia";
 import type { DemoAuthContext } from "@/lib/types";
 import { ContextSwitcher } from "./context-switcher";
@@ -24,8 +24,15 @@ export function Topbar({
   onOpenMobileNav: () => void;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const nav = findNavItem(pathname);
   const live = source === "core-api";
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface/85 px-4 backdrop-blur-md sm:px-6 lg:px-8">
@@ -78,6 +85,15 @@ export function Topbar({
         <div className="h-6 w-px bg-line" />
 
         <ContextSwitcher auth={auth} />
+
+        <button
+          onClick={handleLogout}
+          className="flex size-9 items-center justify-center rounded-lg text-ink-soft transition hover:bg-fill"
+          title="Sign out"
+          aria-label="Sign out"
+        >
+          <LogOut className="size-4" />
+        </button>
       </div>
     </header>
   );

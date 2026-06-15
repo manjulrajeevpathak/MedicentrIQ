@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Activity,
   ArrowLeft,
   CheckCircle2,
+  Download,
   Fingerprint,
   Home,
   MessageSquare,
@@ -15,10 +16,12 @@ import {
   ShieldQuestion,
   Sparkles,
   Stethoscope,
+  Upload,
   UserPlus,
   Users
 } from "lucide-react";
-import type { DirectoryPatient, HouseholdContext, PermissionKey, PatientSummary, QueuePriority, TimelineItem } from "@/lib/types";
+import Papa from "papaparse";
+import type { DirectoryPatient, HouseholdContext, PatientChannel, PermissionKey, PatientSummary, QueuePriority, TimelineItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useApp, type NewPatientInput } from "@/lib/store";
 import { submitStaffAction } from "@/lib/core-api";
@@ -33,7 +36,7 @@ import { EmptyState } from "@/components/ui/empty";
 import { ActionButton } from "@/components/common/action-button";
 
 export function PatientsWorkspace({ selectedId: routeId }: { selectedId?: string }) {
-  const { data, addPatient } = useApp();
+  const { data, addPatient, addPatientsBulk } = useApp();
   const { toast } = useToast();
   const router = useRouter();
   const { activeUser } = data.authContext;
@@ -42,6 +45,7 @@ export function PatientsWorkspace({ selectedId: routeId }: { selectedId?: string
 
   const [query, setQuery] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const handleCreatePatient = async (input: NewPatientInput) => {
     const result = await submitStaffAction(
@@ -90,9 +94,14 @@ export function PatientsWorkspace({ selectedId: routeId }: { selectedId?: string
             title="Patient directory"
             subtitle={`${data.directory.length} records · this branch`}
             action={
-              <Button size="sm" onClick={() => setComposerOpen(true)} disabled={!canCreate} title={!canCreate ? "patients:create permission required." : undefined}>
-                <UserPlus className="size-3.5" /> Add patient
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} disabled={!canCreate} title={!canCreate ? "patients:create permission required." : undefined}>
+                  <Upload className="size-3.5" /> Import CSV
+                </Button>
+                <Button size="sm" onClick={() => setComposerOpen(true)} disabled={!canCreate} title={!canCreate ? "patients:create permission required." : undefined}>
+                  <UserPlus className="size-3.5" /> Add patient
+                </Button>
+              </div>
             }
           />
           <div className="mt-3 flex items-center gap-2 rounded-xl border border-line bg-surface-muted px-3 focus-within:border-brand-300 focus-within:ring-2 focus-within:ring-brand-100">
@@ -154,6 +163,15 @@ export function PatientsWorkspace({ selectedId: routeId }: { selectedId?: string
       )}
     </div>
     <AddPatientModal open={composerOpen} onClose={() => setComposerOpen(false)} onCreate={handleCreatePatient} branchName={data.authContext.branch.name} />
+    <BulkImportModal
+      open={importOpen}
+      onClose={() => setImportOpen(false)}
+      onImport={(rows) => {
+        const count = addPatientsBulk(rows);
+        toast(`Imported ${count} patient${count !== 1 ? "s" : ""}.`, "success");
+        setImportOpen(false);
+      }}
+    />
     </>
   );
 }
@@ -511,5 +529,156 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="mb-1.5 block text-xs font-medium text-ink-soft">{label}</span>
       {children}
     </label>
+  );
+}
+
+type ParsedRow = { name: string; phone: string; channel: PatientChannel };
+type FailedRow = { row: number; name: string; reason: string };
+
+const VALID_CHANNELS: PatientChannel[] = ["Campaign", "Referral", "Walk-in", "Call", "WhatsApp", "Web", "Other"];
+
+function BulkImportModal({
+  open,
+  onClose,
+  onImport
+}: {
+  open: boolean;
+  onClose: () => void;
+  onImport: (rows: Array<{ name: string; phone: string; source: PatientChannel }>) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [parsed, setParsed] = useState<ParsedRow[]>([]);
+  const [failed, setFailed] = useState<FailedRow[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [fileName, setFileName] = useState("");
+
+  const reset = useCallback(() => {
+    setParsed([]);
+    setFailed([]);
+    setFileName("");
+    if (fileRef.current) fileRef.current.value = "";
+  }, []);
+
+  const handleFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (result) => {
+        const rows: ParsedRow[] = [];
+        const errs: FailedRow[] = [];
+        result.data.forEach((row, i) => {
+          const rowNum = i + 2;
+          const name = (row["name"] || row["Name"] || "").trim();
+          const phone = (row["phone"] || row["Phone"] || row["phone number"] || row["Phone Number"] || "").toString().trim();
+          const rawChannel = (row["channel"] || row["Channel"] || "Other").trim() as PatientChannel;
+          const channel: PatientChannel = VALID_CHANNELS.includes(rawChannel) ? rawChannel : "Other";
+          if (!name) { errs.push({ row: rowNum, name: "(blank)", reason: "Name is required" }); return; }
+          if (!phone || !/^[+\d\s\-()]{7,15}$/.test(phone)) { errs.push({ row: rowNum, name, reason: `Invalid phone: "${phone}"` }); return; }
+          rows.push({ name, phone, channel });
+        });
+        setParsed(rows);
+        setFailed(errs);
+      }
+    });
+  };
+
+  const submit = async () => {
+    if (!parsed.length) return;
+    setUploading(true);
+    try {
+      await fetch("/api/patients/bulk-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: parsed })
+      });
+      onImport(parsed.map((r) => ({ name: r.name, phone: r.phone, source: r.channel })));
+    } finally {
+      setUploading(false);
+      reset();
+    }
+  };
+
+  const downloadTemplate = () => {
+    const csv = "name,phone,channel\nAnita Sharma,+919900000001,Referral\nRohit Kumar,+919900000002,Campaign\n";
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "patients_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Modal open={open} onClose={() => { reset(); onClose(); }} labelledBy="bulk-import-title" className="max-w-xl">
+      <div className="border-b border-line p-5">
+        <h2 id="bulk-import-title" className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink">
+          <Upload className="size-4 text-brand-600" /> Import patients from CSV
+        </h2>
+        <p className="mt-1 text-xs text-ink-muted">Required columns: <code className="text-ink">name</code>, <code className="text-ink">phone</code>, <code className="text-ink">channel</code></p>
+      </div>
+      <div className="space-y-4 p-5">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex h-10 items-center gap-2 rounded-xl border border-dashed border-line bg-surface-muted px-4 text-sm text-ink-soft hover:border-brand-300 hover:text-brand-700"
+          >
+            <Upload className="size-4" /> {fileName || "Choose CSV file"}
+          </button>
+          <input ref={fileRef} type="file" accept=".csv,.txt" className="sr-only" onChange={handleFile} />
+          <button
+            onClick={downloadTemplate}
+            className="ml-auto flex items-center gap-1.5 text-xs text-brand-700 hover:underline"
+          >
+            <Download className="size-3.5" /> Download template
+          </button>
+        </div>
+
+        {parsed.length > 0 && (
+          <div>
+            <p className="mb-2 text-xs font-medium text-ink-soft">Preview — {parsed.length} valid rows{failed.length ? `, ${failed.length} errors` : ""}</p>
+            <div className="max-h-48 overflow-y-auto rounded-xl border border-line">
+              <table className="w-full text-xs">
+                <thead className="border-b border-line bg-surface-muted">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-ink-muted">Name</th>
+                    <th className="px-3 py-2 text-left font-medium text-ink-muted">Phone</th>
+                    <th className="px-3 py-2 text-left font-medium text-ink-muted">Channel</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {parsed.slice(0, 20).map((row, i) => (
+                    <tr key={i} className="hover:bg-surface-muted">
+                      <td className="px-3 py-2 text-ink">{row.name}</td>
+                      <td className="px-3 py-2 text-ink-soft">{row.phone}</td>
+                      <td className="px-3 py-2"><span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700">{row.channel}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {failed.length > 0 && (
+          <div className="rounded-xl bg-red-50 p-3 text-xs">
+            <p className="font-semibold text-red-700">{failed.length} row{failed.length !== 1 ? "s" : ""} skipped</p>
+            <ul className="mt-1 space-y-0.5 text-red-600">
+              {failed.slice(0, 5).map((f) => <li key={f.row}>Row {f.row}: {f.name} — {f.reason}</li>)}
+              {failed.length > 5 && <li>…and {failed.length - 5} more</li>}
+            </ul>
+          </div>
+        )}
+      </div>
+      <div className="flex justify-end gap-2 border-t border-line p-4">
+        <Button variant="outline" onClick={() => { reset(); onClose(); }}>Cancel</Button>
+        <Button onClick={submit} disabled={parsed.length === 0 || uploading}>
+          <Upload className="size-3.5" /> {uploading ? "Importing…" : `Import ${parsed.length || ""} patients`}
+        </Button>
+      </div>
+    </Modal>
   );
 }
