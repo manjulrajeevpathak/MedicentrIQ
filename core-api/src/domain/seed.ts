@@ -3,6 +3,7 @@ import type {
   AccessRequest,
   AuditEvent,
   Branch,
+  Doctor,
   DocumentMetadata,
   FollowUp,
   Household,
@@ -63,6 +64,7 @@ export type SeedData = {
   patients: Patient[];
   interactions: Interaction[];
   accessRequests: AccessRequest[];
+  doctors: Doctor[];
   appointments: Appointment[];
   tasks: WorkbenchTask[];
   sessions: MobileLinkSession[];
@@ -363,6 +365,43 @@ export const createSeedData = (): SeedData => ({
       updatedAt: daysFromNow(-1)
     }
   ],
+  doctors: [
+    {
+      id: "doctor_demo_kavita",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Dr. Kavita Menon",
+      specialty: "Ophthalmology",
+      branchIds: [DEMO_BRANCH_IND],
+      phone: "+919812300001",
+      slotMinutes: 15,
+      weeklyHours: {
+        1: [{ start: "09:00", end: "13:00" }, { start: "16:00", end: "20:00" }],
+        2: [{ start: "09:00", end: "13:00" }, { start: "16:00", end: "20:00" }],
+        3: [{ start: "09:00", end: "13:00" }, { start: "16:00", end: "20:00" }],
+        4: [{ start: "09:00", end: "13:00" }, { start: "16:00", end: "20:00" }],
+        5: [{ start: "09:00", end: "13:00" }, { start: "16:00", end: "20:00" }]
+      },
+      status: "active",
+      userId: "user_demo_doctor",
+      createdAt: daysFromNow(-90)
+    },
+    {
+      id: "doctor_demo_vikram",
+      tenantId: DEMO_TENANT_ID,
+      displayName: "Dr. Vikram Iyer",
+      specialty: "Diabetology",
+      branchIds: [DEMO_BRANCH_WFD],
+      phone: "+919812300002",
+      slotMinutes: 20,
+      weeklyHours: {
+        1: [{ start: "10:00", end: "14:00" }],
+        3: [{ start: "10:00", end: "14:00" }],
+        5: [{ start: "10:00", end: "14:00" }]
+      },
+      status: "active",
+      createdAt: daysFromNow(-90)
+    }
+  ],
   appointments: [
     {
       id: "appointment_demo_001",
@@ -587,6 +626,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     patients: withTenant(data.patients ?? []),
     interactions: withTenant(data.interactions ?? []),
     accessRequests: withTenant(data.accessRequests ?? []),
+    doctors: data.doctors?.length ? withTenant(data.doctors) : seed.doctors,
     appointments: withTenant(data.appointments ?? []),
     tasks: withTenant(data.tasks ?? []),
     sessions: normalizeSessions(data.sessions ?? []),

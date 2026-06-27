@@ -22,6 +22,7 @@ const collections: CollectionName[] = [
   "patients",
   "interactions",
   "accessRequests",
+  "doctors",
   "appointments",
   "tasks",
   "sessions",

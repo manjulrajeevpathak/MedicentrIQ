@@ -227,13 +227,31 @@ const createRoutes = (service: CoreService): Route[] => [
     service.updateTask(auth, params.taskId, toRecord(body))
   ),
 
+  // Doctors & scheduling.
+  route("GET", "/doctors", "doctors:read", ({ auth }) => service.listDoctors(auth), "access"),
+  route("POST", "/doctors", "doctors:manage", ({ auth, body }) => service.createDoctor(auth, toRecord(body)), "access"),
+  route("PATCH", "/doctors/:doctorId", "doctors:manage", ({ auth, params, body }) =>
+    service.updateDoctor(auth, params.doctorId, toRecord(body)), "access"
+  ),
+  route("PUT", "/doctors/:doctorId/schedule", "doctors:manage", ({ auth, params, body }) =>
+    service.setDoctorSchedule(auth, params.doctorId, toRecord(body)), "access"
+  ),
+  route("GET", "/doctors/:doctorId/slots", "appointments:read", ({ auth, params, query }) =>
+    service.getDoctorSlots(auth, params.doctorId, query.get("date") ?? "", query.get("branchId") ?? undefined), "access"
+  ),
+  route("POST", "/scheduling/send-confirmations", "doctors:manage", ({ auth }) =>
+    service.sendDoctorConfirmations(auth), "access"
+  ),
+
   route("GET", "/appointments", "appointments:read", ({ auth, query }) =>
     service.listAppointments(auth, {
       patientId: query.get("patientId") ?? undefined,
-      status: query.get("status") ?? undefined
+      status: query.get("status") ?? undefined,
+      doctorId: query.get("doctorId") ?? undefined,
+      date: query.get("date") ?? undefined
     }), "access"
   ),
-  route("POST", "/appointments", "appointments:create", ({ auth, body }) => service.createAppointment(auth, toRecord(body))),
+  route("POST", "/appointments", "appointments:create", ({ auth, body }) => service.bookAppointment(auth, toRecord(body)), "access"),
   route("POST", "/appointments/:appointmentId/confirm", "appointments:confirm", ({ auth, params, body }) =>
     service.confirmAppointment(auth, params.appointmentId, toRecord(body))
   ),
@@ -305,7 +323,7 @@ const sendJson = (response: ServerResponse, statusCode: number, payload: unknown
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,PUT,OPTIONS",
     "access-control-allow-headers": "content-type,authorization,x-demo-user-id,x-demo-tenant-id,x-service-api-key,x-platform-api-key"
   });
   response.end(JSON.stringify(payload, null, 2));

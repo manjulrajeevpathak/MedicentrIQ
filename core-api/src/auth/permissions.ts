@@ -13,6 +13,7 @@ const allStaffPermissions: Permission[] = [
   "appointments:read",
   "appointments:create",
   "appointments:confirm",
+  "doctors:read",
   "access_requests:read",
   "access_requests:update",
   "documents:create",
@@ -37,6 +38,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "appointments:read",
     "appointments:create",
     "appointments:confirm",
+    "doctors:read",
     "access_requests:read",
     "access_requests:update",
     "documents:create",
@@ -57,6 +59,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "appointments:read",
     "appointments:create",
     "appointments:confirm",
+    "doctors:read",
     "access_requests:read",
     "access_requests:update"
   ],
@@ -72,6 +75,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "tasks:update",
     "appointments:read",
     "appointments:confirm",
+    "doctors:read",
     "documents:create",
     "followups:confirm",
     "access_requests:read",
@@ -89,6 +93,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "tasks:read",
     "tasks:update",
     "appointments:read",
+    "doctors:read",
     "documents:create",
     "followups:confirm",
     "journeys:read",
@@ -104,8 +109,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "followups:confirm",
     "journeys:read"
   ],
-  admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage"],
-  org_admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage"],
+  admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage", "doctors:manage"],
+  org_admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage", "doctors:manage"],
   integration_service: [
     "auth:read_self",
     "service_events:ingest"

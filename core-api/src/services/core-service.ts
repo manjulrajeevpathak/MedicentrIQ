@@ -18,6 +18,8 @@ import type {
   Appointment,
   AuditEvent,
   Caregiver,
+  Doctor,
+  DoctorWorkingWindow,
   DocumentMetadata,
   FollowUp,
   Household,
@@ -105,8 +107,18 @@ type CreateInteractionInput = {
 
 type CreateAppointmentInput = {
   patientId?: string;
+  doctorId?: string;
   doctorName?: string;
   specialty?: string;
+  branchId?: string;
+  scheduledAt?: string;
+  durationMinutes?: number;
+  reason?: string;
+};
+
+type BookAppointmentInput = {
+  patientId?: string;
+  doctorId?: string;
   branchId?: string;
   scheduledAt?: string;
   reason?: string;
@@ -322,6 +334,73 @@ const ensureString = (value: unknown, field: string): string => {
     throw new ApiError(400, `Missing required field: ${field}`);
   }
   return value.trim();
+};
+
+const sanitizeSlotMinutes = (value: unknown): number => {
+  const minutes = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return 15;
+  }
+  return Math.min(Math.max(Math.round(minutes), 5), 240);
+};
+
+/** "HH:MM" → minutes-since-midnight, or null if malformed/out of range. */
+const parseHhMm = (value: unknown): number | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+};
+
+const isoFromDateAndMinutes = (dateISO: string, minutes: number): string => {
+  const base = new Date(`${dateISO}T00:00:00.000Z`).getTime();
+  return new Date(base + minutes * 60_000).toISOString();
+};
+
+/** Coerce arbitrary input into a validated weekly availability map (day 0..6 → windows). */
+const sanitizeWeeklyHours = (value: unknown): Record<number, DoctorWorkingWindow[]> => {
+  const result: Record<number, DoctorWorkingWindow[]> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return result;
+  }
+  for (const [rawDay, rawWindows] of Object.entries(value as Record<string, unknown>)) {
+    const day = Number.parseInt(rawDay, 10);
+    if (!Number.isInteger(day) || day < 0 || day > 6 || !Array.isArray(rawWindows)) {
+      continue;
+    }
+    const windows: DoctorWorkingWindow[] = [];
+    for (const entry of rawWindows) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const candidate = entry as Record<string, unknown>;
+      const start = parseHhMm(candidate.start);
+      const end = parseHhMm(candidate.end);
+      if (start === null || end === null || end <= start) {
+        continue;
+      }
+      windows.push({
+        start: typeof candidate.start === "string" ? candidate.start.trim() : "",
+        end: typeof candidate.end === "string" ? candidate.end.trim() : "",
+        ...(typeof candidate.branchId === "string" && candidate.branchId.length > 0
+          ? { branchId: candidate.branchId }
+          : {})
+      });
+    }
+    if (windows.length > 0) {
+      result[day] = windows;
+    }
+  }
+  return result;
 };
 
 const validModuleKeys = new Set<ModuleKey>(MODULE_CATALOG.map((module) => module.key));
@@ -2413,7 +2492,283 @@ export class CoreService {
     return request;
   }
 
-  listAppointments(context: RequestContext, filters: { patientId?: string; status?: string }) {
+  // ---- Doctors & scheduling -------------------------------------------------
+
+  /** Doctors visible to the actor (tenant-scoped; staff also limited to their branches). */
+  listDoctors(context: RequestContext) {
+    return this.data.doctors
+      .filter((entry) => entry.tenantId === context.tenantId)
+      .filter((entry) => entry.branchIds.some((branchId) => this.canAccessBranch(context, branchId)))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  private ensureVisibleDoctor(context: RequestContext, doctorId: string): Doctor {
+    const doctor = this.data.doctors.find((entry) => entry.id === doctorId && entry.tenantId === context.tenantId);
+    if (!doctor) {
+      throw new ApiError(404, `Doctor not found: ${doctorId}`);
+    }
+    if (!doctor.branchIds.some((branchId) => this.canAccessBranch(context, branchId))) {
+      throw new ApiError(403, "Doctor is outside the actor's branch scope");
+    }
+    return doctor;
+  }
+
+  async createDoctor(context: RequestContext, input: Record<string, unknown>) {
+    const displayName = ensureString(input.displayName, "displayName");
+    const branchIds = Array.isArray(input.branchIds)
+      ? input.branchIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
+    if (branchIds.length === 0) {
+      throw new ApiError(400, "At least one branchId is required.");
+    }
+    for (const branchId of branchIds) {
+      if (!this.data.branches.some((entry) => entry.id === branchId && entry.tenantId === context.tenantId)) {
+        throw new ApiError(400, `Unknown branch: ${branchId}`);
+      }
+      if (!this.canAccessBranch(context, branchId)) {
+        throw new ApiError(403, "Cannot create a doctor outside the actor's branch scope");
+      }
+    }
+    const timestamp = nowIso();
+    const doctor: Doctor = {
+      id: createId("doctor"),
+      tenantId: context.tenantId,
+      displayName,
+      specialty: typeof input.specialty === "string" ? input.specialty : undefined,
+      branchIds,
+      phone: typeof input.phone === "string" ? input.phone : undefined,
+      slotMinutes: sanitizeSlotMinutes(input.slotMinutes),
+      weeklyHours: sanitizeWeeklyHours(input.weeklyHours),
+      status: input.status === "inactive" ? "inactive" : "active",
+      userId: typeof input.userId === "string" ? input.userId : undefined,
+      createdAt: timestamp
+    };
+    this.data.doctors.push(doctor);
+    await this.persistence.saveCollection("doctors", this.data.doctors);
+    await this.audit(context, "doctor.create", "doctor", doctor.id, undefined, { displayName: doctor.displayName });
+    return doctor;
+  }
+
+  async updateDoctor(context: RequestContext, doctorId: string, input: Record<string, unknown>) {
+    const doctor = this.ensureVisibleDoctor(context, doctorId);
+    if (typeof input.displayName === "string" && input.displayName.trim().length > 0) {
+      doctor.displayName = input.displayName.trim();
+    }
+    if (typeof input.specialty === "string") {
+      doctor.specialty = input.specialty;
+    }
+    if (typeof input.phone === "string") {
+      doctor.phone = input.phone;
+    }
+    if (typeof input.userId === "string") {
+      doctor.userId = input.userId;
+    }
+    if (input.status === "active" || input.status === "inactive") {
+      doctor.status = input.status;
+    }
+    if (Array.isArray(input.branchIds)) {
+      const branchIds = input.branchIds.filter((value): value is string => typeof value === "string" && value.length > 0);
+      if (branchIds.length === 0) {
+        throw new ApiError(400, "At least one branchId is required.");
+      }
+      for (const branchId of branchIds) {
+        if (!this.data.branches.some((entry) => entry.id === branchId && entry.tenantId === context.tenantId)) {
+          throw new ApiError(400, `Unknown branch: ${branchId}`);
+        }
+        if (!this.canAccessBranch(context, branchId)) {
+          throw new ApiError(403, "Cannot assign a doctor outside the actor's branch scope");
+        }
+      }
+      doctor.branchIds = branchIds;
+    }
+    if (input.slotMinutes !== undefined) {
+      doctor.slotMinutes = sanitizeSlotMinutes(input.slotMinutes);
+    }
+    if (input.weeklyHours !== undefined) {
+      doctor.weeklyHours = sanitizeWeeklyHours(input.weeklyHours);
+    }
+    await this.persistence.saveCollection("doctors", this.data.doctors);
+    await this.audit(context, "doctor.update", "doctor", doctor.id, undefined, { status: doctor.status });
+    return doctor;
+  }
+
+  async setDoctorSchedule(context: RequestContext, doctorId: string, input: Record<string, unknown>) {
+    const doctor = this.ensureVisibleDoctor(context, doctorId);
+    doctor.weeklyHours = sanitizeWeeklyHours(input.weeklyHours);
+    if (input.slotMinutes !== undefined) {
+      doctor.slotMinutes = sanitizeSlotMinutes(input.slotMinutes);
+    }
+    await this.persistence.saveCollection("doctors", this.data.doctors);
+    await this.audit(context, "doctor.update", "doctor", doctor.id, undefined, { schedule: "updated" });
+    return doctor;
+  }
+
+  /**
+   * Available slots for a doctor on a calendar date. Expands each weekday window into
+   * slotMinutes increments and drops any slot already taken by a non-cancelled
+   * appointment for that doctor on that date. Slots are ISO timestamps (UTC).
+   */
+  getDoctorSlots(context: RequestContext, doctorId: string, dateISO: string, branchId?: string) {
+    const doctor = this.ensureVisibleDoctor(context, doctorId);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO)) {
+      throw new ApiError(400, "date must be in YYYY-MM-DD format");
+    }
+    if (doctor.status !== "active") {
+      return [] as Array<{ start: string; end: string }>;
+    }
+    const weekday = new Date(`${dateISO}T00:00:00.000Z`).getUTCDay();
+    const windows = (doctor.weeklyHours?.[weekday] ?? []).filter(
+      (window) => !branchId || !window.branchId || window.branchId === branchId
+    );
+    const slotMinutes = doctor.slotMinutes > 0 ? doctor.slotMinutes : 15;
+
+    // Start times already booked (non-cancelled) for this doctor on this date.
+    const taken = new Set(
+      this.data.appointments
+        .filter(
+          (entry) =>
+            entry.tenantId === context.tenantId &&
+            entry.doctorId === doctor.id &&
+            entry.status !== "cancelled" &&
+            entry.scheduledAt.slice(0, 10) === dateISO
+        )
+        .map((entry) => entry.scheduledAt)
+    );
+
+    const slots: Array<{ start: string; end: string }> = [];
+    for (const window of windows) {
+      const startMin = parseHhMm(window.start);
+      const endMin = parseHhMm(window.end);
+      if (startMin === null || endMin === null || endMin <= startMin) {
+        continue;
+      }
+      for (let minute = startMin; minute + slotMinutes <= endMin; minute += slotMinutes) {
+        const start = isoFromDateAndMinutes(dateISO, minute);
+        if (taken.has(start)) {
+          continue;
+        }
+        slots.push({ start, end: isoFromDateAndMinutes(dateISO, minute + slotMinutes) });
+      }
+    }
+    return slots;
+  }
+
+  /**
+   * Book an appointment against a doctor's computed schedule. Validates the requested
+   * slot falls inside the doctor's weekly availability AND is not already taken (409).
+   */
+  async bookAppointment(context: RequestContext, input: BookAppointmentInput) {
+    const patientId = ensureString(input.patientId, "patientId");
+    this.ensureKnownPatient(context, patientId);
+    const doctorId = ensureString(input.doctorId, "doctorId");
+    const doctor = this.ensureVisibleDoctor(context, doctorId);
+    if (doctor.status !== "active") {
+      throw new ApiError(400, "Doctor is not accepting appointments");
+    }
+    const scheduledAt = ensureString(input.scheduledAt, "scheduledAt");
+    const parsed = new Date(scheduledAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new ApiError(400, "scheduledAt must be a valid ISO timestamp");
+    }
+    const normalizedStart = parsed.toISOString();
+    const dateISO = normalizedStart.slice(0, 10);
+    const branchId = input.branchId ?? doctor.branchIds[0];
+    if (!doctor.branchIds.includes(branchId)) {
+      throw new ApiError(400, "Doctor does not work at the requested branch");
+    }
+
+    const slots = this.getDoctorSlots(context, doctorId, dateISO, branchId);
+    const matching = slots.find((slot) => slot.start === normalizedStart);
+    if (!matching) {
+      // Distinguish "already taken" (409) from "outside schedule" (400).
+      const taken = this.data.appointments.some(
+        (entry) =>
+          entry.tenantId === context.tenantId &&
+          entry.doctorId === doctor.id &&
+          entry.status !== "cancelled" &&
+          entry.scheduledAt === normalizedStart
+      );
+      if (taken) {
+        throw new ApiError(409, "That slot is already booked");
+      }
+      throw new ApiError(400, "Requested time is outside the doctor's available schedule");
+    }
+
+    return this.createAppointment(context, {
+      patientId,
+      doctorId: doctor.id,
+      doctorName: doctor.displayName,
+      specialty: doctor.specialty ?? "Consultation",
+      branchId,
+      scheduledAt: normalizedStart,
+      durationMinutes: doctor.slotMinutes,
+      reason: input.reason
+    });
+  }
+
+  /**
+   * Manual trigger: WhatsApp each active doctor (with a phone) a summary of their
+   * upcoming appointments (today/tomorrow) asking them to confirm or flag changes.
+   * The recurring daily automation is deferred to workflow-worker.
+   */
+  async sendDoctorConfirmations(context: RequestContext) {
+    const today = nowIso().slice(0, 10);
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60_000).toISOString().slice(0, 10);
+    let sent = 0;
+    let failed = 0;
+    const results: Array<{ doctorId: string; ok: boolean; error?: string }> = [];
+
+    for (const doctor of this.listDoctors(context)) {
+      if (doctor.status !== "active") {
+        continue;
+      }
+      if (!doctor.phone) {
+        failed += 1;
+        results.push({ doctorId: doctor.id, ok: false, error: "Doctor has no phone on file" });
+        continue;
+      }
+      const upcoming = this.data.appointments
+        .filter(
+          (entry) =>
+            entry.tenantId === context.tenantId &&
+            entry.doctorId === doctor.id &&
+            ["scheduled", "confirmed", "rescheduled"].includes(entry.status) &&
+            (entry.scheduledAt.slice(0, 10) === today || entry.scheduledAt.slice(0, 10) === tomorrow)
+        )
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+
+      const lines = upcoming.map((entry) => {
+        const when = entry.scheduledAt.replace("T", " ").slice(0, 16);
+        return `• ${when} — ${patientName(this.data.patients, entry.patientId)} (${entry.reason})`;
+      });
+      const body =
+        `Hello ${doctor.displayName}, here are your upcoming appointments:\n` +
+        (lines.length > 0 ? lines.join("\n") : "No appointments scheduled for today/tomorrow.") +
+        `\n\nReply CONFIRM to confirm this schedule, or let us know of any changes.`;
+
+      try {
+        const result = await this.sendMessage(context, { to: doctor.phone, type: "transactional", body });
+        if (result.ok) {
+          sent += 1;
+          results.push({ doctorId: doctor.id, ok: true });
+        } else {
+          failed += 1;
+          results.push({ doctorId: doctor.id, ok: false, error: result.error });
+        }
+      } catch (error) {
+        failed += 1;
+        results.push({ doctorId: doctor.id, ok: false, error: error instanceof Error ? error.message : "send failed" });
+      }
+    }
+
+    await this.audit(context, "scheduling.send_confirmations", "doctor", undefined, undefined, { sent, failed });
+    return { sent, failed, results };
+  }
+
+  listAppointments(
+    context: RequestContext,
+    filters: { patientId?: string; status?: string; doctorId?: string; date?: string }
+  ) {
     return this.data.appointments.filter((entry) => {
       if (entry.tenantId !== context.tenantId) {
         return false;
@@ -2425,6 +2780,12 @@ export class CoreService {
         return false;
       }
       if (filters.status && entry.status !== filters.status) {
+        return false;
+      }
+      if (filters.doctorId && entry.doctorId !== filters.doctorId) {
+        return false;
+      }
+      if (filters.date && entry.scheduledAt.slice(0, 10) !== filters.date) {
         return false;
       }
       return true;
@@ -2439,10 +2800,12 @@ export class CoreService {
       id: createId("appointment"),
       tenantId: context.tenantId,
       patientId,
+      ...(input.doctorId ? { doctorId: input.doctorId } : {}),
       doctorName: ensureString(input.doctorName, "doctorName"),
       specialty: ensureString(input.specialty, "specialty"),
       branchId: input.branchId ?? patient.branchId,
       scheduledAt: ensureString(input.scheduledAt, "scheduledAt"),
+      ...(typeof input.durationMinutes === "number" ? { durationMinutes: input.durationMinutes } : {}),
       status: "scheduled",
       reason: input.reason ?? "Consultation",
       noShowRisk: "medium",

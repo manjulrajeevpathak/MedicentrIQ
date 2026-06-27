@@ -8,6 +8,7 @@ export type InteractionStatus = "new" | "triaged" | "linked" | "closed";
 export type TaskStatus = "open" | "in_progress" | "completed" | "cancelled";
 export type TaskSource = "healthcareos";
 export type AppointmentStatus = "scheduled" | "confirmed" | "rescheduled" | "completed" | "no_show" | "cancelled";
+export type DoctorStatus = "active" | "inactive";
 export type FollowUpStatus = "due" | "confirmed" | "completed" | "missed" | "escalated";
 export type AccessRequestStatus =
   | "requested"
@@ -48,6 +49,8 @@ export type Permission =
   | "appointments:read"
   | "appointments:create"
   | "appointments:confirm"
+  | "doctors:read"
+  | "doctors:manage"
   | "access_requests:read"
   | "access_requests:update"
   | "mobile_links:use"
@@ -233,6 +236,10 @@ export type AuditEvent = {
     | "appointment.create"
     | "appointment.update"
     | "appointment.confirm"
+    | "appointment.book"
+    | "doctor.create"
+    | "doctor.update"
+    | "scheduling.send_confirmations"
     | "document_metadata.create"
     | "follow_up.confirm"
     | "journey.create"
@@ -404,14 +411,41 @@ export type AccessRequest = {
   updatedAt: string;
 };
 
+/** A working window within a doctor's weekly availability. Times are local "HH:MM". */
+export type DoctorWorkingWindow = {
+  start: string;
+  end: string;
+  branchId?: string;
+};
+
+export type Doctor = {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  specialty?: string;
+  branchIds: string[];
+  /** Phone used for the daily confirm message. */
+  phone?: string;
+  /** Slot granularity in minutes (default 15). */
+  slotMinutes: number;
+  /** Weekly availability: day 0=Sun..6=Sat → working windows. */
+  weeklyHours: Record<number, DoctorWorkingWindow[]>;
+  status: DoctorStatus;
+  /** Optional link to a staff User record. */
+  userId?: string;
+  createdAt: string;
+};
+
 export type Appointment = {
   id: string;
   tenantId: string;
   patientId: string;
+  doctorId?: string;
   doctorName: string;
   specialty: string;
   branchId: string;
   scheduledAt: string;
+  durationMinutes?: number;
   status: AppointmentStatus;
   reason: string;
   confirmation?: {
