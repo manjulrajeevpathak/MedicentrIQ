@@ -192,6 +192,17 @@ export function updateTenant(
   });
 }
 
+export function updateTenantUser(
+  tenantId: string,
+  userId: string,
+  patch: { displayName?: string; email?: string; status?: string }
+): Promise<{ user: { id: string; displayName: string; email?: string; status: string } }> {
+  return request(`/platform/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch)
+  });
+}
+
 /* ----------------------------------------------------------------------------
    Auth — per-admin login, OTP verification, forced password change.
 

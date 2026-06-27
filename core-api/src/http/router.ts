@@ -120,6 +120,9 @@ const createRoutes = (service: CoreService): Route[] => [
   route("PATCH", "/platform/tenants/:tenantId", "platform:entitlements:manage", ({ auth, params, body }) =>
     service.updateTenant(auth, params.tenantId, toRecord(body))
   ),
+  route("PATCH", "/platform/tenants/:tenantId/users/:userId", "platform:tenants:manage", ({ auth, params, body }) =>
+    service.updateTenantUser(auth, params.tenantId, params.userId, toRecord(body))
+  ),
 
   route("GET", "/patients", "patients:read", ({ auth }) => service.listPatients(auth), "patients"),
   route("POST", "/patients", "patients:create", ({ auth, body }) => service.createPatient(auth, toRecord(body))),

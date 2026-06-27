@@ -6,6 +6,7 @@ import {
   createTenant,
   getTenant,
   updateTenant,
+  updateTenantUser,
   type CreateTenantInput,
   type PlanId,
   type TenantStatus,
@@ -14,6 +15,28 @@ import {
 
 export interface CreateTenantState {
   error?: string;
+}
+
+export interface AdminEditState {
+  error?: string;
+  ok?: boolean;
+}
+
+export async function updateTenantAdminAction(
+  tenantId: string,
+  userId: string,
+  _prev: AdminEditState,
+  form: FormData
+): Promise<AdminEditState> {
+  const displayName = String(form.get("displayName") ?? "").trim();
+  const email = String(form.get("email") ?? "").trim();
+  try {
+    await updateTenantUser(tenantId, userId, { displayName, email });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not update admin." };
+  }
+  revalidatePath(`/tenants/${tenantId}`);
+  return { ok: true };
 }
 
 function str(form: FormData, key: string): string {

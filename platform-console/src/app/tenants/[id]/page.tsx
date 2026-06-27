@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Building2,
   GitBranch,
-  Mail,
   Users
 } from "lucide-react";
 import {
@@ -15,7 +14,7 @@ import {
   type TenantDetail
 } from "@/lib/platform-api";
 import { PlanBadge, StatusBadge, TypeBadge } from "@/components/badges";
-import { ModuleToggle, PlanSelector, StatusControl } from "./controls";
+import { AdminEditor, ModuleToggle, PlanSelector, StatusControl } from "./controls";
 
 export const dynamic = "force-dynamic";
 
@@ -151,16 +150,10 @@ export default async function TenantDetailPage({
           {tenant.admins.length === 0 ? (
             <p className="text-sm text-[var(--color-ink-muted)]">No admins.</p>
           ) : (
-            <ul className="space-y-2.5">
+            <ul className="space-y-3">
               {tenant.admins.map((a) => (
                 <li key={a.id} className="text-sm">
-                  <div className="font-medium text-[var(--color-ink)]">
-                    {a.displayName}
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 text-xs text-[var(--color-ink-muted)]">
-                    <Mail className="h-3 w-3" />
-                    {a.email}
-                  </div>
+                  <AdminEditor tenantId={tenant.id} admin={a} />
                 </li>
               ))}
             </ul>

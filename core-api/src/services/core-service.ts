@@ -1075,6 +1075,20 @@ export class CoreService {
     return { user: this.userView(user), tempPassword };
   }
 
+  /** Validate + apply an email change to a principal (global uniqueness). No-op if unchanged. */
+  private applyEmailChange(principal: User | PlatformAdmin, rawEmail: unknown) {
+    if (typeof rawEmail !== "string") return;
+    const email = rawEmail.trim().toLowerCase();
+    if (!email || email === (principal.email ?? "").toLowerCase()) return;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new ApiError(400, "A valid email is required.");
+    }
+    if (this.emailTaken(email)) {
+      throw new ApiError(409, "That email is already in use.");
+    }
+    principal.email = email;
+  }
+
   async updateUser(context: RequestContext, userId: string, input: Record<string, unknown>) {
     const user = this.data.users.find((entry) => entry.id === userId && entry.tenantId === context.tenantId);
     if (!user) {
@@ -1083,6 +1097,7 @@ export class CoreService {
     if (typeof input.displayName === "string" && input.displayName.trim()) {
       user.displayName = input.displayName.trim();
     }
+    this.applyEmailChange(user, input.email);
     if (input.roles !== undefined) {
       user.roles = this.sanitizeStaffRoles(input.roles);
     }
@@ -1100,6 +1115,27 @@ export class CoreService {
     }
     await this.persistence.saveCollection("users", this.data.users);
     await this.audit(context, "user.update", "user", user.id, undefined, { status: user.status, roles: user.roles });
+    return { user: this.userView(user) };
+  }
+
+  /** Platform superadmin: edit a user inside any tenant (name/email/status). */
+  async updateTenantUser(context: RequestContext, tenantId: string, userId: string, input: Record<string, unknown>) {
+    const user = this.data.users.find((entry) => entry.id === userId && entry.tenantId === tenantId);
+    if (!user) {
+      throw new ApiError(404, `User not found in tenant ${tenantId}: ${userId}`);
+    }
+    if (typeof input.displayName === "string" && input.displayName.trim()) {
+      user.displayName = input.displayName.trim();
+    }
+    this.applyEmailChange(user, input.email);
+    if (input.status === "active" || input.status === "inactive" || input.status === "suspended") {
+      if (input.status !== "active" && user.status === "active") {
+        user.credentialVersion += 1;
+      }
+      user.status = input.status;
+    }
+    await this.persistence.saveCollection("users", this.data.users);
+    await this.audit(context, "user.update", "user", user.id, undefined, { byPlatform: context.actorId, email: user.email });
     return { user: this.userView(user) };
   }
 

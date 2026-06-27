@@ -1,11 +1,13 @@
 "use client";
 
-import { useTransition } from "react";
-import { Check, Loader2, Lock } from "lucide-react";
+import { useActionState, useState, useTransition } from "react";
+import { Check, Loader2, Lock, Mail, Pencil } from "lucide-react";
 import {
   setModuleOverrideAction,
   setPlanAction,
-  setStatusAction
+  setStatusAction,
+  updateTenantAdminAction,
+  type AdminEditState
 } from "@/app/actions";
 import { cn } from "@/lib/utils";
 import type {
@@ -13,6 +15,77 @@ import type {
   PlanId,
   TenantStatus
 } from "@/lib/platform-api";
+
+export function AdminEditor({
+  tenantId,
+  admin
+}: {
+  tenantId: string;
+  admin: { id: string; displayName: string; email?: string };
+}) {
+  const [editing, setEditing] = useState(false);
+  const [state, formAction, pending] = useActionState<AdminEditState, FormData>(
+    updateTenantAdminAction.bind(null, tenantId, admin.id),
+    {}
+  );
+
+  if (!editing && !state.ok) {
+    return (
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-medium text-[var(--color-ink)]">{admin.displayName}</div>
+          <div className="inline-flex items-center gap-1.5 text-xs text-[var(--color-ink-muted)]">
+            <Mail className="h-3 w-3" />
+            {admin.email}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="inline-flex items-center gap-1 rounded-md border border-[var(--color-line)] px-2 py-1 text-xs text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]"
+        >
+          <Pencil className="h-3 w-3" /> Edit
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form action={formAction} className="space-y-2">
+      <input
+        name="displayName"
+        defaultValue={admin.displayName}
+        placeholder="Name"
+        className="w-full rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-sm"
+      />
+      <input
+        name="email"
+        type="email"
+        defaultValue={admin.email}
+        placeholder="admin@hospital.org"
+        className="w-full rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-sm"
+      />
+      {state.error ? <p className="text-xs text-[var(--color-danger,#dc2626)]">{state.error}</p> : null}
+      {state.ok ? <p className="text-xs text-[var(--color-good,#16a34a)]">Saved.</p> : null}
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={pending}
+          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-brand-600)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+        >
+          {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="rounded-md px-2 py-1.5 text-xs text-[var(--color-ink-muted)] hover:underline"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
 
 interface PlanOption {
   id: PlanId;
