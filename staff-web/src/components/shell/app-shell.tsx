@@ -5,13 +5,12 @@ import { useApp } from "@/lib/store";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { CommandPalette } from "./command-palette";
-import { CopilotDock } from "./copilot-dock";
 
 export type SearchEntry = {
   id: string;
   title: string;
   subtitle: string;
-  kind: "patient" | "conversation" | "access" | "journey" | "ai";
+  kind: "patient" | "conversation" | "access" | "journey";
   href: string;
 };
 
@@ -20,7 +19,6 @@ export type NavBadges = {
   inbox: number;
   access: number;
   continuity: number;
-  ai: number;
 };
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -28,10 +26,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
-  const [copilotOpen, setCopilotOpen] = useState(false);
 
   const openCommand = useCallback(() => setCommandOpen(true), []);
-  const openCopilot = useCallback(() => setCopilotOpen(true), []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -39,13 +35,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         event.preventDefault();
         setCommandOpen((open) => !open);
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
-        event.preventDefault();
-        setCopilotOpen((open) => !open);
-      }
       if (event.key === "Escape") {
         setMobileOpen(false);
-        setCopilotOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -57,8 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ...data.directory.map((p) => ({ id: p.id, title: p.name, subtitle: `${p.condition} · ${p.uhid}`, kind: "patient" as const, href: `/patients/${p.id}` })),
       ...data.inbox.map((c) => ({ id: c.id, title: c.patient, subtitle: `${c.intent} · ${c.channel}`, kind: "conversation" as const, href: `/inbox?sel=${c.id}` })),
       ...data.accessQueue.map((a) => ({ id: a.id, title: a.patient, subtitle: `${a.request} · ${a.branch}`, kind: "access" as const, href: `/access?sel=${a.id}` })),
-      ...data.followUpQueue.map((f) => ({ id: f.id, title: f.patient, subtitle: `${f.journey} · ${f.stage}`, kind: "journey" as const, href: `/continuity?sel=${f.id}` })),
-      ...data.recommendations.map((r) => ({ id: r.id, title: r.title, subtitle: `${r.patient} · ${r.confidence}% confidence`, kind: "ai" as const, href: `/ai-workbench?sel=${r.id}` }))
+      ...data.followUpQueue.map((f) => ({ id: f.id, title: f.patient, subtitle: `${f.journey} · ${f.stage}`, kind: "journey" as const, href: `/continuity?sel=${f.id}` }))
     ],
     [data]
   );
@@ -87,7 +77,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           source={data.source}
           generatedAt={data.generatedAt}
           onOpenCommand={openCommand}
-          onOpenCopilot={openCopilot}
           onOpenMobileNav={() => setMobileOpen(true)}
         />
         <main id="main" className="flex-1 overflow-y-auto px-4 pb-12 pt-5 sm:px-6 lg:px-8">
@@ -96,7 +85,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
 
       <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} entries={searchIndex} />
-      <CopilotDock open={copilotOpen} onClose={() => setCopilotOpen(false)} userName={data.authContext.activeUser.name} />
     </div>
   );
 }

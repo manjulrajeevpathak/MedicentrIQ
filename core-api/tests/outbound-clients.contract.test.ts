@@ -1,43 +1,17 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { after, before, describe, it } from "node:test";
-import { DatacentrIQClient, WorkflowClient } from "../src/integrations/outbound-clients.js";
+import { WorkflowClient } from "../src/integrations/outbound-clients.js";
 import type { RequestContext } from "../src/domain/types.js";
 
 type JsonObject = Record<string, unknown>;
 
 describe("core-api outbound service client contracts", () => {
-  let dciqServer: Server;
   let workflowServer: Server;
-  let dciqUrl: string;
   let workflowUrl: string;
-  const dciqRequests: Array<{ headers: JsonObject; body: JsonObject; url?: string }> = [];
   const workflowRequests: Array<{ headers: JsonObject; body: JsonObject; url?: string }> = [];
 
   before(async () => {
-    dciqServer = createServer(async (request, response) => {
-      if (request.method === "POST" && request.url === "/v1/copilot/extract-intent") {
-        const body = await readJson(request);
-        dciqRequests.push({ headers: request.headers as JsonObject, body, url: request.url });
-        response.writeHead(request.headers["x-service-api-key"] === "dciq_contract_key" ? 200 : 401, {
-          "content-type": "application/json"
-        });
-        response.end(
-          JSON.stringify({
-            confidence: 0.81,
-            data: {
-              primaryIntent: "book_follow_up",
-              urgency: "medium"
-            },
-            decisionTrace: {
-              traceId: "trace-contract-001"
-            }
-          })
-        );
-        return;
-      }
-      response.writeHead(404).end();
-    });
     workflowServer = createServer(async (request, response) => {
       if (request.method === "POST" && request.url === "/workflows/post-visit-follow-up/start") {
         const body = await readJson(request);
@@ -50,30 +24,11 @@ describe("core-api outbound service client contracts", () => {
       }
       response.writeHead(404).end();
     });
-    dciqUrl = await listen(dciqServer);
     workflowUrl = await listen(workflowServer);
   });
 
   after(async () => {
-    await Promise.all([close(dciqServer), close(workflowServer)]);
-  });
-
-  it("calls DatacentrIQ Copilot with service key and maps primaryIntent", async () => {
-    const client = new DatacentrIQClient(dciqUrl, "dciq_contract_key");
-    const result = await client.extractIntent({
-      subject: "Need appointment",
-      body: "Doctor asked me to book follow-up",
-      channel: "whatsapp",
-      language: "English"
-    });
-
-    assert.equal(result?.intent, "book_follow_up");
-    assert.equal(result?.urgency, "medium");
-    assert.equal(result?.confidence, 0.81);
-    assert.equal(result?.traceId, "trace-contract-001");
-    assert.equal(dciqRequests.length, 1);
-    assert.equal(dciqRequests[0].headers["x-service-api-key"], "dciq_contract_key");
-    assert.match(String(dciqRequests[0].body.text), /Need appointment/);
+    await close(workflowServer);
   });
 
   it("starts workflow-worker runs with top-level routing fields and context payload", async () => {

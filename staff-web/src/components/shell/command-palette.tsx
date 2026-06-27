@@ -8,7 +8,6 @@ import {
   CornerDownLeft,
   Inbox,
   Search,
-  Sparkles,
   User,
   type LucideIcon
 } from "lucide-react";
@@ -20,8 +19,7 @@ const kindMeta: Record<SearchEntry["kind"], { label: string; icon: LucideIcon }>
   patient: { label: "Patients", icon: User },
   conversation: { label: "Conversations", icon: Inbox },
   access: { label: "Access requests", icon: CalendarClock },
-  journey: { label: "Journeys", icon: Activity },
-  ai: { label: "AI recommendations", icon: Sparkles }
+  journey: { label: "Journeys", icon: Activity }
 };
 
 type Row =

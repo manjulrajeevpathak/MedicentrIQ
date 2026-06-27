@@ -5,14 +5,11 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
-  ArrowUpRight,
-  Bot,
   Inbox as InboxIcon,
   Languages,
   Link2,
   NotebookPen,
   Send,
-  Sparkles,
   UserRound,
   UserPlus
 } from "lucide-react";
@@ -25,7 +22,6 @@ import { useSelection } from "@/lib/use-selection";
 import { Panel, SectionTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
-import { Meter } from "@/components/ui/meter";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import { EmptyState } from "@/components/ui/empty";
@@ -271,11 +267,6 @@ export function InboxWorkspace() {
                 />
                 <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
                   <div className="flex items-center gap-2">
-                    {selected.aiDraft ? (
-                      <Button variant="secondary" size="sm" onClick={() => setDraft(selected.aiDraft ?? "")}>
-                        <Sparkles className="size-3.5" /> Use AI draft
-                      </Button>
-                    ) : null}
                     <ActionButton
                       action={{ type: "add_inbox_note", id: selected.id, note: draft || undefined }}
                       userId={activeUser.id}
@@ -308,33 +299,6 @@ export function InboxWorkspace() {
               </div>
             </div>
           </Panel>
-
-          {/* AI triage */}
-          {selected.aiSummary ? (
-            <Panel className="ai-surface">
-              <SectionTitle
-                icon={<Bot className="size-4" />}
-                title="DatacentrIQ triage"
-                action={
-                  selected.confidence ? (
-                    <div className="flex w-32 items-center gap-2">
-                      <Meter value={selected.confidence} showLabel />
-                    </div>
-                  ) : null
-                }
-              />
-              <p className="mt-3 text-sm leading-relaxed text-ink-soft">{selected.aiSummary}</p>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                <Badge tone="brand" dot>
-                  Intent: {selected.intent}
-                </Badge>
-                {selected.language ? <Badge tone="neutral">Language: {selected.language}</Badge> : null}
-                <Badge tone="outline">
-                  <ArrowUpRight className="size-3" /> Routed by Copilot
-                </Badge>
-              </div>
-            </Panel>
-          ) : null}
         </div>
       ) : (
         <Panel>
@@ -346,11 +310,11 @@ export function InboxWorkspace() {
 }
 
 function Message({ message }: { message: NonNullable<InboxItem["thread"]>[number] }) {
-  if (message.author === "ai" || message.internal) {
+  if (message.internal) {
     return (
       <div className="rounded-xl border border-dashed border-brand-200 bg-brand-50/50 p-3">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-brand-700">
-          {message.author === "ai" ? <Sparkles className="size-3" /> : <NotebookPen className="size-3" />}
+          <NotebookPen className="size-3" />
           {message.authorName}
           <span className="font-normal text-ink-faint">· {message.at} · internal</span>
         </div>

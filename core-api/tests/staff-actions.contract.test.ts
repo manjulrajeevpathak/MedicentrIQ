@@ -19,7 +19,6 @@ describe("staff operations contract", () => {
   before(async () => {
     delete process.env.DATABASE_URL;
     delete process.env.WORKFLOW_WORKER_URL;
-    delete process.env.DATACENTRIQ_GATEWAY_URL;
     const service = await createCoreService();
     server = createApiServer(service);
     baseUrl = await listen(server);
@@ -46,10 +45,8 @@ describe("staff operations contract", () => {
     assert.ok(Array.isArray(dashboard.inbox));
     assert.ok(Array.isArray(dashboard.accessQueue));
     assert.ok(Array.isArray(dashboard.followUpQueue));
-    assert.ok(Array.isArray(dashboard.recommendations));
     assert.ok((dashboard.workbench as unknown[]).length > 0);
     assert.ok((dashboard.inbox as unknown[]).length > 0);
-    assert.ok((dashboard.recommendations as unknown[]).length > 0);
   });
 
   it("completes a workbench task and records the state transition", async () => {
@@ -97,24 +94,6 @@ describe("staff operations contract", () => {
     assert.equal((appointment.confirmation as JsonObject).confirmedBy, "staff");
   });
 
-  it("accepts an AI recommendation and converts it into a workbench task", async () => {
-    const dashboard = await request("GET", "/api/staff/dashboard");
-    const recommendationId = firstId(dashboard.recommendations);
-
-    const result = await request("POST", `/ai/recommendations/${recommendationId}/actions`, {
-      action: "accept",
-      createTask: true,
-      ownerRole: "care_coordinator"
-    });
-
-    const recommendation = result.recommendation as JsonObject;
-    const task = result.task as JsonObject;
-    assert.equal(recommendation.id, recommendationId);
-    assert.equal(recommendation.status, "converted_to_task");
-    assert.equal(task.status, "open");
-    assert.equal(task.ownerRole, "care_coordinator");
-  });
-
   it("triggers a follow-up workflow through the staff contract", async () => {
     const dashboard = await request("GET", "/api/staff/dashboard");
     const followUpId = firstId(dashboard.followUpQueue);
@@ -136,7 +115,6 @@ describe("staff operations contract", () => {
     assert.ok(actions.includes("task.update"));
     assert.ok(actions.includes("interaction.assign"));
     assert.ok(actions.includes("appointment.confirm"));
-    assert.ok(actions.includes("ai_recommendation.update"));
     assert.ok(actions.includes("workflow.trigger"));
   });
 

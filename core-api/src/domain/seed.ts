@@ -1,5 +1,4 @@
 import type {
-  AiRecommendation,
   Appointment,
   AccessRequest,
   AuditEvent,
@@ -48,7 +47,6 @@ export type SeedData = {
   patientJourneys: PatientJourney[];
   journeyTasks: JourneyTask[];
   journeyEvents: JourneyEvent[];
-  recommendations: AiRecommendation[];
   auditEvents: AuditEvent[];
 };
 
@@ -128,15 +126,6 @@ export const createSeedData = (): SeedData => ({
       displayName: "Demo Integration Gateway",
       key: DEMO_SERVICE_API_KEY,
       role: "integration_service",
-      status: "active",
-      createdAt: daysFromNow(-30)
-    },
-    {
-      id: "api_key_demo_datacentriq",
-      tenantId: DEMO_TENANT_ID,
-      displayName: "Demo DatacentrIQ Gateway",
-      key: "dciq_demo_service_key",
-      role: "datacentriq_service",
       status: "active",
       createdAt: daysFromNow(-30)
     },
@@ -367,7 +356,7 @@ export const createSeedData = (): SeedData => ({
       ownerRole: "care_coordinator",
       reason: "Patient missed the first post-op callback and has high no-show risk.",
       recommendedAction: "Call caregiver first, then send a Hindi WhatsApp reminder if not reachable.",
-      source: "datacentriq-control-tower",
+      source: "healthcareos",
       createdAt: minutesFromNow(-80),
       updatedAt: minutesFromNow(-80)
     },
@@ -383,7 +372,7 @@ export const createSeedData = (): SeedData => ({
       ownerRole: "front_desk",
       reason: "Patient asked for follow-up after HbA1c recommendation.",
       recommendedAction: "Offer next available diabetology slot and request latest HbA1c report.",
-      source: "datacentriq-copilot",
+      source: "healthcareos",
       createdAt: minutesFromNow(-25),
       updatedAt: minutesFromNow(-25)
     }
@@ -510,48 +499,6 @@ export const createSeedData = (): SeedData => ({
       occurredAt: daysFromNow(-1)
     }
   ],
-  recommendations: [
-    {
-      id: "recommendation_demo_001",
-      tenantId: DEMO_TENANT_ID,
-      source: "control_tower",
-      patientId: "patient_demo_001",
-      interactionId: "interaction_demo_001",
-      appointmentId: "appointment_demo_001",
-      title: "Prioritize clinical escalation",
-      summary: "Recent cataract surgery patient missed callback and needs nurse review.",
-      priority: "urgent",
-      recommendedAction: "Move to nurse queue, call caregiver, and send urgent review message.",
-      confidence: 0.92,
-      traceId: "trace_demo_escalation",
-      status: "received",
-      receivedAt: minutesFromNow(-18),
-      rawPayload: {
-        source: "seed",
-        evidence: "Recent surgery, missed callback, high no-show risk"
-      }
-    },
-    {
-      id: "recommendation_demo_002",
-      tenantId: DEMO_TENANT_ID,
-      source: "copilot",
-      patientId: "patient_demo_002",
-      interactionId: "interaction_demo_002",
-      appointmentId: "appointment_demo_002",
-      title: "Prevent chronic care drop-off",
-      summary: "Diabetes follow-up is due and HbA1c report is not uploaded.",
-      priority: "medium",
-      recommendedAction: "Send HbA1c upload link and schedule callback if not uploaded by 6 PM.",
-      confidence: 0.78,
-      traceId: "trace_demo_hba1c",
-      status: "received",
-      receivedAt: minutesFromNow(-14),
-      rawPayload: {
-        source: "seed",
-        evidence: "Quarterly diabetes journey due, report missing"
-      }
-    }
-  ],
   auditEvents: []
 });
 
@@ -593,7 +540,6 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     patientJourneys: withTenant(data.patientJourneys ?? []),
     journeyTasks: withTenant(data.journeyTasks ?? []),
     journeyEvents: withTenant(data.journeyEvents ?? []),
-    recommendations: data.recommendations?.length ? withTenant(data.recommendations) : seed.recommendations,
     auditEvents: withTenant(data.auditEvents ?? [])
   };
 };

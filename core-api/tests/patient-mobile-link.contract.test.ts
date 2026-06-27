@@ -268,12 +268,6 @@ class TestPersistence implements CorePersistence {
 }
 
 const testOutboundClients: OutboundClients = {
-  datacentriq: {
-    isConfigured: false,
-    async extractIntent() {
-      return undefined;
-    }
-  },
   workflow: {
     isConfigured: false,
     async startWorkflow() {

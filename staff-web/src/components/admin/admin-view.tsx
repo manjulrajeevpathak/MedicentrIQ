@@ -30,7 +30,6 @@ const permissionColumns: { key: PermissionKey; label: string }[] = [
   { key: "journey:manage", label: "Journeys" },
   { key: "campaign:send", label: "Campaigns" },
   { key: "analytics:view", label: "Analytics" },
-  { key: "ai:approve", label: "AI approval" },
   { key: "audit:view", label: "Audit" }
 ];
 
@@ -46,7 +45,6 @@ const roleLabel: Record<string, string> = {
 
 const serviceKeys = [
   { name: "integration-gateway", scope: "ingestion events", lastUsed: "2m ago", status: "active" as const },
-  { name: "datacentriq-gateway", scope: "intelligence calls", lastUsed: "just now", status: "active" as const },
   { name: "workflow-worker", scope: "workflow callbacks", lastUsed: "11m ago", status: "active" as const }
 ];
 
@@ -186,10 +184,10 @@ export function AdminView() {
           <SectionTitle icon={<ScrollText className="size-4" />} title="Governance policy" />
           <ul className="mt-3 space-y-2.5">
             {[
-              ["Audit retention", "All staff, AI and service actions retained & queryable"],
+              ["Audit retention", "All staff and service actions retained & queryable"],
               ["Consent enforcement", "Caregiver-first consent gates patient-facing messages"],
-              ["AI message approval", "Outbound patient messages held for human sign-off"],
-              ["Reversibility", "Identity merges and AI acceptances are reversible"]
+              ["Message approval", "Outbound patient messages held for human sign-off"],
+              ["Reversibility", "Identity merges are reversible"]
             ].map(([title, detail]) => (
               <li key={title} className="flex items-start gap-2.5 rounded-xl bg-surface-muted p-3">
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--color-good)]" />

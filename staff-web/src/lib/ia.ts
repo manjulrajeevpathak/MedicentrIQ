@@ -11,7 +11,6 @@ import {
   Route,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Users
 } from "lucide-react";
 import type { PermissionKey } from "./types";
@@ -22,7 +21,7 @@ export type NavItem = {
   icon: LucideIcon;
   description: string;
   requires?: PermissionKey;
-  badgeKey?: "inbox" | "access" | "continuity" | "ai" | "workbench";
+  badgeKey?: "inbox" | "access" | "continuity" | "workbench";
 };
 
 export type NavGroup = {
@@ -52,14 +51,8 @@ export const navGroups: NavGroup[] = [
     items: [
       { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", requires: "campaign:send" },
       { href: "/leakage", label: "Care recovery", icon: IndianRupee, description: "Patients who fell out of care, and the worklist to bring them back", requires: "analytics:view" },
-      { href: "/roi", label: "ROI Reports", icon: Receipt, description: "Care-impact ledger and board-ready reports", requires: "analytics:view" }
-    ]
-  },
-  {
-    label: "Intelligence",
-    items: [
-      { href: "/ai-workbench", label: "AI Workbench", icon: Sparkles, description: "Governed DatacentrIQ recommendations", badgeKey: "ai" },
-      { href: "/command", label: "Command Center", icon: Gauge, description: "Operations & care-impact control tower", requires: "analytics:view" }
+      { href: "/roi", label: "ROI Reports", icon: Receipt, description: "Care-impact ledger and board-ready reports", requires: "analytics:view" },
+      { href: "/command", label: "Command Center", icon: Gauge, description: "Operations & care-impact analytics dashboard", requires: "analytics:view" }
     ]
   },
   {

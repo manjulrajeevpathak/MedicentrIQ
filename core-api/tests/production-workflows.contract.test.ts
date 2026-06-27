@@ -24,7 +24,6 @@ describe("production workflow MVP contracts", () => {
   before(async () => {
     delete process.env.DATABASE_URL;
     delete process.env.WORKFLOW_WORKER_URL;
-    delete process.env.DATACENTRIQ_GATEWAY_URL;
     const service = await createCoreService();
     server = createApiServer(service);
     baseUrl = await listen(server);

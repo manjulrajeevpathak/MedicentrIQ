@@ -8,7 +8,6 @@ import {
   Fingerprint,
   Link2,
   Printer,
-  Sparkles,
   TrendingDown,
   TrendingUp,
   UserRound
@@ -21,10 +20,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatTile, StatGrid } from "@/components/ui/stat";
 import { CountUp } from "@/components/ui/count-up";
-import { AreaChart, BarList, Donut } from "@/components/ui/charts";
+import { AreaChart, BarList } from "@/components/ui/charts";
 
 const stageMeta: Record<AttributionRow["stage"], { label: string; tone: "brand" | "medium" | "good" }> = {
-  recommended: { label: "Recommended", tone: "medium" },
   actioned: { label: "Actioned", tone: "brand" },
   converted: { label: "Back in care", tone: "good" },
   observed: { label: "Outcome observed", tone: "good" }
@@ -52,7 +50,7 @@ export function RoiWorkspace({ data }: { data: RoiData }) {
       </div>
 
       {/* KPIs */}
-      <StatGrid cols={4} className="stagger">
+      <StatGrid cols={3} className="stagger">
         <StatTile
           label="Care continuity maintained"
           value={<CountUp value={k.recovered} format={formatInrCompact} />}
@@ -65,12 +63,6 @@ export function RoiWorkspace({ data }: { data: RoiData }) {
           label="Attribution rate"
           value={<CountUp value={k.attributionRate} format={(v) => `${Math.round(v)}%`} />}
           icon={<Fingerprint className="size-4" />}
-          tone="brand"
-        />
-        <StatTile
-          label="AI-initiated share"
-          value={<CountUp value={k.aiDrivenShare} format={(v) => `${Math.round(v)}%`} />}
-          icon={<Sparkles className="size-4" />}
           tone="brand"
         />
         <StatTile
@@ -99,16 +91,6 @@ export function RoiWorkspace({ data }: { data: RoiData }) {
           </div>
         </Panel>
         <div className="space-y-5">
-          <Panel>
-            <SectionTitle icon={<Sparkles className="size-4" />} title="Who initiated" subtitle="Share of care continuity ₹" />
-            <Donut
-              className="mt-4"
-              size={120}
-              segments={data.bySource}
-              centerLabel={formatInrCompact(k.recovered)}
-              centerSub="in care"
-            />
-          </Panel>
           <Panel>
             <SectionTitle icon={<TrendingDown className="size-4" />} title="By category" />
             <BarList
@@ -147,11 +129,7 @@ function LedgerRow({ row }: { row: AttributionRow }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-ink">{row.patient}</span>
-          {row.source === "ai" ? (
-            <Badge tone="brand"><Sparkles className="size-3" /> AI-initiated</Badge>
-          ) : (
-            <Badge tone="neutral"><UserRound className="size-3" /> Staff</Badge>
-          )}
+          <Badge tone="neutral"><UserRound className="size-3" /> Staff</Badge>
           <Badge tone="neutral">{row.category}</Badge>
         </div>
         <p className="mt-1 text-xs text-ink-soft">{row.action}</p>

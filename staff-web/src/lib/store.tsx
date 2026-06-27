@@ -25,7 +25,7 @@ export type NewPatientInput = {
 type AppContextValue = {
   data: DashboardData;
   branch: { id: string; name: string };
-  badges: { workbench: number; inbox: number; access: number; continuity: number; ai: number };
+  badges: { workbench: number; inbox: number; access: number; continuity: number };
   patientIdByName: (name: string) => string | undefined;
 
   /** Adds a patient to the directory + Patient 360 and returns the new id. */
@@ -39,8 +39,6 @@ type AppContextValue = {
   sendMobileLink: (reqId: string) => void;
   completeFollowUp: (id: string) => void;
   escalateFollowUp: (id: string) => void;
-  acceptRecommendation: (id: string) => void;
-  dismissRecommendation: (id: string, reason?: string) => void;
   setBranch: (id: string, name: string) => void;
   togglePermission: (userId: string, key: PermissionKey) => void;
 };
@@ -212,28 +210,6 @@ export function AppProvider({ initial, children }: { initial: DashboardData; chi
     [audit]
   );
 
-  const acceptRecommendation = useCallback(
-    (id: string) => {
-      setData((d) => ({
-        ...d,
-        recommendations: d.recommendations.filter((r) => r.id !== id),
-        auditEvents: [audit("ai.accept", id, `Accepted AI recommendation ${id} and created a task.`), ...d.auditEvents]
-      }));
-    },
-    [audit]
-  );
-
-  const dismissRecommendation = useCallback(
-    (id: string, reason?: string) => {
-      setData((d) => ({
-        ...d,
-        recommendations: d.recommendations.filter((r) => r.id !== id),
-        auditEvents: [audit("ai.dismiss", id, `Dismissed AI recommendation ${id}${reason ? ` — ${reason}` : ""}.`), ...d.auditEvents]
-      }));
-    },
-    [audit]
-  );
-
   const setBranch = useCallback((id: string, name: string) => {
     setBranchState({ id, name });
     document.cookie = `hcos_branch=${encodeURIComponent(id)}; path=/; max-age=2592000; samesite=lax`;
@@ -263,8 +239,7 @@ export function AppProvider({ initial, children }: { initial: DashboardData; chi
       workbench: data.workbench.filter((w) => w.priority === "critical" || w.priority === "high").length,
       inbox: data.inbox.filter((c) => c.status === "new" || c.status === "escalated").length,
       access: data.accessQueue.filter((r) => r.state !== "confirmed").length,
-      continuity: data.followUpQueue.filter((f) => f.risk === "critical" || f.risk === "high").length,
-      ai: data.recommendations.length
+      continuity: data.followUpQueue.filter((f) => f.risk === "critical" || f.risk === "high").length
     }),
     [data]
   );
@@ -284,8 +259,6 @@ export function AppProvider({ initial, children }: { initial: DashboardData; chi
     sendMobileLink,
     completeFollowUp,
     escalateFollowUp,
-    acceptRecommendation,
-    dismissRecommendation,
     setBranch,
     togglePermission
   };

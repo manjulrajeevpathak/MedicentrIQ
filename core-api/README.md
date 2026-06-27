@@ -19,10 +19,9 @@ The MVP API supports the end-to-end flagship flow:
 - Patient mobile-link session lookup
 - Document upload metadata capture
 - Follow-up confirmation
-- DatacentrIQ-style AI recommendation intake
-- Audit event capture for sensitive staff, patient-link, AI, and service actions
+- Audit event capture for sensitive staff, patient-link, and service actions
 - Service event intake from integration-gateway and workflow-worker
-- Optional outbound calls to DatacentrIQ gateway and workflow-worker
+- Optional outbound calls to workflow-worker
 
 PostgreSQL persistence is available when `DATABASE_URL` is set. When `DATABASE_URL` is not set, the service falls back to in-memory seed data for quick local development.
 
@@ -135,7 +134,7 @@ Service-to-service calls use:
 x-service-api-key: core_demo_service_key
 ```
 
-Seeded service keys represent integration-gateway, DatacentrIQ gateway, and workflow-worker actors. `CORE_API_SERVICE_KEY` can also be used for an environment-managed integration service key.
+Seeded service keys represent integration-gateway and workflow-worker actors. `CORE_API_SERVICE_KEY` can also be used for an environment-managed integration service key.
 
 ## RBAC
 
@@ -150,7 +149,6 @@ doctor
 admin
 org_admin
 integration_service
-datacentriq_service
 workflow_service
 ```
 
@@ -296,24 +294,6 @@ curl -X POST http://localhost:4100/mobile-link-sessions/mls_demo_anita/follow-up
   -d '{"patientResponse":"No pain. Mild redness only."}'
 ```
 
-### AI Recommendation Intake
-
-This endpoint accepts DatacentrIQ-gateway style responses. Control Tower and Copilot intelligence are represented as embedded recommendations and optional task creation.
-
-```bash
-curl -X POST http://localhost:4100/ai/recommendations \
-  -H "content-type: application/json" \
-  -H "x-demo-user-id: user_demo_admin" \
-  -d '{"source":"control_tower","patientId":"patient_demo_001","appointmentId":"appointment_demo_001","title":"High no-show risk","summary":"Patient has missed one callback and has an upcoming post-op review.","priority":"high","recommendedAction":"Call caregiver before sending WhatsApp reminder.","confidence":0.86,"traceId":"dciq_trace_demo_001","createTask":true,"ownerRole":"care_coordinator"}'
-```
-
-List recommendations:
-
-```bash
-curl http://localhost:4100/ai/recommendations
-curl "http://localhost:4100/ai/recommendations?patientId=patient_demo_001"
-```
-
 ### Service Event Intake
 
 Integration gateway event:
@@ -335,7 +315,5 @@ curl -X POST http://localhost:4100/service-events/workflow-callback \
 ```
 
 ## Optional Outbound Service Wiring
-
-When `DATACENTRIQ_GATEWAY_URL` is set, interaction creation can ask DatacentrIQ gateway for intent extraction if the interaction does not already include intent.
 
 When `WORKFLOW_WORKER_URL` is set, appointment confirmation and follow-up confirmation make best-effort workflow start calls. If these services are unavailable or unset, the core API continues to operate normally.

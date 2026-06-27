@@ -215,19 +215,6 @@ const createRoutes = (service: CoreService): Route[] => [
     service.optOutMobileLink(auth, params.token, toRecord(body))
   ),
 
-  route("GET", "/ai/recommendations", "ai_recommendations:read", ({ auth, query }) =>
-    service.listRecommendations(auth, {
-      patientId: query.get("patientId") ?? undefined,
-      status: (query.get("status") as never) ?? undefined
-    })
-  ),
-  route("POST", "/ai/recommendations", "ai_recommendations:create", ({ auth, body }) =>
-    service.intakeAiRecommendation(auth, toRecord(body))
-  ),
-  route("POST", "/ai/recommendations/:recommendationId/actions", "ai_recommendations:create", ({ auth, params, body }) =>
-    service.actOnRecommendation(auth, params.recommendationId, toRecord(body))
-  ),
-
   route("POST", "/workflows/trigger", "tasks:update", ({ auth, body }) => service.triggerWorkflow(auth, toRecord(body))),
 
   route("GET", "/journey-templates", "journeys:read", ({ auth }) => service.listJourneyTemplates(auth)),

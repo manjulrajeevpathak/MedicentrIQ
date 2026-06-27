@@ -4,9 +4,9 @@
 
 /* ----------------------------------------------------------------------------
    HealthcareOS design tokens — "refined clinical"
-   Warm neutral canvas, deep ink, one blue brand family, semantic state colors,
-   and a single AI signature material. Light is default; .dark overrides the
-   same semantic variables so every utility themes automatically.
+   Warm neutral canvas, deep ink, one blue brand family, semantic state colors.
+   Light is default; .dark overrides the same semantic variables so every
+   utility themes automatically.
    ------------------------------------------------------------------------- */
 @theme {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
@@ -159,39 +159,6 @@
   .hover-lift:hover {
     transform: translateY(-1px);
     box-shadow: var(--shadow-lift);
-  }
-
-  /* ---- AI signature material -------------------------------------------
-     The ONE distinctive treatment, reserved exclusively for AI-generated
-     surfaces: a hairline iridescent border over a normal surface. */
-  .ai-surface {
-    position: relative;
-    background-color: var(--color-surface);
-  }
-  .ai-surface::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1px;
-    background: linear-gradient(135deg, #5f8ef7, #8b5cf6 55%, #06b6d4);
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
-    opacity: 0.5;
-  }
-  .dark .ai-surface::before {
-    opacity: 0.65;
-  }
-  .ai-hero {
-    background:
-      radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, #5f8ef7 9%, transparent), transparent 55%),
-      radial-gradient(100% 130% at 100% 100%, color-mix(in srgb, #06b6d4 6%, transparent), transparent 50%),
-      var(--color-surface);
-  }
-  .bg-ai-gradient {
-    background: linear-gradient(135deg, #5f8ef7, #8b5cf6 55%, #06b6d4);
   }
 
   .bg-grid {

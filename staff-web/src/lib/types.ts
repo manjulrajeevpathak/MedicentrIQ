@@ -24,7 +24,6 @@ export type PermissionKey =
   | "patients:create"
   | "appointment:write"
   | "followup:manage"
-  | "ai:approve"
   | "audit:view"
   | "analytics:view"
   | "campaign:send"
@@ -56,7 +55,7 @@ export type WorkbenchItem = {
 
 export type InteractionMessage = {
   id: string;
-  author: "patient" | "staff" | "ai" | "system";
+  author: "patient" | "staff" | "system";
   authorName: string;
   at: string;
   body: string;
@@ -76,8 +75,6 @@ export type InboxItem = {
   confidence?: number;
   unread?: number;
   thread?: InteractionMessage[];
-  aiSummary?: string;
-  aiDraft?: string;
   /** Set when staff link the conversation to a patient record. */
   linkedPatient?: string;
 };
@@ -86,7 +83,7 @@ export type TimelineItem = {
   at: string;
   title: string;
   note: string;
-  kind?: "clinical" | "message" | "task" | "system" | "ai";
+  kind?: "clinical" | "message" | "task" | "system";
 };
 
 export type HouseholdContext = {
@@ -198,19 +195,6 @@ export type FollowUpQueueItem = {
   protocol?: Array<{ label: string; done: boolean }>;
 };
 
-export type AiRecommendation = {
-  id: string;
-  title: string;
-  patient: string;
-  action: string;
-  evidence: string;
-  confidence: number;
-  requiresApproval: boolean;
-  category?: "clinical" | "revenue" | "access" | "continuity";
-  sources?: string[];
-  trace?: string[];
-};
-
 export type ServiceStatus = {
   name: string;
   health: ServiceHealth;
@@ -314,7 +298,6 @@ export type DashboardData = {
   matchCandidates: MatchCandidate[];
   accessQueue: AccessQueueItem[];
   followUpQueue: FollowUpQueueItem[];
-  recommendations: AiRecommendation[];
   serviceStatus: ServiceStatus[];
   auditEvents: AuditEvent[];
 };

@@ -4,7 +4,7 @@ export type InteractionChannel = "whatsapp" | "call" | "missed_call" | "web" | "
 export type InteractionDirection = "inbound" | "outbound" | "internal";
 export type InteractionStatus = "new" | "triaged" | "linked" | "closed";
 export type TaskStatus = "open" | "in_progress" | "completed" | "cancelled";
-export type TaskSource = "healthcareos" | "datacentriq-copilot" | "datacentriq-control-tower";
+export type TaskSource = "healthcareos";
 export type AppointmentStatus = "scheduled" | "confirmed" | "rescheduled" | "completed" | "no_show" | "cancelled";
 export type FollowUpStatus = "due" | "confirmed" | "completed" | "missed" | "escalated";
 export type AccessRequestStatus =
@@ -21,7 +21,6 @@ export type JourneyTemplateStatus = "draft" | "active" | "retired";
 export type PatientJourneyStatus = "planned" | "active" | "paused" | "completed" | "cancelled";
 export type JourneyTaskStatus = "pending" | "in_progress" | "completed" | "cancelled" | "skipped";
 export type ConsentStatus = "granted" | "revoked" | "unknown";
-export type RecommendationStatus = "received" | "accepted" | "dismissed" | "converted_to_task";
 export type ActorType = "staff" | "service" | "patient_link";
 export type Role =
   | "front_desk"
@@ -32,7 +31,6 @@ export type Role =
   | "admin"
   | "org_admin"
   | "integration_service"
-  | "datacentriq_service"
   | "workflow_service";
 export type Permission =
   | "auth:read_self"
@@ -54,8 +52,6 @@ export type Permission =
   | "followups:confirm"
   | "journeys:read"
   | "journeys:update"
-  | "ai_recommendations:read"
-  | "ai_recommendations:create"
   | "audit:read"
   | "service_events:ingest";
 
@@ -91,7 +87,7 @@ export type ServiceApiKey = {
   tenantId: string;
   displayName: string;
   key: string;
-  role: Extract<Role, "integration_service" | "datacentriq_service" | "workflow_service">;
+  role: Extract<Role, "integration_service" | "workflow_service">;
   status: "active" | "inactive";
   createdAt: string;
 };
@@ -133,8 +129,6 @@ export type AuditEvent = {
     | "follow_up.confirm"
     | "journey.create"
     | "journey.update"
-    | "ai_recommendation.intake"
-    | "ai_recommendation.update"
     | "mobile_link.lookup"
     | "mobile_link.action"
     | "workflow.trigger"
@@ -432,30 +426,11 @@ export type JourneyEvent = {
   occurredAt: string;
 };
 
-export type AiRecommendation = {
-  id: string;
-  tenantId: string;
-  source: "copilot" | "control_tower";
-  patientId?: string;
-  interactionId?: string;
-  appointmentId?: string;
-  title: string;
-  summary: string;
-  priority: Priority;
-  recommendedAction: string;
-  confidence: number;
-  traceId?: string;
-  status: RecommendationStatus;
-  createdTaskId?: string;
-  receivedAt: string;
-  rawPayload: unknown;
-};
-
 export type TimelineEvent = {
   id: string;
   patientId: string;
   occurredAt: string;
-  type: "interaction" | "appointment" | "task" | "document" | "follow_up" | "ai_recommendation";
+  type: "interaction" | "appointment" | "task" | "document" | "follow_up";
   title: string;
   description: string;
   sourceId: string;

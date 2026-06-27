@@ -4,7 +4,6 @@ import { hasPermission, permissionsForRoles } from "../auth/permissions.js";
 import { bearerTokenFromAuthorization, createStaffSessionToken, verifyStaffSessionToken } from "../auth/staff-session.js";
 import type {
   AccessRequest,
-  AiRecommendation,
   Appointment,
   AuditEvent,
   Caregiver,
@@ -26,7 +25,6 @@ import type {
   PatientSummary,
   Permission,
   Priority,
-  RecommendationStatus,
   RequestContext,
   Role,
   TaskStatus,
@@ -253,13 +251,6 @@ type OptOutInput = {
   scope?: string;
 };
 
-type RecommendationActionInput = {
-  action?: "accept" | "dismiss";
-  createTask?: boolean;
-  ownerRole?: WorkbenchTask["ownerRole"];
-  outcome?: string;
-};
-
 type TriggerWorkflowInput = {
   workflowType?: "appointment-reminder" | "no-show-recovery" | "post-visit-follow-up" | "pending-diagnostics-reminder" | "sla-timer";
   patientId?: string;
@@ -267,21 +258,6 @@ type TriggerWorkflowInput = {
   followUpId?: string;
   taskId?: string;
   trigger?: string;
-};
-
-type IntakeAiRecommendationInput = {
-  source?: AiRecommendation["source"];
-  patientId?: string;
-  interactionId?: string;
-  appointmentId?: string;
-  title?: string;
-  summary?: string;
-  priority?: Priority;
-  recommendedAction?: string;
-  confidence?: number;
-  traceId?: string;
-  createTask?: boolean;
-  ownerRole?: WorkbenchTask["ownerRole"];
 };
 
 export class ApiError extends Error {
@@ -419,7 +395,6 @@ export class CoreService {
       service: "core-api",
       status: "ok",
       mode: this.persistence.mode,
-      datacentriqGatewayConfigured: this.outbound.datacentriq.isConfigured,
       workflowWorkerConfigured: this.outbound.workflow.isConfigured,
       checkedAt: nowIso()
     };
@@ -601,9 +576,6 @@ export class CoreService {
     const followUps = this.data.followUps.filter(
       (entry) => entry.tenantId === context.tenantId && this.canAccessPatientId(context, entry.patientId)
     );
-    const recommendations = this.listRecommendations(context, {}).filter((entry) =>
-      ["received", "accepted"].includes(entry.status)
-    );
     const primaryPatient = patients[0];
     const primarySummary = primaryPatient ? this.summarizePatient(context, primaryPatient) : undefined;
     const branch = this.data.branches.find((entry) => entry.id === primaryPatient?.branchId) ?? this.data.branches[0];
@@ -637,12 +609,6 @@ export class CoreService {
           value: String(followUps.filter((entry) => entry.status === "due").length),
           delta: `${followUps.filter((entry) => new Date(entry.dueAt).getTime() < now).length} overdue`,
           tone: "watch"
-        },
-        {
-          label: "AI actions",
-          value: String(recommendations.length),
-          delta: "awaiting review",
-          tone: recommendations.length ? "watch" : "good"
         }
       ],
       workbench: tasks
@@ -706,15 +672,6 @@ export class CoreService {
         risk: new Date(followUp.dueAt).getTime() < now ? "high" : "medium",
         nextStep: followUp.instructions
       })),
-      recommendations: recommendations.slice(0, 6).map((recommendation) => ({
-        id: recommendation.id,
-        title: recommendation.title,
-        patient: patientName(this.data.patients, recommendation.patientId),
-        action: recommendation.recommendedAction,
-        evidence: recommendation.summary,
-        confidence: Math.round(recommendation.confidence * 100),
-        requiresApproval: recommendation.status === "received"
-      })),
       serviceStatus: [
         {
           name: "core-api",
@@ -722,14 +679,6 @@ export class CoreService {
           detail: "Governed staff dashboard and actions are available.",
           latency: "local",
           authMode: context.source,
-          scope: context.tenantId
-        },
-        {
-          name: "datacentriq-gateway",
-          health: this.outbound.datacentriq.isConfigured ? "online" : "degraded",
-          detail: this.outbound.datacentriq.isConfigured ? "Outbound AI gateway configured." : "Using local AI fallback.",
-          latency: "best effort",
-          authMode: "service scoped",
           scope: context.tenantId
         },
         {
@@ -893,17 +842,6 @@ export class CoreService {
           title: entry.title,
           description: `${entry.status}: ${entry.instructions}`,
           sourceId: entry.id
-        })),
-      ...this.data.recommendations
-        .filter((entry) => entry.tenantId === context.tenantId && entry.patientId === patientId)
-        .map((entry) => ({
-          id: `timeline_${entry.id}`,
-          patientId,
-          occurredAt: entry.receivedAt,
-          type: "ai_recommendation" as const,
-          title: entry.title,
-          description: `${entry.source} recommendation: ${entry.recommendedAction}`,
-          sourceId: entry.id
         }))
     ];
 
@@ -951,12 +889,6 @@ export class CoreService {
       receivedAt: timestamp,
       createdTaskIds: []
     };
-
-    if (!interaction.intent && this.outbound.datacentriq.isConfigured) {
-      const extracted = await this.outbound.datacentriq.extractIntent(interaction);
-      interaction.intent = extracted?.intent ?? interaction.intent;
-      interaction.urgency = asPriority(extracted?.urgency, interaction.urgency);
-    }
 
     if (input.createTask) {
       const task = this.createTaskFromInteraction(context, interaction);
@@ -1804,138 +1736,6 @@ export class CoreService {
       scope: input.scope ?? "non_care_messages"
     });
     return this.summarizePatient(context, patient);
-  }
-
-  async intakeAiRecommendation(context: RequestContext, input: IntakeAiRecommendationInput) {
-    if (input.patientId) {
-      this.ensureKnownPatient(context, input.patientId);
-    }
-    const timestamp = nowIso();
-    const recommendation: AiRecommendation = {
-      id: createId("recommendation"),
-      tenantId: context.tenantId,
-      source: input.source ?? "control_tower",
-      patientId: input.patientId,
-      interactionId: input.interactionId,
-      appointmentId: input.appointmentId,
-      title: ensureString(input.title, "title"),
-      summary: ensureString(input.summary, "summary"),
-      priority: asPriority(input.priority, "medium"),
-      recommendedAction: ensureString(input.recommendedAction, "recommendedAction"),
-      confidence: typeof input.confidence === "number" ? input.confidence : 0.7,
-      traceId: input.traceId,
-      status: "received",
-      receivedAt: timestamp,
-      rawPayload: input
-    };
-
-    if (input.createTask) {
-      const task: WorkbenchTask = {
-        id: createId("task"),
-        tenantId: context.tenantId,
-        patientId: input.patientId,
-        interactionId: input.interactionId,
-        appointmentId: input.appointmentId,
-        title: recommendation.title,
-        priority: recommendation.priority,
-        dueAt: timestamp,
-        status: "open",
-        ownerRole: input.ownerRole ?? "care_coordinator",
-        reason: recommendation.summary,
-        recommendedAction: recommendation.recommendedAction,
-        source: recommendation.source === "copilot" ? "datacentriq-copilot" : "datacentriq-control-tower",
-        createdAt: timestamp,
-        updatedAt: timestamp
-      };
-      this.data.tasks.push(task);
-      recommendation.createdTaskId = task.id;
-      recommendation.status = "converted_to_task";
-      await this.persistence.saveCollection("tasks", this.data.tasks);
-    }
-
-    this.data.recommendations.push(recommendation);
-    await this.persistence.saveCollection("recommendations", this.data.recommendations);
-    await this.audit(context, "ai_recommendation.intake", "ai_recommendation", recommendation.id, recommendation.patientId, {
-      source: recommendation.source,
-      status: recommendation.status,
-      createdTaskId: recommendation.createdTaskId
-    });
-    return recommendation;
-  }
-
-  listRecommendations(context: RequestContext, filters: { patientId?: string; status?: RecommendationStatus }) {
-    return this.data.recommendations.filter((entry) => {
-      if (entry.tenantId !== context.tenantId) {
-        return false;
-      }
-      if (entry.patientId && !this.canAccessPatientId(context, entry.patientId)) {
-        return false;
-      }
-      if (filters.patientId && entry.patientId !== filters.patientId) {
-        return false;
-      }
-      if (filters.status && entry.status !== filters.status) {
-        return false;
-      }
-      return true;
-    });
-  }
-
-  async actOnRecommendation(context: RequestContext, recommendationId: string, input: RecommendationActionInput) {
-    const recommendation = this.data.recommendations.find(
-      (entry) => entry.id === recommendationId && entry.tenantId === context.tenantId
-    );
-    if (!recommendation) {
-      throw new ApiError(404, `AI recommendation not found: ${recommendationId}`);
-    }
-    if (recommendation.patientId) {
-      this.ensureKnownPatient(context, recommendation.patientId);
-    }
-
-    const action = input.action ?? "accept";
-    const timestamp = nowIso();
-    let task: WorkbenchTask | undefined;
-
-    if (action === "dismiss") {
-      recommendation.status = "dismissed";
-    } else if (input.createTask !== false) {
-      task = {
-        id: createId("task"),
-        tenantId: context.tenantId,
-        patientId: recommendation.patientId,
-        interactionId: recommendation.interactionId,
-        appointmentId: recommendation.appointmentId,
-        title: recommendation.title,
-        priority: recommendation.priority,
-        dueAt: timestamp,
-        status: "open",
-        ownerRole: input.ownerRole ?? "care_coordinator",
-        reason: recommendation.summary,
-        recommendedAction: recommendation.recommendedAction,
-        source: recommendation.source === "copilot" ? "datacentriq-copilot" : "datacentriq-control-tower",
-        createdAt: timestamp,
-        updatedAt: timestamp
-      };
-      this.data.tasks.push(task);
-      recommendation.createdTaskId = task.id;
-      recommendation.status = "converted_to_task";
-      await this.persistence.saveCollection("tasks", this.data.tasks);
-    } else {
-      recommendation.status = "accepted";
-    }
-
-    await this.persistence.saveCollection("recommendations", this.data.recommendations);
-    await this.audit(context, "ai_recommendation.update", "ai_recommendation", recommendation.id, recommendation.patientId, {
-      action,
-      status: recommendation.status,
-      createdTaskId: task?.id,
-      outcome: input.outcome
-    });
-
-    return {
-      recommendation,
-      task: task ? this.taskView(context, task) : undefined
-    };
   }
 
   async intakeIntegrationEvent(context: RequestContext, input: Record<string, unknown>) {

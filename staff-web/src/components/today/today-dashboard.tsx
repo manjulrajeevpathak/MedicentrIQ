@@ -179,7 +179,7 @@ function NeedsPersonPanel({ data }: { data: DashboardData }) {
   const { toast } = useToast();
   const p = data.needsPerson;
   return (
-    <Panel className="ai-surface">
+    <Panel>
       <SectionTitle
         icon={<HeartHandshake className="size-4 text-[var(--color-critical)]" />}
         title="Someone who needs a person"

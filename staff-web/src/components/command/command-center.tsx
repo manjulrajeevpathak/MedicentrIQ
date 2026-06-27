@@ -8,7 +8,6 @@ import {
   Filter,
   Gauge,
   GitBranch,
-  Sparkles,
   Stethoscope,
   TrendingDown,
   TrendingUp,
@@ -47,7 +46,7 @@ export function CommandCenter({ data }: { data: AnalyticsData }) {
           <Filter className="size-4" />
           <span>{data.period}</span>
           <Badge tone={data.source === "mock" ? "high" : "good"} dot>
-            {data.source === "mock" ? "Modelled demo" : "Control Tower live"}
+            {data.source === "mock" ? "Modelled demo" : "Live"}
           </Badge>
         </div>
         <Segmented
@@ -70,7 +69,6 @@ export function CommandCenter({ data }: { data: AnalyticsData }) {
         <StatTile label="Follow-up done" value={<CountUp value={k.followUpCompletion} format={pct} />} icon={<CalendarCheck className="size-4" />} tone="brand" />
         <StatTile label="No-show rate" value={<CountUp value={k.noShowRate} format={pct} />} icon={<Users className="size-4" />} tone="high" delta="-3pt" deltaTone="good" />
         <StatTile label="First response" value={<CountUp value={k.avgFirstResponseMins} format={(v) => `${Math.round(v)}m`} />} icon={<Clock className="size-4" />} tone="neutral" />
-        <StatTile label="AI acceptance" value={<CountUp value={k.aiAcceptance} format={pct} />} icon={<Sparkles className="size-4" />} tone="brand" />
       </StatGrid>
 
       {/* Funnel + Waterfall */}

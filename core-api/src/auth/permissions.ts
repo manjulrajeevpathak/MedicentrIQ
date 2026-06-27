@@ -18,8 +18,7 @@ const allStaffPermissions: Permission[] = [
   "documents:create",
   "followups:confirm",
   "journeys:read",
-  "journeys:update",
-  "ai_recommendations:read"
+  "journeys:update"
 ];
 
 export const rolePermissions: Record<Role, Permission[]> = {
@@ -41,8 +40,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "documents:create",
     "followups:confirm",
     "journeys:read",
-    "journeys:update",
-    "ai_recommendations:read"
+    "journeys:update"
   ],
   call_center: [
     "auth:read_self",
@@ -57,8 +55,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "appointments:create",
     "appointments:confirm",
     "access_requests:read",
-    "access_requests:update",
-    "ai_recommendations:read"
+    "access_requests:update"
   ],
   care_coordinator: [
     "auth:read_self",
@@ -76,8 +73,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "access_requests:read",
     "access_requests:update",
     "journeys:read",
-    "journeys:update",
-    "ai_recommendations:read"
+    "journeys:update"
   ],
   nurse: [
     "auth:read_self",
@@ -91,8 +87,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "documents:create",
     "followups:confirm",
     "journeys:read",
-    "journeys:update",
-    "ai_recommendations:read"
+    "journeys:update"
   ],
   doctor: [
     "auth:read_self",
@@ -102,16 +97,11 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "appointments:read",
     "documents:create",
     "followups:confirm",
-    "journeys:read",
-    "ai_recommendations:read"
+    "journeys:read"
   ],
-  admin: [...allStaffPermissions, "ai_recommendations:create", "audit:read", "service_events:ingest"],
-  org_admin: [...allStaffPermissions, "ai_recommendations:create", "audit:read", "service_events:ingest"],
+  admin: [...allStaffPermissions, "audit:read", "service_events:ingest"],
+  org_admin: [...allStaffPermissions, "audit:read", "service_events:ingest"],
   integration_service: [
-    "auth:read_self",
-    "service_events:ingest"
-  ],
-  datacentriq_service: [
     "auth:read_self",
     "service_events:ingest"
   ],

@@ -46,7 +46,7 @@ describe("access isolation contract", () => {
     await close(server);
   });
 
-  it("scopes branch-limited staff reads across patients, appointments, recommendations, and audit", async () => {
+  it("scopes branch-limited staff reads across patients, appointments, and audit", async () => {
     await ok("GET", "/patients/patient_demo_002", adminHeaders);
 
     const patients = (await ok("GET", "/patients", doctorHeaders)) as JsonObject[];
@@ -55,9 +55,6 @@ describe("access isolation contract", () => {
 
     const appointments = (await ok("GET", "/appointments", doctorHeaders)) as JsonObject[];
     assert.deepEqual(ids(appointments), ["appointment_demo_001"]);
-
-    const recommendations = (await ok("GET", "/ai/recommendations", doctorHeaders)) as JsonObject[];
-    assert.deepEqual(ids(recommendations), ["recommendation_demo_001"]);
 
     const households = (await ok("GET", "/households", doctorHeaders)) as JsonObject[];
     assert.deepEqual(ids(households), ["household_demo_sharma"]);
@@ -108,9 +105,6 @@ describe("access isolation contract", () => {
     });
     await denied("POST", "/appointments/appointment_demo_001/confirm", doctorHeaders, 403, /appointments:confirm/, {
       confirmedBy: "staff"
-    });
-    await denied("POST", "/ai/recommendations/recommendation_demo_001/actions", doctorHeaders, 403, /ai_recommendations:create/, {
-      action: "accept"
     });
   });
 
@@ -224,12 +218,6 @@ class TestPersistence implements CorePersistence {
 }
 
 const testOutboundClients: OutboundClients = {
-  datacentriq: {
-    isConfigured: false,
-    async extractIntent() {
-      return undefined;
-    }
-  },
   workflow: {
     isConfigured: false,
     async startWorkflow() {

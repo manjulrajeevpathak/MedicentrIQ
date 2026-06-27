@@ -9,7 +9,6 @@ import {
   CircleDot,
   ClipboardList,
   Route,
-  Sparkles,
   TrendingDown,
   XCircle
 } from "lucide-react";
@@ -140,13 +139,13 @@ export function ContinuityWorkspace() {
                   {!selected.protocol?.length ? <li className="text-sm text-ink-muted">No protocol steps defined.</li> : null}
                 </ul>
                 <div className="mt-4 rounded-xl bg-brand-50 p-3">
-                  <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-700"><Sparkles className="size-3" /> Next step</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700">Next step</p>
                   <p className="mt-1 text-sm text-ink">{selected.nextStep}</p>
                 </div>
               </Panel>
 
-              {/* AI continuity guidance + actions */}
-              <Panel className="ai-surface flex flex-col">
+              {/* Continuity guidance + actions */}
+              <Panel className="flex flex-col">
                 <SectionTitle icon={<TrendingDown className="size-4" />} title="Continuity analysis" />
                 <p className="mt-3 flex-1 text-sm leading-relaxed text-ink-soft">{leakageGuidance(selected)}</p>
                 <div className="mt-4 flex flex-wrap items-center gap-2">

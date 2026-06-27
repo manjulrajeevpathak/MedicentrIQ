@@ -58,7 +58,6 @@ export type AnalyticsData = {
     followUpCompletion: number;
     noShowRate: number;
     avgFirstResponseMins: number;
-    aiAcceptance: number;
   };
   funnel: FunnelStage[];
   leakageWaterfall: Array<{ label: string; value: number; kind: "total" | "loss" | "gain" }>;
@@ -82,8 +81,7 @@ const mockAnalytics: AnalyticsData = {
     leadConversion: 47,
     followUpCompletion: 68,
     noShowRate: 19,
-    avgFirstResponseMins: 9,
-    aiAcceptance: 82
+    avgFirstResponseMins: 9
   },
   funnel: [
     { label: "Requests captured", value: 3120 },

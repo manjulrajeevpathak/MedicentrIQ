@@ -13,7 +13,6 @@ describe("staff signed session contract", () => {
   const previousEnv = {
     DATABASE_URL: process.env.DATABASE_URL,
     WORKFLOW_WORKER_URL: process.env.WORKFLOW_WORKER_URL,
-    DATACENTRIQ_GATEWAY_URL: process.env.DATACENTRIQ_GATEWAY_URL,
     STAFF_SESSION_SECRET: process.env.STAFF_SESSION_SECRET,
     ALLOW_DEMO_SESSION_ISSUER: process.env.ALLOW_DEMO_SESSION_ISSUER
   };
@@ -21,7 +20,6 @@ describe("staff signed session contract", () => {
   before(async () => {
     delete process.env.DATABASE_URL;
     delete process.env.WORKFLOW_WORKER_URL;
-    delete process.env.DATACENTRIQ_GATEWAY_URL;
     process.env.STAFF_SESSION_SECRET = "staff_session_contract_secret";
     process.env.ALLOW_DEMO_SESSION_ISSUER = "true";
 

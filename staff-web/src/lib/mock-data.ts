@@ -31,7 +31,7 @@ export const demoUsers: DemoUser[] = [
     name: "Dr. Kavita Menon",
     role: "doctor",
     title: "Consultant ophthalmologist",
-    permissions: ["patient360:view", "ai:approve", "analytics:view"]
+    permissions: ["patient360:view", "analytics:view"]
   },
   {
     id: "user_demo_admin",
@@ -45,7 +45,6 @@ export const demoUsers: DemoUser[] = [
       "patients:create",
       "appointment:write",
       "followup:manage",
-      "ai:approve",
       "audit:view",
       "analytics:view",
       "campaign:send",
@@ -61,7 +60,6 @@ const permissionLabels: Record<PermissionKey, string> = {
   "patients:create": "Add patients",
   "appointment:write": "Appointments",
   "followup:manage": "Follow-up",
-  "ai:approve": "AI approval",
   "audit:view": "Audit",
   "analytics:view": "Analytics",
   "campaign:send": "Campaigns",
@@ -111,28 +109,16 @@ export const mockAuditEvents: AuditEvent[] = [
     summary: "Opened Anita Sharma timeline before nurse escalation."
   },
   {
-    id: "AUD-9003",
-    at: minsAgo(21),
-    actor: "HealthcareOS AI",
-    actorRole: "system",
-    action: "recommendation.created",
-    resource: "AI-811",
-    tenantId: demoTenant.id,
-    branchId: demoBranch.id,
-    outcome: "system",
-    summary: "Created post-op escalation recommendation with approval required."
-  },
-  {
     id: "AUD-8998",
     at: minsAgo(43),
     actor: "Aman Verma",
     actorRole: "front_desk",
-    action: "ai.approve",
-    resource: "AI-804",
+    action: "patient360.view",
+    resource: "P-77421",
     tenantId: demoTenant.id,
     branchId: demoBranch.id,
-    outcome: "denied",
-    summary: "AI approval blocked because front desk role lacks AI approval permission."
+    outcome: "allowed",
+    summary: "Reviewed Anita Sharma record before routing the post-op concern."
   },
   {
     id: "AUD-8991",
@@ -203,7 +189,7 @@ export const patientProfiles: Record<string, PatientSummary> = {
     },
     timeline: [
       { at: "Today 10:42", title: "WhatsApp concern received", note: "Patient reported pain and blurred vision after surgery.", kind: "message" },
-      { at: "Today 10:42", title: "AI escalation recommended", note: "DatacentrIQ flagged post-op risk language, confidence 92%.", kind: "ai" },
+      { at: "Today 10:42", title: "Escalated to nurse desk", note: "Post-op risk language flagged; routed for urgent review.", kind: "task" },
       { at: "Yesterday 17:20", title: "Surgery completed", note: "Right-eye cataract procedure marked complete in imported HIS event.", kind: "clinical" },
       { at: "Mon 09:15", title: "Pre-op checklist closed", note: "Consent, payment, and blood pressure check confirmed.", kind: "task" }
     ]
@@ -224,7 +210,7 @@ export const patientProfiles: Record<string, PatientSummary> = {
     openItems: ["Abnormal ECG uploaded, no review booked", "Saturday slot preference unconfirmed", "Estimate explanation requested in Hindi"],
     timeline: [
       { at: "Today 10:08", title: "ECG uploaded via web", note: "Document flagged abnormal by diagnostics adapter.", kind: "clinical" },
-      { at: "Today 10:10", title: "AI follow-up suggested", note: "Missed review flagged; Saturday slot suggested.", kind: "ai" },
+      { at: "Today 10:10", title: "Follow-up flagged", note: "Missed review flagged; Saturday slot suggested.", kind: "task" },
       { at: "Tue 14:30", title: "Missed cardiology appointment", note: "No-show on prior booked review.", kind: "system" }
     ]
   },
@@ -244,7 +230,7 @@ export const patientProfiles: Record<string, PatientSummary> = {
     openItems: ["Cost estimate and doctor availability requested", "Spouse details and prior reports pending", "Price sensitivity noted"],
     timeline: [
       { at: "1h ago", title: "Cost + availability query", note: "High-intent IVF enquiry via call.", kind: "message" },
-      { at: "1h ago", title: "AI care reminder", note: "Advised procedure not yet scheduled; financing options shared.", kind: "ai" },
+      { at: "1h ago", title: "Care reminder", note: "Advised procedure not yet scheduled; financing options shared.", kind: "task" },
       { at: "Last week", title: "Initial fertility enquiry", note: "Referred internally from gynaecology.", kind: "system" }
     ]
   },
@@ -303,7 +289,7 @@ export const patientProfiles: Record<string, PatientSummary> = {
     openItems: ["Walk-in price query open", "Advised procedure not converted", "Doctor not yet assigned"],
     timeline: [
       { at: "2h ago", title: "Walk-in price enquiry", note: "Asked for cataract package pricing at the front desk.", kind: "message" },
-      { at: "2h ago", title: "AI care reminder", note: "Advised procedure not yet scheduled.", kind: "ai" }
+      { at: "2h ago", title: "Care reminder", note: "Advised procedure not yet scheduled.", kind: "task" }
     ]
   }
 };
@@ -453,10 +439,6 @@ export const mockDashboardData: DashboardData = {
       language: "Hindi",
       confidence: 92,
       unread: 2,
-      aiSummary:
-        "Post-op day 2 cataract patient reports eye pain and blurred vision. Risk language detected — routed ahead of generic diagnostics intent.",
-      aiDraft:
-        "नमस्ते अनीता जी, आपकी चिंता समझ आ रही है। हमारी नर्स आपको 10 मिनट में कॉल करेंगी। कृपया आँख को न छुएँ और निर्धारित ड्रॉप जारी रखें।",
       thread: [
         {
           id: "m1",
@@ -464,14 +446,6 @@ export const mockDashboardData: DashboardData = {
           authorName: "Anita Sharma",
           at: "Today 10:42",
           body: "Operation ke baad aankh me dard hai, kya doctor se baat ho sakti hai?"
-        },
-        {
-          id: "m2",
-          author: "ai",
-          authorName: "DatacentrIQ Copilot",
-          at: "Today 10:42",
-          body: "Detected post-op concern with pain + blurred vision. Confidence 92%. Recommend nurse escalation.",
-          internal: true
         },
         {
           id: "m3",
@@ -494,8 +468,6 @@ export const mockDashboardData: DashboardData = {
       language: "Unknown",
       confidence: 54,
       unread: 1,
-      aiSummary:
-        "Missed call from a shared household number linked to three patient records. Identity resolution required before action.",
       thread: [
         {
           id: "m1",
@@ -517,10 +489,6 @@ export const mockDashboardData: DashboardData = {
       assignee: "Priya",
       language: "English",
       confidence: 88,
-      aiSummary:
-        "Patient uploaded an ECG flagged abnormal and explicitly asked for a Saturday cardiology slot. High booking intent.",
-      aiDraft:
-        "Hi Rafiq, thanks for sharing your ECG. Dr. Arvind Rao has a Saturday 11:20 AM slot at Lucknow. Shall I hold it for you?",
       thread: [
         {
           id: "m1",
@@ -810,61 +778,6 @@ export const mockDashboardData: DashboardData = {
       ]
     }
   ],
-  recommendations: [
-    {
-      id: "AI-811",
-      title: "Prioritize clinical escalation",
-      patient: "Anita Sharma",
-      action: "Move to nurse queue, call caregiver, and draft urgent review message.",
-      evidence: "Recent surgery, Hindi pain message, incomplete day 2 checklist.",
-      confidence: 92,
-      requiresApproval: true,
-      category: "clinical",
-      sources: ["Interaction IN-2317", "HIS surgery event", "Journey FQ-481"],
-      trace: [
-        "Detected pain + blurred vision keywords",
-        "Linked to cataract surgery 18h ago",
-        "Day 2 safety check overdue",
-        "Escalation ranked above generic diagnostics intent"
-      ]
-    },
-    {
-      id: "AI-804",
-      title: "Recover missed cardiology follow-up",
-      patient: "Rafiq Khan",
-      action: "Offer Saturday slot and send cost estimate in Hindi.",
-      evidence: "Abnormal ECG upload, missed appointment, explicit Saturday preference.",
-      confidence: 87,
-      requiresApproval: false,
-      category: "access",
-      sources: ["Interaction IN-2307", "ECG document", "Access AQ-118"],
-      trace: ["Abnormal ECG flag", "No booked review", "Saturday preference stated"]
-    },
-    {
-      id: "AI-796",
-      title: "Prevent chronic care drop-off",
-      patient: "Suresh Patil",
-      action: "Send HbA1c upload link and schedule callback if not uploaded by 6 PM.",
-      evidence: "Quarterly diabetes journey due, report missing, prior late uploads.",
-      confidence: 78,
-      requiresApproval: false,
-      category: "continuity",
-      sources: ["Journey FQ-466", "Prior upload history"],
-      trace: ["Quarterly review due", "Report missing", "History of late uploads"]
-    },
-    {
-      id: "AI-790",
-      title: "Help schedule advised cataract surgery",
-      patient: "Lakshmi Reddy",
-      action: "Share package estimate in Telugu and offer Friday consult hold.",
-      evidence: "Walk-in price query, advised procedure not converted, low no-show risk.",
-      confidence: 71,
-      requiresApproval: false,
-      category: "revenue",
-      sources: ["Interaction IN-2274", "Advised procedure note"],
-      trace: ["Advised procedure logged", "Price query intent", "Low no-show risk"]
-    }
-  ],
   serviceStatus: [
     {
       name: "core-api",
@@ -873,14 +786,6 @@ export const mockDashboardData: DashboardData = {
       latency: "n/a",
       authMode: "demo headers",
       scope: `${demoTenant.id} / ${demoBranch.id}`
-    },
-    {
-      name: "datacentriq-gateway",
-      health: "online",
-      detail: "Mocked Copilot and Control Tower responses available.",
-      latency: "142 ms",
-      authMode: "service scoped",
-      scope: demoTenant.id
     },
     {
       name: "integration-gateway",

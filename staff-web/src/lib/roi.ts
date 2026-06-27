@@ -1,12 +1,11 @@
 /* ---------------------------------------------------------------------------
    ROI engine — attribution ledger + board-ready report data.
-   Every recovered rupee carries its chain of evidence (recommendation →
-   action → outcome), which is what makes the monthly ROI report and the
-   pre-sales Leakage Audit defensible. Mock-first; a live feed can drop in
-   behind getRoi() later.
+   Every recovered rupee carries its chain of evidence (action → outcome),
+   which is what makes the monthly ROI report and the pre-sales care-gaps
+   audit defensible. Mock-first; a live feed can drop in behind getRoi() later.
    ------------------------------------------------------------------------- */
 
-export type AttributionStage = "recommended" | "actioned" | "converted" | "observed";
+export type AttributionStage = "actioned" | "converted" | "observed";
 
 export type AttributionRow = {
   id: string;
@@ -14,7 +13,6 @@ export type AttributionRow = {
   maskedPhone: string;
   category: string;
   action: string;
-  source: "ai" | "staff";
   actor: string;
   value: number; // ₹ realised
   stage: AttributionStage;
@@ -32,13 +30,11 @@ export type RoiData = {
     recovered: number; // ₹ this period
     recoveredDelta: string;
     attributionRate: number; // % of recoveries with full evidence chain
-    aiDrivenShare: number; // % of recovered ₹ initiated by AI
     outstandingLeakage: number; // ₹ still recoverable
     projectedNextQuarter: number; // ₹ projected recoverable
   };
   monthlyRecovered: { labels: string[]; values: number[] };
   byCategory: Array<{ label: string; recovered: number; atRisk: number; items: number }>;
-  bySource: Array<{ label: string; value: number; color: string }>;
   ledger: AttributionRow[];
   methodology: string[];
 };
@@ -53,7 +49,6 @@ const mockRoi: RoiData = {
     recovered: 1_842_000,
     recoveredDelta: "+18% vs prior period",
     attributionRate: 91,
-    aiDrivenShare: 72,
     outstandingLeakage: 4_360_000,
     projectedNextQuarter: 5_900_000
   },
@@ -67,10 +62,6 @@ const mockRoi: RoiData = {
     { label: "No-show recovery", recovered: 404_000, atRisk: 980_000, items: 17 },
     { label: "Pending diagnostics", recovered: 286_000, atRisk: 760_000, items: 22 }
   ],
-  bySource: [
-    { label: "AI-initiated", value: 1_326_000, color: "var(--color-brand-500)" },
-    { label: "Staff-initiated", value: 516_000, color: "var(--color-brand-200)" }
-  ],
   ledger: [
     {
       id: "AT-1042",
@@ -78,11 +69,10 @@ const mockRoi: RoiData = {
       maskedPhone: "+91 99XX XXX 771",
       category: "Advised procedure not converted",
       action: "IVF cycle estimate + financing options shared, cycle booked",
-      source: "ai",
-      actor: "Call center · accepted AI-781",
+      actor: "Call center",
       value: 240_000,
       stage: "converted",
-      evidence: ["AI-781", "Interaction IN-2285", "Booking AQ-114"],
+      evidence: ["Interaction IN-2285", "Booking AQ-114"],
       date: "Jun 11"
     },
     {
@@ -91,11 +81,10 @@ const mockRoi: RoiData = {
       maskedPhone: "+91 91XX XXX 556",
       category: "Advised procedure not converted",
       action: "Telugu cataract package estimate, Friday consult held",
-      source: "ai",
-      actor: "Front desk · accepted AI-790",
+      actor: "Front desk",
       value: 86_000,
       stage: "actioned",
-      evidence: ["AI-790", "Interaction IN-2274"],
+      evidence: ["Interaction IN-2274"],
       date: "Jun 12"
     },
     {
@@ -104,11 +93,10 @@ const mockRoi: RoiData = {
       maskedPhone: "+91 98XX XXX 904",
       category: "Pending diagnostics",
       action: "PET-CT completed before oncology consult, consult attended",
-      source: "ai",
-      actor: "Aman Verma · accepted AI-774",
+      actor: "Aman Verma",
       value: 42_000,
       stage: "observed",
-      evidence: ["AI-774", "Journey FQ-459", "Report DOC-118"],
+      evidence: ["Journey FQ-459", "Report DOC-118"],
       date: "Jun 10"
     },
     {
@@ -117,11 +105,10 @@ const mockRoi: RoiData = {
       maskedPhone: "+91 90XX XXX 118",
       category: "Missed follow-ups",
       action: "Saturday cardiology slot rebooked after Hindi estimate",
-      source: "ai",
-      actor: "Aman Verma · accepted AI-804",
+      actor: "Aman Verma",
       value: 38_000,
       stage: "converted",
-      evidence: ["AI-804", "Interaction IN-2307", "Booking AQ-118"],
+      evidence: ["Interaction IN-2307", "Booking AQ-118"],
       date: "Jun 12"
     },
     {
@@ -130,7 +117,6 @@ const mockRoi: RoiData = {
       maskedPhone: "+91 70XX XXX 233",
       category: "Pending diagnostics",
       action: "HbA1c collected via Marathi upload link, review held",
-      source: "staff",
       actor: "Priya Nair",
       value: 12_000,
       stage: "observed",
@@ -143,11 +129,10 @@ const mockRoi: RoiData = {
       maskedPhone: "+91 98XX XXX 442",
       category: "No-show recovery",
       action: "Post-op review rebooked after pain escalation",
-      source: "ai",
-      actor: "Nurse desk · accepted AI-811",
+      actor: "Nurse desk",
       value: 18_000,
       stage: "converted",
-      evidence: ["AI-811", "Interaction IN-2317", "Journey FQ-481"],
+      evidence: ["Interaction IN-2317", "Journey FQ-481"],
       date: "Jun 13"
     },
     {
@@ -156,7 +141,6 @@ const mockRoi: RoiData = {
       maskedPhone: "+91 98XX XXX 230",
       category: "No-show recovery",
       action: "Missed retina review recovered via WhatsApp reminder",
-      source: "staff",
       actor: "Front desk",
       value: 9_500,
       stage: "observed",
@@ -165,10 +149,10 @@ const mockRoi: RoiData = {
     }
   ],
   methodology: [
-    "A recovery is counted only when a leakage-flagged patient completes the booked visit, procedure, or diagnostic within the period.",
-    "Every entry carries its evidence chain — recommendation ID, interaction, booking, and outcome event — and is auditable in the platform.",
+    "A recovery is counted only when a care-gap-flagged patient completes the booked visit, procedure, or diagnostic within the period.",
+    "Every entry carries its evidence chain — interaction, booking, and outcome event — and is auditable in the platform.",
     "Values use the branch rate card at time of booking; package procedures use the quoted estimate.",
-    "AI-initiated means the first action originated from an accepted DatacentrIQ recommendation; staff approval is always recorded.",
+    "Every recovery is attributed to the named staff member who actioned it.",
     "Outstanding leakage is the sum of currently open, recoverable items in the worklist; projection assumes the trailing recovery rate."
   ]
 };

@@ -65,9 +65,7 @@ export type StaffActionRequest =
   | { type: "send_mobile_link"; id: string }
   | { type: "start_follow_up"; id: string; patientName?: string }
   | { type: "complete_follow_up_task"; id: string }
-  | { type: "escalate_follow_up"; id: string; reason?: string }
-  | { type: "accept_recommendation"; id: string }
-  | { type: "dismiss_recommendation"; id: string };
+  | { type: "escalate_follow_up"; id: string; reason?: string };
 
 export type StaffActionResult = { ok: boolean; message: string };
 
@@ -243,23 +241,11 @@ function actionRequest(action: StaffActionRequest): { method: "POST" | "PATCH"; 
         body: { status: "completed", outcome: "Completed from continuity workspace." }
       };
     case "escalate_follow_up":
+    default:
       return {
         method: "POST",
         path: `/follow-ups/${encodeURIComponent(action.id)}/escalations`,
         body: { reason: action.reason ?? "Escalated from continuity workspace.", ownerRole: "nurse" }
-      };
-    case "dismiss_recommendation":
-      return {
-        method: "POST",
-        path: `/ai/recommendations/${encodeURIComponent(action.id)}/actions`,
-        body: { action: "dismiss", outcome: "Dismissed from AI workbench." }
-      };
-    case "accept_recommendation":
-    default:
-      return {
-        method: "POST",
-        path: `/ai/recommendations/${encodeURIComponent(action.id)}/actions`,
-        body: { action: "accept", createTask: true, ownerRole: "care_coordinator" }
       };
   }
 }
@@ -279,9 +265,7 @@ function successMessage(action: StaffActionRequest): string {
     send_mobile_link: "Mobile confirmation link sent.",
     start_follow_up: "Follow-up workflow started.",
     complete_follow_up_task: "Follow-up task completed.",
-    escalate_follow_up: "Follow-up escalated.",
-    dismiss_recommendation: "Recommendation dismissed.",
-    accept_recommendation: "AI recommendation accepted and queued."
+    escalate_follow_up: "Follow-up escalated."
   };
   return messages[action.type];
 }

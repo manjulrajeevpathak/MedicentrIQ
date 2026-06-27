@@ -30,7 +30,7 @@ export function OperationsView() {
     { label: "Missed follow-ups", value: data.followUpQueue.filter((j) => j.due.toLowerCase().includes("overdue")).length, suffix: "overdue" },
     { label: "No-show risk requests", value: data.accessQueue.filter((r) => (r.noShowRisk ?? 0) > 40).length, suffix: "flagged" },
     { label: "Escalated conversations", value: data.inbox.filter((c) => c.status === "escalated").length, suffix: "active" },
-    { label: "Approval-pending AI", value: data.recommendations.filter((r) => r.requiresApproval).length, suffix: "queued" }
+    { label: "Critical follow-ups", value: data.followUpQueue.filter((f) => f.risk === "critical").length, suffix: "queued" }
   ];
 
   return (
@@ -82,7 +82,7 @@ export function OperationsView() {
           <div className="mt-4 flex items-start gap-2 rounded-xl bg-surface-muted p-3">
             <Activity className="mt-0.5 size-4 shrink-0 text-brand-500" />
             <p className="text-xs leading-relaxed text-ink-soft">
-              DatacentrIQ Control Tower monitors these signals continuously and routes the highest-impact items into the staff workbench.
+              The control tower monitors these signals continuously and routes the highest-impact items into the staff workbench.
             </p>
           </div>
         </Panel>
@@ -90,7 +90,7 @@ export function OperationsView() {
         {/* Audit feed */}
         <Panel className="lg:col-span-2" padded={false}>
           <div className="p-5 pb-3">
-            <SectionTitle icon={<ScrollText className="size-4" />} title="Audit feed" subtitle="Staff, patient-link, AI and service actions" />
+            <SectionTitle icon={<ScrollText className="size-4" />} title="Audit feed" subtitle="Staff, patient-link and service actions" />
           </div>
           <ul className="divide-y divide-line">
             {data.auditEvents.map((event) => (

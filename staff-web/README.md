@@ -1,7 +1,7 @@
 # staff-web
 
 Next-generation staff operations console for HealthcareOS — a polished, production-grade
-front end for the AI Patient Access & Continuity Platform.
+front end for the Patient Access & Continuity Platform.
 
 Built as an independent, deployable service (no monorepo coupling), wired to `core-api`
 with a rich demo-data fallback so it looks complete standalone.
@@ -38,12 +38,12 @@ Optional environment:
 
 | Route | Surface |
 | --- | --- |
-| `/today` | AI daily briefing, metrics, priority work queue, patient focus |
-| `/inbox` | Unified multi-channel conversation console with AI triage & composer |
+| `/today` | Daily briefing, metrics, priority work queue, patient focus |
+| `/inbox` | Unified multi-channel conversation console with composer |
 | `/patients` | Directory, Patient 360 timeline, household & identity matching |
 | `/access` | Scheduling cockpit — slots, holds, mobile links, no-show risk |
 | `/continuity` | Follow-up journeys, protocol checklists, leakage analysis |
-| `/ai-workbench` | Governed DatacentrIQ recommendations with decision traces |
+| `/command` | Operations & care-impact analytics dashboard |
 | `/operations` | Service health, control-tower signals, audit feed |
 | `/admin` | Tenant, role & permission matrix, governance policy |
 
@@ -54,9 +54,6 @@ Optional environment:
   block re-points the same variables, so every utility themes automatically.
 - **Dark mode** is a cookie (`hcos-theme`) read by the root layout (server-rendered
   `<html class="dark">`, no FOUC). Toggle lives in the topbar.
-- **AI signature material**: `.ai-surface` (iridescent hairline) is reserved
-  exclusively for AI-generated surfaces — briefing hero, triage, guidance,
-  copilot bubbles — so staff can always tell machine from human at a glance.
 - Color discipline: decorative chips/charts are neutral or a blue ramp; saturated
   color is reserved for semantic state (critical/high/good). Severity also reads
   as a 3px left rail on queue rows.
@@ -64,7 +61,7 @@ Optional environment:
   `Avatar`, `Meter`, `Sparkline`, `Segmented`, `Panel`, `StatTile`, charts kit,
   `EmptyState`, `Toast`. Motion: `.stagger` entrance cascade, `.hover-lift`,
   `prefers-reduced-motion` respected.
-- App shell (sidebar, topbar, ⌘K command palette, ⌘J copilot dock, context
+- App shell (sidebar, topbar, ⌘K command palette, context
   switcher, theme toggle) in [`src/components/shell`](src/components/shell).
 
 ## Notes

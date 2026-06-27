@@ -8,7 +8,6 @@ import {
   CircleDashed,
   Link2,
   MapPin,
-  Sparkles,
   Stethoscope,
   TriangleAlert
 } from "lucide-react";
@@ -184,9 +183,9 @@ export function AccessWorkspace() {
               </div>
             </Panel>
 
-            {/* AI guidance */}
-            <Panel className="ai-surface">
-              <SectionTitle icon={<Sparkles className="size-4" />} title="AI access guidance" />
+            {/* Access guidance */}
+            <Panel>
+              <SectionTitle icon={<CalendarClock className="size-4" />} title="Access guidance" />
               <p className="mt-3 text-sm leading-relaxed text-ink-soft">
                 {guidance(selected)}
               </p>

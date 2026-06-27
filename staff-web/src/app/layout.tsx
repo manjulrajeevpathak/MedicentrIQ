@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3200"),
   title: "HealthcareOS — Staff Console",
   description:
-    "AI-first patient access and continuity operations console for Indian healthcare providers, powered by DatacentrIQ.",
+    "Patient access and continuity operations console for Indian healthcare providers.",
   applicationName: "HealthcareOS"
 };
 

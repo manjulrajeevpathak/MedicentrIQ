@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Menu, Search, Sparkles } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { findNavItem } from "@/lib/ia";
 import type { DemoAuthContext } from "@/lib/types";
 import { ContextSwitcher } from "./context-switcher";
@@ -13,14 +13,12 @@ export function Topbar({
   source,
   generatedAt,
   onOpenCommand,
-  onOpenCopilot,
   onOpenMobileNav
 }: {
   auth: DemoAuthContext;
   source: "core-api" | "mock";
   generatedAt: string;
   onOpenCommand: () => void;
-  onOpenCopilot: () => void;
   onOpenMobileNav: () => void;
 }) {
   const pathname = usePathname();
@@ -60,15 +58,6 @@ export function Topbar({
           aria-label="Search"
         >
           <Search className="size-5" />
-        </button>
-
-        <button
-          onClick={onOpenCopilot}
-          className="group flex h-9 items-center gap-1.5 rounded-xl bg-ai-gradient px-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-110"
-          title="Ask HealthcareOS Copilot (⌘J)"
-        >
-          <Sparkles className="size-4" />
-          <span className="hidden xl:inline">Ask AI</span>
         </button>
 
         <ThemeToggle />

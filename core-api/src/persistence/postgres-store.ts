@@ -26,7 +26,6 @@ const collections: CollectionName[] = [
   "patientJourneys",
   "journeyTasks",
   "journeyEvents",
-  "recommendations",
   "auditEvents"
 ];
 
