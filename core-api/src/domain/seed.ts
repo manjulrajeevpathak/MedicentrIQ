@@ -10,14 +10,30 @@ import type {
   JourneyEvent,
   JourneyTask,
   JourneyTemplate,
+  LoginChallenge,
   MobileLinkSession,
   Organization,
+  PasswordResetToken,
   PatientJourney,
   Patient,
+  PlatformAdmin,
   ServiceApiKey,
   User,
   WorkbenchTask
 } from "./types.js";
+import { hashPassword } from "../auth/passwords.js";
+
+// Demo credentials (hashed once at module load). Documented defaults for local login:
+//   staff users  → password "Demo@12345"
+//   org admin    → password "Admin@12345"
+//   platform root→ superadmin@healthos.local / "Platform@12345"
+const toCred = (plain: string) => {
+  const { hash, salt } = hashPassword(plain);
+  return { passwordHash: hash, passwordSalt: salt };
+};
+const DEMO_STAFF_CRED = toCred("Demo@12345");
+const DEMO_ADMIN_CRED = toCred("Admin@12345");
+const DEMO_PLATFORM_CRED = toCred("Platform@12345");
 
 // Anchor demo timestamps to the current time so seeded appointments, sessions, and
 // mobile-link expiries stay fresh on every boot (a fixed date silently expires them).
@@ -35,6 +51,9 @@ export type SeedData = {
   organizations: Organization[];
   branches: Branch[];
   users: User[];
+  platformAdmins: PlatformAdmin[];
+  loginChallenges: LoginChallenge[];
+  passwordResetTokens: PasswordResetToken[];
   apiKeys: ServiceApiKey[];
   households: Household[];
   patients: Patient[];
@@ -90,6 +109,8 @@ export const createSeedData = (): SeedData => ({
       roles: ["front_desk", "call_center"],
       branchIds: [DEMO_BRANCH_IND, DEMO_BRANCH_WFD],
       status: "active",
+      ...DEMO_STAFF_CRED,
+      credentialVersion: 0,
       createdAt: daysFromNow(-90)
     },
     {
@@ -100,6 +121,8 @@ export const createSeedData = (): SeedData => ({
       roles: ["care_coordinator", "nurse"],
       branchIds: [DEMO_BRANCH_IND, DEMO_BRANCH_WFD],
       status: "active",
+      ...DEMO_STAFF_CRED,
+      credentialVersion: 0,
       createdAt: daysFromNow(-90)
     },
     {
@@ -110,6 +133,8 @@ export const createSeedData = (): SeedData => ({
       roles: ["doctor"],
       branchIds: [DEMO_BRANCH_IND],
       status: "active",
+      ...DEMO_STAFF_CRED,
+      credentialVersion: 0,
       createdAt: daysFromNow(-90)
     },
     {
@@ -120,9 +145,25 @@ export const createSeedData = (): SeedData => ({
       roles: ["org_admin", "admin"],
       branchIds: [DEMO_BRANCH_IND, DEMO_BRANCH_WFD],
       status: "active",
+      ...DEMO_ADMIN_CRED,
+      credentialVersion: 0,
       createdAt: daysFromNow(-90)
     }
   ],
+  platformAdmins: [
+    {
+      id: "platform_admin_root",
+      email: "superadmin@healthos.local",
+      displayName: "HealthOS Root Admin",
+      roles: ["platform_admin"],
+      status: "active",
+      ...DEMO_PLATFORM_CRED,
+      credentialVersion: 0,
+      createdAt: daysFromNow(-120)
+    }
+  ],
+  loginChallenges: [],
+  passwordResetTokens: [],
   apiKeys: [
     {
       id: "api_key_demo_integration",
@@ -530,6 +571,9 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     organizations: data.organizations?.length ? data.organizations : seed.organizations,
     branches: data.branches?.length ? withTenant(data.branches) : seed.branches,
     users: data.users?.length ? withTenant(data.users) : seed.users,
+    platformAdmins: data.platformAdmins?.length ? data.platformAdmins : seed.platformAdmins,
+    loginChallenges: data.loginChallenges ?? [],
+    passwordResetTokens: data.passwordResetTokens ?? [],
     apiKeys: data.apiKeys?.length ? withTenant(data.apiKeys) : seed.apiKeys,
     households: data.households?.length ? withTenant(data.households) : seed.households,
     patients: withTenant(data.patients ?? []),

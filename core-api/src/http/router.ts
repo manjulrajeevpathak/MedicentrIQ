@@ -84,6 +84,21 @@ const route = (
 const createRoutes = (service: CoreService): Route[] => [
   route("GET", "/health", undefined, () => service.health()),
   route("GET", "/auth/me", "auth:read_self", ({ auth }) => service.getCurrentUser(auth)),
+  route("POST", "/auth/password/change", "auth:read_self", ({ auth, body }) => service.changePassword(auth, toRecord(body))),
+
+  // Hospital user management (org admin).
+  route("GET", "/users", "users:read", ({ auth }) => service.listUsers(auth)),
+  route("POST", "/users", "users:manage", ({ auth, body }) => service.createUser(auth, toRecord(body))),
+  route("PATCH", "/users/:userId", "users:manage", ({ auth, params, body }) => service.updateUser(auth, params.userId, toRecord(body))),
+  route("POST", "/users/:userId/reset-password", "users:manage", ({ auth, params }) => service.resetUserPassword(auth, params.userId)),
+  route("PATCH", "/tenant/settings", "tenant:settings:manage", ({ auth, body }) => service.updateTenantSettings(auth, toRecord(body))),
+
+  // Platform admin management (superadmin).
+  route("GET", "/platform/admins", "platform:admins:read", () => service.listPlatformAdmins()),
+  route("POST", "/platform/admins", "platform:admins:manage", ({ auth, body }) => service.createPlatformAdmin(auth, toRecord(body))),
+  route("PATCH", "/platform/admins/:adminId", "platform:admins:manage", ({ auth, params, body }) =>
+    service.updatePlatformAdmin(auth, params.adminId, toRecord(body))
+  ),
   route("GET", "/api/staff/dashboard", "patients:read", ({ auth }) => service.getStaffDashboard(auth), "today"),
   route("GET", "/audit/events", "audit:read", ({ auth, query }) =>
     service.listAuditEvents(auth, {
@@ -318,6 +333,31 @@ export const createApiServer = (service: CoreService) =>
       if (method === "POST" && url.pathname === "/auth/sessions") {
         const body = await parseJsonBody(request);
         sendJson(response, 200, { data: service.createStaffSession(toRecord(body)) });
+        return;
+      }
+
+      // Public (pre-authentication) endpoints — no auth context required.
+      if (method === "POST" && url.pathname === "/auth/login") {
+        sendJson(response, 200, { data: await service.login(toRecord(await parseJsonBody(request))) });
+        return;
+      }
+      if (method === "POST" && url.pathname === "/auth/login/verify-otp") {
+        sendJson(response, 200, { data: await service.verifyLoginOtp(toRecord(await parseJsonBody(request))) });
+        return;
+      }
+      if (method === "POST" && url.pathname === "/auth/password/forgot") {
+        sendJson(response, 200, { data: await service.requestPasswordReset(toRecord(await parseJsonBody(request))) });
+        return;
+      }
+      if (method === "POST" && url.pathname === "/auth/password/reset") {
+        sendJson(response, 200, { data: await service.resetPassword(toRecord(await parseJsonBody(request))) });
+        return;
+      }
+      if (method === "GET" && url.pathname === "/auth/dev/outbox") {
+        if (process.env.NODE_ENV === "production") {
+          throw new ApiError(404, "Not found");
+        }
+        sendJson(response, 200, { data: service.getDevOutbox() });
         return;
       }
 

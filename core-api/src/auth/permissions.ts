@@ -99,8 +99,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "followups:confirm",
     "journeys:read"
   ],
-  admin: [...allStaffPermissions, "audit:read", "service_events:ingest"],
-  org_admin: [...allStaffPermissions, "audit:read", "service_events:ingest"],
+  admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage"],
+  org_admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage"],
   integration_service: [
     "auth:read_self",
     "service_events:ingest"
@@ -113,7 +113,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "auth:read_self",
     "platform:tenants:read",
     "platform:tenants:manage",
-    "platform:entitlements:manage"
+    "platform:entitlements:manage",
+    "platform:admins:read",
+    "platform:admins:manage"
   ]
 };
 

@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { DEMO_STAFF_USER_ID, DEMO_TENANT_ID, type SeedData } from "../domain/seed.js";
 import { hasPermission, permissionsForRoles } from "../auth/permissions.js";
-import { bearerTokenFromAuthorization, createStaffSessionToken, verifyStaffSessionToken } from "../auth/staff-session.js";
+import { bearerTokenFromAuthorization, createStaffSessionToken, verifyStaffSessionToken, type SessionScope } from "../auth/staff-session.js";
+import { hashPassword, verifyPassword, generateTempPassword, generateNumericCode } from "../auth/passwords.js";
+import {
+  createEmailService,
+  otpEmail,
+  passwordResetEmail,
+  inviteEmail,
+  type EmailService,
+  type OutboxEntry
+} from "../integrations/email.js";
 import type {
   AccessRequest,
   Appointment,
@@ -24,6 +33,11 @@ import type {
   Organization,
   Branch,
   User,
+  PlatformAdmin,
+  LoginChallenge,
+  PasswordResetToken,
+  PrincipalType,
+  AuthCredentials,
   Patient,
   PatientSummary,
   Permission,
@@ -42,6 +56,7 @@ import {
   DEFAULT_PLAN_ID,
   isPlanId,
   resolveEnabledModules,
+  resolveSeatLimit,
   type ModuleKey,
   type PlanId
 } from "../domain/platform.js";
@@ -418,7 +433,8 @@ export class CoreService {
   constructor(
     private readonly data: SeedData,
     private readonly persistence: CorePersistence,
-    private readonly outbound: OutboundClients
+    private readonly outbound: OutboundClients,
+    private readonly email: EmailService = createEmailService()
   ) {}
 
   health() {
@@ -505,23 +521,43 @@ export class CoreService {
 
     const bearerToken = bearerTokenFromAuthorization(headers.authorization);
     if (bearerToken) {
-      const secret = process.env.STAFF_SESSION_SECRET;
-      if (!secret) {
-        throw new ApiError(401, "Staff session auth is not configured");
-      }
+      const secret = this.sessionSecret();
 
       let session;
       try {
         session = verifyStaffSessionToken(bearerToken, secret);
       } catch {
-        throw new ApiError(401, "Invalid or expired staff session");
+        throw new ApiError(401, "Invalid or expired session");
       }
 
-      const user = this.data.users.find(
-        (entry) => entry.id === session.userId && entry.tenantId === session.tenantId && entry.status === "active"
-      );
-      if (!user) {
-        throw new ApiError(401, "Staff session user was not found");
+      if (session.scope === "platform") {
+        const admin = this.data.platformAdmins.find((entry) => entry.id === session.userId);
+        if (!admin || admin.status !== "active") {
+          throw new ApiError(401, "Platform session admin was not found");
+        }
+        if (session.credentialVersion !== admin.credentialVersion) {
+          throw new ApiError(401, "Session has been revoked. Sign in again.");
+        }
+        return {
+          actorType: "platform",
+          tenantId: PLATFORM_SCOPE,
+          actorId: admin.id,
+          displayName: admin.displayName,
+          roles: admin.roles,
+          branchIds: [],
+          permissions: permissionsForRoles(admin.roles),
+          isDemoMode: false,
+          source: "platform_session",
+          sessionId: session.sessionId
+        };
+      }
+
+      const user = this.data.users.find((entry) => entry.id === session.userId && entry.tenantId === session.tenantId);
+      if (!user || user.status !== "active") {
+        throw new ApiError(401, "Session user was not found or is inactive");
+      }
+      if (session.credentialVersion !== user.credentialVersion) {
+        throw new ApiError(401, "Session has been revoked. Sign in again.");
       }
 
       return {
@@ -625,6 +661,8 @@ export class CoreService {
     const { token, payload } = createStaffSessionToken({
       tenantId: user.tenantId,
       userId: user.id,
+      scope: "staff",
+      credentialVersion: user.credentialVersion,
       expiresInSeconds
     }, secret);
 
@@ -645,6 +683,536 @@ export class CoreService {
     };
   }
 
+  // ---- Real authentication (login, MFA, password lifecycle) -----------------
+
+  private sessionSecret(): string {
+    const secret = process.env.STAFF_SESSION_SECRET;
+    if (!secret) {
+      throw new ApiError(503, "Session auth is not configured (STAFF_SESSION_SECRET).");
+    }
+    return secret;
+  }
+
+  private appBaseUrl(scope: PrincipalType): string {
+    return scope === "platform"
+      ? process.env.PLATFORM_CONSOLE_URL ?? "http://localhost:3202"
+      : process.env.STAFF_WEB_URL ?? "http://localhost:3200";
+  }
+
+  /** Resolve a principal (staff user or platform admin) by globally-unique email. */
+  private findPrincipalByEmail(email: string): { type: PrincipalType; principal: User | PlatformAdmin } | undefined {
+    const normalized = email.trim().toLowerCase();
+    const admin = this.data.platformAdmins.find((entry) => entry.email.toLowerCase() === normalized);
+    if (admin) return { type: "platform", principal: admin };
+    const user = this.data.users.find((entry) => (entry.email ?? "").toLowerCase() === normalized);
+    if (user) return { type: "staff", principal: user };
+    return undefined;
+  }
+
+  private async persistPrincipal(type: PrincipalType): Promise<void> {
+    await this.persistence.saveCollection(type === "platform" ? "platformAdmins" : "users", type === "platform" ? this.data.platformAdmins : this.data.users);
+  }
+
+  private issueToken(type: PrincipalType, principal: User | PlatformAdmin) {
+    const tenantId = type === "platform" ? PLATFORM_SCOPE : (principal as User).tenantId;
+    const { token, payload } = createStaffSessionToken(
+      {
+        tenantId,
+        userId: principal.id,
+        scope: type as SessionScope,
+        credentialVersion: principal.credentialVersion,
+        mustResetPassword: principal.mustResetPassword,
+        expiresInSeconds: Number.parseInt(process.env.SESSION_TTL_SECONDS ?? `${8 * 60 * 60}`, 10)
+      },
+      this.sessionSecret()
+    );
+    return { token, expiresAt: payload.expiresAt, sessionId: payload.sessionId };
+  }
+
+  private principalSummary(type: PrincipalType, principal: User | PlatformAdmin) {
+    return {
+      id: principal.id,
+      type,
+      email: principal.email,
+      displayName: principal.displayName,
+      roles: principal.roles,
+      tenantId: type === "platform" ? null : (principal as User).tenantId,
+      mustResetPassword: Boolean(principal.mustResetPassword)
+    };
+  }
+
+  private mfaRequiredFor(type: PrincipalType, principal: User | PlatformAdmin): boolean {
+    if (principal.mfaEnabled) return true;
+    if (type === "staff") {
+      const tenant = this.data.organizations.find((entry) => entry.id === (principal as User).tenantId);
+      return tenant?.mfaPolicy === "required";
+    }
+    return false;
+  }
+
+  /**
+   * Step 1 of login: verify email + password. Returns one of:
+   *  - { mustResetPassword, token }  (forced first-login reset; token is valid)
+   *  - { mfaRequired, challengeId }  (email OTP issued)
+   *  - { token, expiresAt, principal }  (fully authenticated)
+   */
+  async login(input: { email?: unknown; password?: unknown }, requestId?: string) {
+    const email = ensureString(input.email, "email");
+    const password = ensureString(input.password, "password");
+    const found = this.findPrincipalByEmail(email);
+
+    // Uniform failure for unknown email or bad password (don't leak which).
+    const fail = async (principal?: User | PlatformAdmin, type?: PrincipalType) => {
+      if (principal && type) {
+        principal.failedLoginAttempts = (principal.failedLoginAttempts ?? 0) + 1;
+        if (principal.failedLoginAttempts >= 10) {
+          principal.lockedUntil = new Date(Date.now() + 15 * 60_000).toISOString();
+        }
+        await this.persistPrincipal(type);
+        await this.auditAuth("auth.login_failed", type, principal, requestId, { email });
+      }
+      throw new ApiError(401, "Invalid email or password.");
+    };
+
+    if (!found) {
+      await this.auditAuth("auth.login_failed", "staff", undefined, requestId, { email });
+      throw new ApiError(401, "Invalid email or password.");
+    }
+    const { type, principal } = found;
+    if (principal.status !== "active") {
+      throw new ApiError(403, "This account is not active. Contact your administrator.");
+    }
+    if (principal.lockedUntil && new Date(principal.lockedUntil).getTime() > Date.now()) {
+      throw new ApiError(423, "Account temporarily locked after too many attempts. Try again later.");
+    }
+    if (!verifyPassword(password, { hash: principal.passwordHash ?? "", salt: principal.passwordSalt ?? "" })) {
+      return fail(principal, type);
+    }
+
+    // Password correct — clear failure counters.
+    principal.failedLoginAttempts = 0;
+    principal.lockedUntil = undefined;
+
+    if (principal.mustResetPassword) {
+      principal.lastLoginAt = nowIso();
+      await this.persistPrincipal(type);
+      const { token, expiresAt } = this.issueToken(type, principal);
+      return { mustResetPassword: true as const, token, expiresAt, principal: this.principalSummary(type, principal) };
+    }
+
+    if (this.mfaRequiredFor(type, principal)) {
+      const challengeId = await this.createLoginChallenge(type, principal);
+      return { mfaRequired: true as const, challengeId, email: principal.email };
+    }
+
+    principal.lastLoginAt = nowIso();
+    await this.persistPrincipal(type);
+    const issued = this.issueToken(type, principal);
+    await this.auditAuth("auth.login", type, principal, requestId, { mfa: false });
+    return { token: issued.token, expiresAt: issued.expiresAt, principal: this.principalSummary(type, principal) };
+  }
+
+  private async createLoginChallenge(type: PrincipalType, principal: User | PlatformAdmin): Promise<string> {
+    const code = generateNumericCode(6);
+    const cred = hashPassword(code.padStart(8, "0")); // reuse scrypt (min length 8)
+    const challenge: LoginChallenge = {
+      token: createId("challenge"),
+      principalType: type,
+      principalId: principal.id,
+      tenantId: type === "platform" ? PLATFORM_SCOPE : (principal as User).tenantId,
+      codeHash: cred.hash,
+      codeSalt: cred.salt,
+      purpose: "login_mfa",
+      attempts: 0,
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      createdAt: nowIso()
+    };
+    this.data.loginChallenges.push(challenge);
+    await this.persistence.saveCollection("loginChallenges", this.data.loginChallenges);
+    if (principal.email) {
+      await this.email.send(otpEmail(principal.email, code));
+    }
+    await this.auditAuth("auth.mfa_challenge", type, principal, undefined, {});
+    return challenge.token;
+  }
+
+  /** Step 2 of login: verify the email OTP and issue a session. */
+  async verifyLoginOtp(input: { challengeId?: unknown; code?: unknown }, requestId?: string) {
+    const challengeId = ensureString(input.challengeId, "challengeId");
+    const code = ensureString(input.code, "code");
+    const challenge = this.data.loginChallenges.find((entry) => entry.token === challengeId);
+    if (!challenge) {
+      throw new ApiError(401, "Invalid or expired login challenge.");
+    }
+    if (new Date(challenge.expiresAt).getTime() <= Date.now() || challenge.attempts >= 5) {
+      this.data.loginChallenges = this.data.loginChallenges.filter((entry) => entry.token !== challengeId);
+      await this.persistence.saveCollection("loginChallenges", this.data.loginChallenges);
+      throw new ApiError(401, "Login challenge expired. Sign in again.");
+    }
+    const ok = verifyPassword(code.padStart(8, "0"), { hash: challenge.codeHash, salt: challenge.codeSalt });
+    if (!ok) {
+      challenge.attempts += 1;
+      await this.persistence.saveCollection("loginChallenges", this.data.loginChallenges);
+      throw new ApiError(401, "Incorrect code.");
+    }
+
+    const principal = this.loadPrincipal(challenge.principalType, challenge.principalId);
+    if (!principal || principal.status !== "active") {
+      throw new ApiError(401, "Account is no longer active.");
+    }
+    // Consume the challenge.
+    this.data.loginChallenges = this.data.loginChallenges.filter((entry) => entry.token !== challengeId);
+    await this.persistence.saveCollection("loginChallenges", this.data.loginChallenges);
+
+    principal.lastLoginAt = nowIso();
+    await this.persistPrincipal(challenge.principalType);
+    const issued = this.issueToken(challenge.principalType, principal);
+    await this.auditAuth("auth.login", challenge.principalType, principal, requestId, { mfa: true });
+    return {
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+      principal: this.principalSummary(challenge.principalType, principal)
+    };
+  }
+
+  private loadPrincipal(type: PrincipalType, id: string): User | PlatformAdmin | undefined {
+    return type === "platform"
+      ? this.data.platformAdmins.find((entry) => entry.id === id)
+      : this.data.users.find((entry) => entry.id === id);
+  }
+
+  /** Forgot-password: always returns ok (never leaks whether the email exists). */
+  async requestPasswordReset(input: { email?: unknown }, requestId?: string) {
+    const email = typeof input.email === "string" ? input.email : "";
+    const found = this.findPrincipalByEmail(email);
+    if (found && found.principal.status === "active") {
+      const reset: PasswordResetToken = {
+        token: createId("reset"),
+        principalType: found.type,
+        principalId: found.principal.id,
+        tenantId: found.type === "platform" ? PLATFORM_SCOPE : (found.principal as User).tenantId,
+        expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+        createdAt: nowIso()
+      };
+      this.data.passwordResetTokens.push(reset);
+      await this.persistence.saveCollection("passwordResetTokens", this.data.passwordResetTokens);
+      if (found.principal.email) {
+        const link = `${this.appBaseUrl(found.type)}/reset-password?token=${reset.token}`;
+        await this.email.send(passwordResetEmail(found.principal.email, link));
+      }
+      await this.auditAuth("auth.password_reset_requested", found.type, found.principal, requestId, {});
+    }
+    return { ok: true, message: "If that email exists, a reset link has been sent." };
+  }
+
+  async resetPassword(input: { token?: unknown; newPassword?: unknown }, requestId?: string) {
+    const token = ensureString(input.token, "token");
+    const newPassword = ensureString(input.newPassword, "newPassword");
+    const reset = this.data.passwordResetTokens.find((entry) => entry.token === token);
+    if (!reset || reset.usedAt || new Date(reset.expiresAt).getTime() <= Date.now()) {
+      throw new ApiError(400, "Reset link is invalid or expired.");
+    }
+    const principal = this.loadPrincipal(reset.principalType, reset.principalId);
+    if (!principal) {
+      throw new ApiError(400, "Account not found.");
+    }
+    this.applyNewPassword(principal, newPassword);
+    reset.usedAt = nowIso();
+    await this.persistPrincipal(reset.principalType);
+    await this.persistence.saveCollection("passwordResetTokens", this.data.passwordResetTokens);
+    await this.auditAuth("auth.password_reset", reset.principalType, principal, requestId, {});
+    return { ok: true, message: "Password updated. You can now sign in." };
+  }
+
+  async changePassword(context: RequestContext, input: { currentPassword?: unknown; newPassword?: unknown }) {
+    const type: PrincipalType = context.actorType === "platform" ? "platform" : "staff";
+    const principal = this.loadPrincipal(type, context.actorId);
+    if (!principal) {
+      throw new ApiError(404, "Account not found.");
+    }
+    const current = ensureString(input.currentPassword, "currentPassword");
+    const newPassword = ensureString(input.newPassword, "newPassword");
+    if (!verifyPassword(current, { hash: principal.passwordHash ?? "", salt: principal.passwordSalt ?? "" })) {
+      throw new ApiError(401, "Current password is incorrect.");
+    }
+    this.applyNewPassword(principal, newPassword);
+    await this.persistPrincipal(type);
+    await this.auditAuth("auth.password_change", type, principal, undefined, {});
+    // Issue a fresh token carrying the bumped credentialVersion so the caller stays signed in.
+    const issued = this.issueToken(type, principal);
+    return { ok: true, token: issued.token, expiresAt: issued.expiresAt };
+  }
+
+  /** Set a new password: hash, bump credentialVersion (kills old tokens), clear reset/lock. */
+  private applyNewPassword(principal: User | PlatformAdmin, newPassword: string) {
+    const cred = hashPassword(newPassword);
+    principal.passwordHash = cred.hash;
+    principal.passwordSalt = cred.salt;
+    principal.credentialVersion += 1;
+    principal.mustResetPassword = false;
+    principal.failedLoginAttempts = 0;
+    principal.lockedUntil = undefined;
+  }
+
+  private async auditAuth(
+    action: AuditEvent["action"],
+    type: PrincipalType,
+    principal: User | PlatformAdmin | undefined,
+    requestId: string | undefined,
+    details: Record<string, unknown>
+  ) {
+    const event: AuditEvent = {
+      id: createId("audit"),
+      tenantId: type === "platform" ? PLATFORM_SCOPE : ((principal as User | undefined)?.tenantId ?? "unknown"),
+      actorType: type === "platform" ? "platform" : "staff",
+      actorId: principal?.id ?? "anonymous",
+      actorDisplayName: principal?.displayName ?? "Unknown",
+      action,
+      resourceType: type === "platform" ? "platform_admin" : "user",
+      resourceId: principal?.id,
+      requestId,
+      details,
+      createdAt: nowIso()
+    };
+    this.data.auditEvents.push(event);
+    await this.persistence.saveCollection("auditEvents", this.data.auditEvents);
+  }
+
+  /** Dev-only: read the console email outbox (OTP codes / reset links) for testing. */
+  getDevOutbox(): OutboxEntry[] {
+    return this.email.recentOutbox(20);
+  }
+
+  // ---- Hospital user management (org admin) ---------------------------------
+
+  private userView(user: User) {
+    return {
+      id: user.id,
+      tenantId: user.tenantId,
+      displayName: user.displayName,
+      email: user.email,
+      roles: user.roles,
+      branchIds: user.branchIds,
+      status: user.status,
+      mfaEnabled: Boolean(user.mfaEnabled),
+      mustResetPassword: Boolean(user.mustResetPassword),
+      lastLoginAt: user.lastLoginAt,
+      createdAt: user.createdAt
+    };
+  }
+
+  private tenantSeatUsage(tenantId: string) {
+    const org = this.data.organizations.find((entry) => entry.id === tenantId);
+    const used = this.data.users.filter((entry) => entry.tenantId === tenantId && entry.status !== "inactive").length;
+    const limit = org ? resolveSeatLimit(org.planId, org.seatLimitOverride) : null;
+    return { used, limit };
+  }
+
+  private emailTaken(email: string): boolean {
+    const normalized = email.toLowerCase();
+    return (
+      this.data.users.some((entry) => (entry.email ?? "").toLowerCase() === normalized) ||
+      this.data.platformAdmins.some((entry) => entry.email.toLowerCase() === normalized)
+    );
+  }
+
+  listUsers(context: RequestContext) {
+    const { used, limit } = this.tenantSeatUsage(context.tenantId);
+    return {
+      users: this.data.users
+        .filter((entry) => entry.tenantId === context.tenantId)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName))
+        .map((entry) => this.userView(entry)),
+      seats: { used, limit },
+      mfaPolicy: this.data.organizations.find((entry) => entry.id === context.tenantId)?.mfaPolicy ?? "optional"
+    };
+  }
+
+  async createUser(context: RequestContext, input: Record<string, unknown>) {
+    const displayName = ensureString(input.displayName, "displayName");
+    const email = ensureString(input.email, "email").toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new ApiError(400, "A valid email is required.");
+    }
+    if (this.emailTaken(email)) {
+      throw new ApiError(409, "That email is already in use.");
+    }
+    const { used, limit } = this.tenantSeatUsage(context.tenantId);
+    if (limit !== null && used >= limit) {
+      throw new ApiError(403, `Seat limit reached (${limit}). Upgrade the plan or deactivate a user to add more.`);
+    }
+    const roles = this.sanitizeStaffRoles(input.roles);
+    const branchIds = Array.isArray(input.branchIds)
+      ? (input.branchIds.filter((b) => typeof b === "string") as string[])
+      : [];
+    const tempPassword = typeof input.password === "string" && input.password.length >= 8 ? input.password : generateTempPassword();
+    const cred = hashPassword(tempPassword);
+    const timestamp = nowIso();
+    const user: User = {
+      id: createId("user"),
+      tenantId: context.tenantId,
+      displayName,
+      email,
+      roles,
+      branchIds,
+      status: "active",
+      passwordHash: cred.hash,
+      passwordSalt: cred.salt,
+      credentialVersion: 0,
+      mustResetPassword: true,
+      createdAt: timestamp
+    };
+    this.data.users.push(user);
+    await this.persistence.saveCollection("users", this.data.users);
+    await this.audit(context, "user.create", "user", user.id, undefined, { email, roles });
+    if (user.email) {
+      await this.email.send(inviteEmail(user.email, `${this.appBaseUrl("staff")}/login`, tempPassword));
+    }
+    return { user: this.userView(user), tempPassword };
+  }
+
+  async updateUser(context: RequestContext, userId: string, input: Record<string, unknown>) {
+    const user = this.data.users.find((entry) => entry.id === userId && entry.tenantId === context.tenantId);
+    if (!user) {
+      throw new ApiError(404, `User not found: ${userId}`);
+    }
+    if (typeof input.displayName === "string" && input.displayName.trim()) {
+      user.displayName = input.displayName.trim();
+    }
+    if (input.roles !== undefined) {
+      user.roles = this.sanitizeStaffRoles(input.roles);
+    }
+    if (Array.isArray(input.branchIds)) {
+      user.branchIds = input.branchIds.filter((b) => typeof b === "string") as string[];
+    }
+    if (typeof input.mfaEnabled === "boolean") {
+      user.mfaEnabled = input.mfaEnabled;
+    }
+    if (input.status === "active" || input.status === "inactive" || input.status === "suspended") {
+      if (input.status !== "active" && user.status === "active") {
+        user.credentialVersion += 1; // force-logout on suspend/deactivate
+      }
+      user.status = input.status;
+    }
+    await this.persistence.saveCollection("users", this.data.users);
+    await this.audit(context, "user.update", "user", user.id, undefined, { status: user.status, roles: user.roles });
+    return { user: this.userView(user) };
+  }
+
+  async resetUserPassword(context: RequestContext, userId: string) {
+    const user = this.data.users.find((entry) => entry.id === userId && entry.tenantId === context.tenantId);
+    if (!user) {
+      throw new ApiError(404, `User not found: ${userId}`);
+    }
+    const tempPassword = generateTempPassword();
+    const cred = hashPassword(tempPassword);
+    user.passwordHash = cred.hash;
+    user.passwordSalt = cred.salt;
+    user.credentialVersion += 1;
+    user.mustResetPassword = true;
+    await this.persistence.saveCollection("users", this.data.users);
+    await this.audit(context, "user.update", "user", user.id, undefined, { action: "password_reset" });
+    if (user.email) {
+      await this.email.send(inviteEmail(user.email, `${this.appBaseUrl("staff")}/login`, tempPassword));
+    }
+    return { ok: true, tempPassword };
+  }
+
+  async updateTenantSettings(context: RequestContext, input: Record<string, unknown>) {
+    const org = this.data.organizations.find((entry) => entry.id === context.tenantId);
+    if (!org) {
+      throw new ApiError(404, "Tenant not found.");
+    }
+    if (input.mfaPolicy === "optional" || input.mfaPolicy === "required") {
+      org.mfaPolicy = input.mfaPolicy;
+    }
+    await this.persistence.saveCollection("organizations", this.data.organizations);
+    await this.audit(context, "tenant.settings_update", "tenant", org.id, undefined, { mfaPolicy: org.mfaPolicy });
+    return { ok: true, mfaPolicy: org.mfaPolicy ?? "optional" };
+  }
+
+  private sanitizeStaffRoles(value: unknown): Role[] {
+    const allowed: Role[] = ["front_desk", "call_center", "care_coordinator", "nurse", "doctor", "admin", "org_admin"];
+    const list = Array.isArray(value) ? value : [];
+    const roles = list.filter((r): r is Role => typeof r === "string" && (allowed as string[]).includes(r));
+    return roles.length ? roles : ["front_desk"];
+  }
+
+  // ---- Platform admin management (superadmin) -------------------------------
+
+  private platformAdminView(admin: PlatformAdmin) {
+    return {
+      id: admin.id,
+      email: admin.email,
+      displayName: admin.displayName,
+      roles: admin.roles,
+      status: admin.status,
+      mfaEnabled: Boolean(admin.mfaEnabled),
+      mustResetPassword: Boolean(admin.mustResetPassword),
+      lastLoginAt: admin.lastLoginAt,
+      createdAt: admin.createdAt
+    };
+  }
+
+  listPlatformAdmins() {
+    return this.data.platformAdmins
+      .slice()
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      .map((entry) => this.platformAdminView(entry));
+  }
+
+  async createPlatformAdmin(context: RequestContext, input: Record<string, unknown>) {
+    const displayName = ensureString(input.displayName, "displayName");
+    const email = ensureString(input.email, "email").toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new ApiError(400, "A valid email is required.");
+    }
+    if (this.emailTaken(email)) {
+      throw new ApiError(409, "That email is already in use.");
+    }
+    const tempPassword = typeof input.password === "string" && input.password.length >= 8 ? input.password : generateTempPassword();
+    const cred = hashPassword(tempPassword);
+    const admin: PlatformAdmin = {
+      id: createId("padmin"),
+      email,
+      displayName,
+      roles: ["platform_admin"],
+      status: "active",
+      passwordHash: cred.hash,
+      passwordSalt: cred.salt,
+      credentialVersion: 0,
+      mustResetPassword: true,
+      createdAt: nowIso()
+    };
+    this.data.platformAdmins.push(admin);
+    await this.persistence.saveCollection("platformAdmins", this.data.platformAdmins);
+    await this.auditAuth("platform_admin.create", "platform", admin, undefined, { byAdmin: context.actorId, email });
+    await this.email.send(inviteEmail(admin.email, `${this.appBaseUrl("platform")}/login`, tempPassword));
+    return { admin: this.platformAdminView(admin), tempPassword };
+  }
+
+  async updatePlatformAdmin(context: RequestContext, adminId: string, input: Record<string, unknown>) {
+    const admin = this.data.platformAdmins.find((entry) => entry.id === adminId);
+    if (!admin) {
+      throw new ApiError(404, `Platform admin not found: ${adminId}`);
+    }
+    if (admin.id === context.actorId && input.status && input.status !== "active") {
+      throw new ApiError(400, "You cannot deactivate your own account.");
+    }
+    if (typeof input.displayName === "string" && input.displayName.trim()) {
+      admin.displayName = input.displayName.trim();
+    }
+    if (input.status === "active" || input.status === "inactive" || input.status === "suspended") {
+      if (input.status !== "active" && admin.status === "active") {
+        admin.credentialVersion += 1;
+      }
+      admin.status = input.status;
+    }
+    await this.persistence.saveCollection("platformAdmins", this.data.platformAdmins);
+    await this.auditAuth("platform_admin.update", "platform", admin, undefined, { byAdmin: context.actorId, status: admin.status });
+    return { admin: this.platformAdminView(admin) };
+  }
+
   // ---- Platform tier (HealthOS superadmin) ----------------------------------
 
   listPlans() {
@@ -656,6 +1224,7 @@ export class CoreService {
   }
 
   private tenantView(org: Organization) {
+    const seats = this.tenantSeatUsage(org.id);
     return {
       id: org.id,
       displayName: org.displayName,
@@ -664,6 +1233,9 @@ export class CoreService {
       planId: org.planId,
       moduleOverrides: org.moduleOverrides ?? {},
       enabledModules: resolveEnabledModules(org.planId, org.moduleOverrides),
+      seatLimit: seats.limit,
+      seatsUsed: seats.used,
+      mfaPolicy: org.mfaPolicy ?? "optional",
       branchCount: this.data.branches.filter((entry) => entry.tenantId === org.id).length,
       userCount: this.data.users.filter((entry) => entry.tenantId === org.id).length,
       createdAt: org.createdAt
@@ -699,9 +1271,18 @@ export class CoreService {
     const planId: PlanId = isPlanId(input.planId) ? input.planId : DEFAULT_PLAN_ID;
     const branchName = ensureString(input.branchName, "branchName");
     const adminName = ensureString(input.adminName, "adminName");
-    const adminEmail = typeof input.adminEmail === "string" ? input.adminEmail : undefined;
+    const adminEmail = ensureString(input.adminEmail, "adminEmail").toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adminEmail)) {
+      throw new ApiError(400, "A valid admin email is required.");
+    }
+    if (this.emailTaken(adminEmail)) {
+      throw new ApiError(409, "That admin email is already in use.");
+    }
     const branchCity = typeof input.branchCity === "string" ? input.branchCity : "";
     const moduleOverrides = sanitizeModuleOverrides(input.moduleOverrides);
+    const adminPassword =
+      typeof input.adminPassword === "string" && input.adminPassword.length >= 8 ? input.adminPassword : generateTempPassword();
+    const adminCred = hashPassword(adminPassword);
     const timestamp = nowIso();
 
     const slug = displayName
@@ -736,6 +1317,10 @@ export class CoreService {
       roles: ["org_admin"],
       branchIds: [branch.id],
       status: "active",
+      passwordHash: adminCred.hash,
+      passwordSalt: adminCred.salt,
+      credentialVersion: 0,
+      mustResetPassword: true,
       createdAt: timestamp
     };
 
@@ -752,8 +1337,10 @@ export class CoreService {
       branchId: branch.id,
       adminId: admin.id
     });
+    // Email the new hospital admin their sign-in + temporary password.
+    await this.email.send(inviteEmail(adminEmail, `${this.appBaseUrl("staff")}/login`, adminPassword));
 
-    return this.getTenant(tenantId);
+    return { ...this.getTenant(tenantId), adminCredentials: { email: adminEmail, tempPassword: adminPassword } };
   }
 
   async updateTenant(context: RequestContext, tenantId: string, input: Record<string, unknown>) {
@@ -777,6 +1364,12 @@ export class CoreService {
       const overrides = sanitizeModuleOverrides(input.moduleOverrides);
       if (overrides) org.moduleOverrides = overrides;
       else delete org.moduleOverrides;
+    }
+    if (input.seatLimitOverride === null || typeof input.seatLimitOverride === "number") {
+      org.seatLimitOverride = input.seatLimitOverride;
+    }
+    if (input.mfaPolicy === "optional" || input.mfaPolicy === "required") {
+      org.mfaPolicy = input.mfaPolicy;
     }
     await this.persistence.saveCollection("organizations", this.data.organizations);
     await this.audit(context, "tenant.update", "tenant", tenantId, undefined, {

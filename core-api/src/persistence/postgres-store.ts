@@ -12,6 +12,9 @@ const collections: CollectionName[] = [
   "organizations",
   "branches",
   "users",
+  "platformAdmins",
+  "loginChallenges",
+  "passwordResetTokens",
   "apiKeys",
   "households",
   "patients",
@@ -223,7 +226,8 @@ function recordId(collection: CollectionName, record: unknown): string {
     throw new Error(`Cannot persist invalid ${collection} record.`);
   }
 
-  const value = collection === "sessions" ? record.token : record.id;
+  const tokenKeyed = collection === "sessions" || collection === "loginChallenges" || collection === "passwordResetTokens";
+  const value = tokenKeyed ? record.token : record.id;
   if (typeof value !== "string" || !value) {
     throw new Error(`Cannot persist ${collection} record without id.`);
   }

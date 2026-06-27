@@ -52,6 +52,8 @@ export type Plan = {
   label: string;
   description: string;
   modules: ModuleKey[];
+  /** Default staff seat limit for the plan (null = unlimited). Org can override. */
+  maxUsers: number | null;
 };
 
 const STARTER_MODULES: ModuleKey[] = ["today", "inbox", "patients", "access", "admin"];
@@ -59,10 +61,18 @@ const PRO_MODULES: ModuleKey[] = [...STARTER_MODULES, "journeys", "continuity", 
 const ENTERPRISE_MODULES: ModuleKey[] = [...PRO_MODULES, "care_recovery", "operations"];
 
 export const PLAN_CATALOG: Plan[] = [
-  { id: "starter", label: "Starter", description: "Front-desk essentials for a single clinic.", modules: STARTER_MODULES },
-  { id: "pro", label: "Pro", description: "Continuity, journeys, campaigns, and ROI.", modules: PRO_MODULES },
-  { id: "enterprise", label: "Enterprise", description: "Full suite incl. care recovery and operations.", modules: ENTERPRISE_MODULES }
+  { id: "starter", label: "Starter", description: "Front-desk essentials for a single clinic.", modules: STARTER_MODULES, maxUsers: 5 },
+  { id: "pro", label: "Pro", description: "Continuity, journeys, campaigns, and ROI.", modules: PRO_MODULES, maxUsers: 25 },
+  { id: "enterprise", label: "Enterprise", description: "Full suite incl. care recovery and operations.", modules: ENTERPRISE_MODULES, maxUsers: null }
 ];
+
+/** Effective staff seat limit for a tenant: per-tenant override wins, else plan default. */
+export const resolveSeatLimit = (planId: PlanId, seatLimitOverride?: number | null): number | null => {
+  if (seatLimitOverride !== undefined) {
+    return seatLimitOverride;
+  }
+  return planById(planId).maxUsers;
+};
 
 export const DEFAULT_PLAN_ID: PlanId = "pro";
 

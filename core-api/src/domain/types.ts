@@ -57,9 +57,14 @@ export type Permission =
   | "journeys:update"
   | "audit:read"
   | "service_events:ingest"
+  | "users:read"
+  | "users:manage"
+  | "tenant:settings:manage"
   | "platform:tenants:read"
   | "platform:tenants:manage"
-  | "platform:entitlements:manage";
+  | "platform:entitlements:manage"
+  | "platform:admins:read"
+  | "platform:admins:manage";
 
 export type TenantType = "hospital" | "clinic";
 
@@ -73,6 +78,10 @@ export type Organization = {
   planId: PlanId;
   /** Per-module on/off overrides on top of the plan bundle (sparse). */
   moduleOverrides?: Partial<Record<ModuleKey, boolean>>;
+  /** Superadmin override of the plan's default seat limit (null = unlimited). */
+  seatLimitOverride?: number | null;
+  /** Tenant-wide 2FA stance; "required" forces email-OTP for all staff. */
+  mfaPolicy?: "optional" | "required";
   createdAt: string;
 };
 
@@ -85,14 +94,66 @@ export type Branch = {
   createdAt: string;
 };
 
-export type User = {
+/** Credentials + auth lifecycle shared by staff users and platform admins. */
+export type AuthCredentials = {
+  passwordHash?: string;
+  passwordSalt?: string;
+  /** Bumped on password reset / suspend / MFA change to invalidate live tokens. */
+  credentialVersion: number;
+  /** True until a forced first-login password reset is completed. */
+  mustResetPassword?: boolean;
+  /** Per-principal email-OTP 2FA opt-in (a tenant policy of "required" overrides). */
+  mfaEnabled?: boolean;
+  lastLoginAt?: string;
+  failedLoginAttempts?: number;
+  lockedUntil?: string;
+};
+
+export type User = AuthCredentials & {
   id: string;
   tenantId: string;
   displayName: string;
   email?: string;
   roles: Role[];
   branchIds: string[];
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "suspended";
+  createdAt: string;
+};
+
+/** HealthOS superadmin (platform tier). Not tenant-scoped — global rows. */
+export type PlatformAdmin = AuthCredentials & {
+  id: string;
+  email: string;
+  displayName: string;
+  roles: Extract<Role, "platform_admin">[];
+  status: "active" | "inactive" | "suspended";
+  createdAt: string;
+};
+
+export type PrincipalType = "staff" | "platform";
+
+/** Short-lived email-OTP challenge issued mid-login. Persisted, keyed by token. */
+export type LoginChallenge = {
+  token: string;
+  principalType: PrincipalType;
+  principalId: string;
+  tenantId: string;
+  codeHash: string;
+  codeSalt: string;
+  purpose: "login_mfa";
+  attempts: number;
+  expiresAt: string;
+  createdAt: string;
+};
+
+/** Short-lived single-use password reset token. Persisted, keyed by token. */
+export type PasswordResetToken = {
+  token: string;
+  principalType: PrincipalType;
+  principalId: string;
+  tenantId: string;
+  expiresAt: string;
+  usedAt?: string;
   createdAt: string;
 };
 
@@ -148,7 +209,19 @@ export type AuditEvent = {
     | "workflow.trigger"
     | "service_webhook.intake"
     | "tenant.create"
-    | "tenant.update";
+    | "tenant.update"
+    | "tenant.settings_update"
+    | "auth.login"
+    | "auth.login_failed"
+    | "auth.logout"
+    | "auth.mfa_challenge"
+    | "auth.password_reset_requested"
+    | "auth.password_reset"
+    | "auth.password_change"
+    | "user.create"
+    | "user.update"
+    | "platform_admin.create"
+    | "platform_admin.update";
   resourceType: string;
   resourceId?: string;
   patientId?: string;

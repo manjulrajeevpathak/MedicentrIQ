@@ -1,10 +1,22 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
+export type SessionScope = "staff" | "platform";
+
 export type StaffSessionPayload = {
   version: 1;
   sessionId: string;
+  /** "staff" → tenantId is the hospital; "platform" → tenantId is the platform sentinel. */
+  scope: SessionScope;
   tenantId: string;
   userId: string;
+  /**
+   * Snapshot of the principal's credentialVersion at issue time. authenticate()
+   * rejects the token if the principal's current version is higher — so a
+   * password reset / suspend / 2FA change instantly invalidates live tokens.
+   */
+  credentialVersion: number;
+  /** True until the user completes a forced first-login password reset. */
+  mustResetPassword?: boolean;
   issuedAt: string;
   expiresAt: string;
 };
@@ -22,6 +34,9 @@ export const createStaffSessionToken = (
   input: {
     tenantId: string;
     userId: string;
+    scope?: SessionScope;
+    credentialVersion?: number;
+    mustResetPassword?: boolean;
     expiresInSeconds?: number;
   },
   secret: string
@@ -31,8 +46,11 @@ export const createStaffSessionToken = (
   const payload: StaffSessionPayload = {
     version: 1,
     sessionId: randomUUID(),
+    scope: input.scope ?? "staff",
     tenantId: input.tenantId,
     userId: input.userId,
+    credentialVersion: input.credentialVersion ?? 0,
+    ...(input.mustResetPassword ? { mustResetPassword: true } : {}),
     issuedAt: issuedAt.toISOString(),
     expiresAt: expiresAt.toISOString()
   };
@@ -62,8 +80,10 @@ export const verifyStaffSessionToken = (token: string, secret: string): StaffSes
   if (
     payload.version !== 1 ||
     typeof payload.sessionId !== "string" ||
+    (payload.scope !== "staff" && payload.scope !== "platform") ||
     typeof payload.tenantId !== "string" ||
     typeof payload.userId !== "string" ||
+    typeof payload.credentialVersion !== "number" ||
     typeof payload.issuedAt !== "string" ||
     typeof payload.expiresAt !== "string"
   ) {

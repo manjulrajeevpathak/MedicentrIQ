@@ -79,7 +79,7 @@ describe("staff signed session contract", () => {
     const body = (await response.json()) as JsonObject;
 
     assert.equal(response.status, 401);
-    assert.match(String((body.error as JsonObject)?.message), /Invalid or expired staff session/);
+    assert.match(String((body.error as JsonObject)?.message), /Invalid or expired session/);
   });
 
   it("rejects expired staff session tokens", async () => {
@@ -95,7 +95,7 @@ describe("staff signed session contract", () => {
     const body = (await response.json()) as JsonObject;
 
     assert.equal(response.status, 401);
-    assert.match(String((body.error as JsonObject)?.message), /Invalid or expired staff session/);
+    assert.match(String((body.error as JsonObject)?.message), /Invalid or expired session/);
   });
 
   it("still rejects protected staff APIs without auth", async () => {
