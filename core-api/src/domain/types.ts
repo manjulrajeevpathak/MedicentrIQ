@@ -75,6 +75,9 @@ export type Permission =
   | "users:manage"
   | "messages:send"
   | "tenant:settings:manage"
+  | "leads:read"
+  | "leads:manage"
+  | "forms:manage"
   | "platform:tenants:read"
   | "platform:tenants:manage"
   | "platform:entitlements:manage"
@@ -214,6 +217,61 @@ export type MessageLog = {
   createdAt: string;
 };
 
+// ---- Leads & data sources (top of funnel) ---------------------------------
+
+export type LeadSource = "camp" | "meta" | "referral" | "form" | "import" | "walk_in";
+export type LeadStage = "new" | "contacted" | "qualified" | "booked" | "converted" | "lost";
+
+/** A person who entered from marketing/top-of-funnel and may convert into a Patient. */
+export type Lead = {
+  id: string;
+  tenantId: string;
+  name: string;
+  phone: string;
+  email?: string;
+  source: LeadSource;
+  /** e.g. campaign/camp name, form title. */
+  sourceDetail?: string;
+  stage: LeadStage;
+  /** Staff user id the lead is assigned to. */
+  assignedTo?: string;
+  branchId?: string;
+  /** Captured custom fields (from a form/import). */
+  formData?: Record<string, string>;
+  notes?: string;
+  /** Set once the lead converts into a clinical Patient record. */
+  convertedPatientId?: string;
+  /** Hint set at creation when the phone matches an existing patient (no auto-convert). */
+  matchedPatientId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LeadFormFieldType = "text" | "phone" | "email" | "number" | "select" | "textarea";
+
+export type LeadFormField = {
+  key: string;
+  label: string;
+  type: LeadFormFieldType;
+  required?: boolean;
+  options?: string[];
+};
+
+/** A public form (e.g. for a camp) that captures Leads via a tenant-scoped slug. */
+export type LeadForm = {
+  id: string;
+  tenantId: string;
+  title: string;
+  description?: string;
+  /** Public, unique-ish within the tenant. */
+  slug: string;
+  fields: LeadFormField[];
+  status: "active" | "inactive";
+  branchId?: string;
+  submissions: number;
+  createdAt: string;
+};
+
 export type RequestContext = {
   actorType: ActorType;
   tenantId: string;
@@ -266,6 +324,12 @@ export type AuditEvent = {
     | "tenant.update"
     | "tenant.settings_update"
     | "message.send"
+    | "lead.create"
+    | "lead.update"
+    | "lead.convert"
+    | "lead.import"
+    | "form.create"
+    | "form.submit"
     | "auth.login"
     | "auth.login_failed"
     | "auth.logout"

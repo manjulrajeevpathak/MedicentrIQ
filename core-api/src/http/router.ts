@@ -337,6 +337,31 @@ const createRoutes = (service: CoreService): Route[] => [
     service.updateJourneyTask(auth, params.taskId, toRecord(body))
   ),
 
+  // Leads & data sources.
+  route("GET", "/leads", "leads:read", ({ auth, query }) =>
+    service.listLeads(auth, {
+      stage: query.get("stage") ?? undefined,
+      source: query.get("source") ?? undefined,
+      assignedTo: query.get("assignedTo") ?? undefined
+    }), "leads"
+  ),
+  route("GET", "/leads/funnel", "leads:read", ({ auth }) => service.getLeadFunnel(auth), "leads"),
+  route("POST", "/leads", "leads:manage", ({ auth, body }) => service.createLead(auth, toRecord(body)), "leads"),
+  route("POST", "/leads/import", "leads:manage", ({ auth, body }) => service.importLeads(auth, toRecord(body)), "leads"),
+  route("PATCH", "/leads/:leadId", "leads:manage", ({ auth, params, body }) =>
+    service.updateLead(auth, params.leadId, toRecord(body)), "leads"
+  ),
+  route("POST", "/leads/:leadId/convert", "leads:manage", ({ auth, params, body }) =>
+    service.convertLead(auth, params.leadId, toRecord(body)), "leads"
+  ),
+
+  // Lead forms (camp registration). List uses leads:read; writes need forms:manage.
+  route("GET", "/forms", "leads:read", ({ auth }) => service.listForms(auth), "leads"),
+  route("POST", "/forms", "forms:manage", ({ auth, body }) => service.createForm(auth, toRecord(body)), "leads"),
+  route("PATCH", "/forms/:formId", "forms:manage", ({ auth, params, body }) =>
+    service.updateForm(auth, params.formId, toRecord(body)), "leads"
+  ),
+
   route("POST", "/service-events/integration", "service_events:ingest", ({ auth, body }) =>
     service.intakeIntegrationEvent(auth, toRecord(body))
   ),
@@ -409,6 +434,23 @@ export const createApiServer = (service: CoreService) =>
         sendJson(response, 200, { data: await service.resetPassword(toRecord(await parseJsonBody(request))) });
         return;
       }
+      // Public lead-capture forms (no auth). core-api holds all tenants in memory /
+      // connects with platform DB scope, so it can read/write the form's own tenant.
+      {
+        const publicFormMatch = /^\/public\/forms\/([^/]+)$/.exec(url.pathname);
+        if (method === "GET" && publicFormMatch) {
+          const slug = decodeURIComponent(publicFormMatch[1]);
+          sendJson(response, 200, { data: service.getPublicForm(slug) });
+          return;
+        }
+        const publicSubmitMatch = /^\/public\/forms\/([^/]+)\/submit$/.exec(url.pathname);
+        if (method === "POST" && publicSubmitMatch) {
+          const slug = decodeURIComponent(publicSubmitMatch[1]);
+          sendJson(response, 200, { data: await service.submitPublicForm(slug, toRecord(await parseJsonBody(request))) });
+          return;
+        }
+      }
+
       if (method === "GET" && url.pathname === "/auth/dev/outbox") {
         if (process.env.NODE_ENV === "production") {
           throw new ApiError(404, "Not found");

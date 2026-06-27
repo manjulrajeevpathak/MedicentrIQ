@@ -12,6 +12,8 @@ import type {
   JourneyEvent,
   JourneyTask,
   JourneyTemplate,
+  Lead,
+  LeadForm,
   LoginChallenge,
   MessageLog,
   MobileLinkSession,
@@ -76,6 +78,8 @@ export type SeedData = {
   patientJourneys: PatientJourney[];
   journeyTasks: JourneyTask[];
   journeyEvents: JourneyEvent[];
+  leads: Lead[];
+  forms: LeadForm[];
   auditEvents: AuditEvent[];
 };
 
@@ -604,6 +608,86 @@ export const createSeedData = (): SeedData => ({
       occurredAt: daysFromNow(-1)
     }
   ],
+  leads: [
+    {
+      id: "lead_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      name: "Sunita Reddy",
+      phone: "+919845012345",
+      email: "sunita.reddy@example.com",
+      source: "camp",
+      sourceDetail: "Free Eye Camp - Indiranagar",
+      stage: "new",
+      branchId: DEMO_BRANCH_IND,
+      formData: { age: "58", "village/area": "Indiranagar" },
+      notes: "Walked up at the camp registration desk.",
+      createdAt: daysFromNow(-4),
+      updatedAt: daysFromNow(-4)
+    },
+    {
+      id: "lead_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      name: "Imran Khan",
+      phone: "+919845067890",
+      source: "meta",
+      sourceDetail: "Cataract awareness - Meta lead form",
+      stage: "contacted",
+      assignedTo: DEMO_STAFF_USER_ID,
+      branchId: DEMO_BRANCH_IND,
+      notes: "Called once, asked to follow up next week.",
+      createdAt: daysFromNow(-3),
+      updatedAt: daysFromNow(-2)
+    },
+    {
+      id: "lead_demo_003",
+      tenantId: DEMO_TENANT_ID,
+      name: "Lakshmi Narayan",
+      phone: "+919845099111",
+      email: "lakshmi.n@example.com",
+      source: "referral",
+      sourceDetail: "Referred by Dr. Vikram Iyer",
+      stage: "qualified",
+      assignedTo: "user_demo_coordinator",
+      branchId: DEMO_BRANCH_WFD,
+      notes: "Diabetic retinopathy screening candidate.",
+      createdAt: daysFromNow(-2),
+      updatedAt: daysFromNow(-1)
+    },
+    {
+      id: "lead_demo_004",
+      tenantId: DEMO_TENANT_ID,
+      name: "Anita Sharma",
+      phone: "+919876543210",
+      source: "walk_in",
+      sourceDetail: "Front desk walk-in",
+      stage: "converted",
+      branchId: DEMO_BRANCH_IND,
+      convertedPatientId: "patient_demo_001",
+      matchedPatientId: "patient_demo_001",
+      notes: "Converted into existing patient record.",
+      createdAt: daysFromNow(-20),
+      updatedAt: daysFromNow(-19)
+    }
+  ],
+  forms: [
+    {
+      id: "form_demo_eye_camp",
+      tenantId: DEMO_TENANT_ID,
+      title: "Free Eye Camp Registration",
+      description: "Register for the free eye screening camp.",
+      slug: "free-eye-camp-registration",
+      fields: [
+        { key: "name", label: "Full name", type: "text", required: true },
+        { key: "phone", label: "Phone number", type: "phone", required: true },
+        { key: "age", label: "Age", type: "number" },
+        { key: "village/area", label: "Village / Area", type: "text" }
+      ],
+      status: "active",
+      branchId: DEMO_BRANCH_IND,
+      submissions: 0,
+      createdAt: daysFromNow(-10)
+    }
+  ],
   auditEvents: []
 });
 
@@ -652,6 +736,8 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     patientJourneys: withTenant(data.patientJourneys ?? []),
     journeyTasks: withTenant(data.journeyTasks ?? []),
     journeyEvents: withTenant(data.journeyEvents ?? []),
+    leads: data.leads?.length ? withTenant(data.leads) : seed.leads,
+    forms: data.forms?.length ? withTenant(data.forms) : seed.forms,
     auditEvents: withTenant(data.auditEvents ?? [])
   };
 };

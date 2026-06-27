@@ -15,6 +15,7 @@ export type ModuleKey =
   | "journeys"
   | "continuity"
   | "campaigns"
+  | "leads"
   | "operations"
   | "admin";
 
@@ -34,6 +35,7 @@ export const MODULE_CATALOG: ModuleDefinition[] = [
   { key: "journeys", label: "Care Journeys", description: "Specialty journey and protocol packs.", alwaysOn: false },
   { key: "continuity", label: "Continuity & Follow-up", description: "Follow-up journeys and protocol checklists.", alwaysOn: false },
   { key: "campaigns", label: "Campaigns", description: "WhatsApp templates and broadcasts.", alwaysOn: false },
+  { key: "leads", label: "Leads", description: "Top-of-funnel leads, data sources, and camp forms.", alwaysOn: false },
   { key: "operations", label: "Operations", description: "Service health, control-tower signals, audit feed.", alwaysOn: false },
   { key: "admin", label: "Admin", description: "Roles, permissions, governance.", alwaysOn: true }
 ];
@@ -53,7 +55,7 @@ export type Plan = {
 };
 
 const STARTER_MODULES: ModuleKey[] = ["today", "inbox", "patients", "access", "admin"];
-const PRO_MODULES: ModuleKey[] = [...STARTER_MODULES, "journeys", "continuity", "campaigns"];
+const PRO_MODULES: ModuleKey[] = [...STARTER_MODULES, "journeys", "continuity", "campaigns", "leads"];
 const ENTERPRISE_MODULES: ModuleKey[] = [...PRO_MODULES, "operations"];
 
 export const PLAN_CATALOG: Plan[] = [

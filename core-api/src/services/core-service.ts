@@ -37,6 +37,11 @@ import type {
   JourneyTask,
   JourneyTaskStatus,
   JourneyTemplate,
+  Lead,
+  LeadForm,
+  LeadFormField,
+  LeadSource,
+  LeadStage,
   MobileLinkSession,
   PatientJourney,
   PatientJourneyStatus,
@@ -342,6 +347,60 @@ type TriggerWorkflowInput = {
   trigger?: string;
 };
 
+type CreateLeadInput = {
+  name?: string;
+  phone?: string;
+  email?: string;
+  source?: string;
+  sourceDetail?: string;
+  stage?: string;
+  assignedTo?: string;
+  branchId?: string;
+  formData?: Record<string, string>;
+  notes?: string;
+};
+
+type UpdateLeadInput = {
+  name?: string;
+  phone?: string;
+  email?: string;
+  stage?: string;
+  assignedTo?: string | null;
+  branchId?: string;
+  notes?: string;
+  sourceDetail?: string;
+};
+
+type ConvertLeadInput = {
+  patientId?: string;
+};
+
+type ImportLeadsInput = {
+  source?: string;
+  rows?: Array<Record<string, unknown>>;
+  mapping?: { name?: string; phone?: string; email?: string };
+};
+
+type CreateFormInput = {
+  title?: string;
+  description?: string;
+  fields?: unknown;
+  status?: string;
+  branchId?: string;
+};
+
+type UpdateFormInput = {
+  title?: string;
+  description?: string;
+  fields?: unknown;
+  status?: string;
+  branchId?: string;
+};
+
+type PublicFormSubmitInput = {
+  values?: Record<string, unknown>;
+};
+
 export class ApiError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -449,6 +508,65 @@ const sanitizeModuleOverrides = (value: unknown): Partial<Record<ModuleKey, bool
     }
   }
   return Object.keys(overrides).length > 0 ? overrides : undefined;
+};
+
+const LEAD_SOURCES: LeadSource[] = ["camp", "meta", "referral", "form", "import", "walk_in"];
+const LEAD_STAGES: LeadStage[] = ["new", "contacted", "qualified", "booked", "converted", "lost"];
+const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email", "number", "select", "textarea"]);
+
+const sanitizeLeadSource = (value: unknown, fallback: LeadSource = "import"): LeadSource =>
+  typeof value === "string" && (LEAD_SOURCES as string[]).includes(value) ? (value as LeadSource) : fallback;
+
+const sanitizeLeadStage = (value: unknown, fallback: LeadStage): LeadStage =>
+  typeof value === "string" && (LEAD_STAGES as string[]).includes(value) ? (value as LeadStage) : fallback;
+
+/** Coerce an arbitrary object into a flat Record<string,string> (drops non-stringish values). */
+const sanitizeStringMap = (value: unknown): Record<string, string> | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const result: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw === "string") {
+      result[key] = raw;
+    } else if (typeof raw === "number" || typeof raw === "boolean") {
+      result[key] = String(raw);
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+};
+
+const sanitizeFormFields = (value: unknown): LeadFormField[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const fields: LeadFormField[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const candidate = entry as Record<string, unknown>;
+    const key = typeof candidate.key === "string" ? candidate.key.trim() : "";
+    const label = typeof candidate.label === "string" ? candidate.label.trim() : "";
+    if (!key || !label) {
+      continue;
+    }
+    const type = LEAD_FIELD_TYPES.has(candidate.type as LeadFormField["type"])
+      ? (candidate.type as LeadFormField["type"])
+      : "text";
+    const field: LeadFormField = { key, label, type };
+    if (candidate.required === true) {
+      field.required = true;
+    }
+    if (Array.isArray(candidate.options)) {
+      const options = candidate.options.filter((option): option is string => typeof option === "string" && option.trim().length > 0);
+      if (options.length > 0) {
+        field.options = options;
+      }
+    }
+    fields.push(field);
+  }
+  return fields;
 };
 
 const staffPriority = (priority: Priority): "critical" | "high" | "medium" | "low" =>
@@ -4083,6 +4201,342 @@ export class CoreService {
     return this.data.households.filter(
       (household) => household.tenantId === context.tenantId && this.canAccessHousehold(context, household)
     );
+  }
+
+  // ---- Leads & data sources ------------------------------------------------
+
+  listLeads(context: RequestContext, filters: { stage?: string; source?: string; assignedTo?: string } = {}) {
+    return this.data.leads
+      .filter((lead) => lead.tenantId === context.tenantId)
+      .filter((lead) => (filters.stage ? lead.stage === filters.stage : true))
+      .filter((lead) => (filters.source ? lead.source === filters.source : true))
+      .filter((lead) => (filters.assignedTo ? lead.assignedTo === filters.assignedTo : true))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  getLeadFunnel(context: RequestContext) {
+    const leads = this.data.leads.filter((lead) => lead.tenantId === context.tenantId);
+    const byStage: Record<LeadStage, number> = {
+      new: 0,
+      contacted: 0,
+      qualified: 0,
+      booked: 0,
+      converted: 0,
+      lost: 0
+    };
+    const bySource: Record<LeadSource, number> = {
+      camp: 0,
+      meta: 0,
+      referral: 0,
+      form: 0,
+      import: 0,
+      walk_in: 0
+    };
+    for (const lead of leads) {
+      byStage[lead.stage] += 1;
+      bySource[lead.source] += 1;
+    }
+    return { total: leads.length, byStage, bySource };
+  }
+
+  async createLead(context: RequestContext, input: CreateLeadInput) {
+    const lead = this.buildLead(context, input);
+    this.data.leads.push(lead);
+    await this.persistence.saveCollection("leads", this.data.leads);
+    await this.audit(context, "lead.create", "lead", lead.id, lead.convertedPatientId, {
+      source: lead.source,
+      stage: lead.stage,
+      matchedPatientId: lead.matchedPatientId
+    });
+    return lead;
+  }
+
+  /** Construct (but do not persist) a tenant-scoped Lead from raw input, with a
+   *  matchedPatientId hint when the phone matches an existing patient. */
+  private buildLead(context: RequestContext, input: CreateLeadInput): Lead {
+    const timestamp = nowIso();
+    const phone = ensureString(input.phone, "phone");
+    const lead: Lead = {
+      id: createId("lead"),
+      tenantId: context.tenantId,
+      name: ensureString(input.name, "name"),
+      phone,
+      email: typeof input.email === "string" && input.email.trim() ? input.email.trim() : undefined,
+      source: sanitizeLeadSource(input.source),
+      sourceDetail: typeof input.sourceDetail === "string" && input.sourceDetail.trim() ? input.sourceDetail.trim() : undefined,
+      stage: sanitizeLeadStage(input.stage, "new"),
+      assignedTo: typeof input.assignedTo === "string" && input.assignedTo.trim() ? input.assignedTo.trim() : undefined,
+      branchId: typeof input.branchId === "string" && input.branchId.trim() ? input.branchId.trim() : undefined,
+      formData: sanitizeStringMap(input.formData),
+      notes: typeof input.notes === "string" && input.notes.trim() ? input.notes.trim() : undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    const matched = this.findPatientByPhone(context.tenantId, phone);
+    if (matched) {
+      lead.matchedPatientId = matched.id;
+    }
+    return lead;
+  }
+
+  private findPatientByPhone(tenantId: string, phone: string): Patient | undefined {
+    const normalized = normalizePhone(phone);
+    if (!normalized) {
+      return undefined;
+    }
+    return this.data.patients.find(
+      (patient) => patient.tenantId === tenantId && normalizePhone(patient.primaryPhone) === normalized
+    );
+  }
+
+  private ensureLead(context: RequestContext, leadId: string): Lead {
+    const lead = this.data.leads.find((entry) => entry.id === leadId && entry.tenantId === context.tenantId);
+    if (!lead) {
+      throw new ApiError(404, `Lead not found: ${leadId}`);
+    }
+    return lead;
+  }
+
+  async updateLead(context: RequestContext, leadId: string, input: UpdateLeadInput) {
+    const lead = this.ensureLead(context, leadId);
+    if (typeof input.name === "string" && input.name.trim()) {
+      lead.name = input.name.trim();
+    }
+    if (typeof input.phone === "string" && input.phone.trim()) {
+      lead.phone = input.phone.trim();
+    }
+    if (input.email !== undefined) {
+      lead.email = typeof input.email === "string" && input.email.trim() ? input.email.trim() : undefined;
+    }
+    if (input.stage !== undefined) {
+      lead.stage = sanitizeLeadStage(input.stage, lead.stage);
+    }
+    if (input.assignedTo !== undefined) {
+      lead.assignedTo =
+        typeof input.assignedTo === "string" && input.assignedTo.trim() ? input.assignedTo.trim() : undefined;
+    }
+    if (input.branchId !== undefined) {
+      lead.branchId = typeof input.branchId === "string" && input.branchId.trim() ? input.branchId.trim() : undefined;
+    }
+    if (input.notes !== undefined) {
+      lead.notes = typeof input.notes === "string" && input.notes.trim() ? input.notes.trim() : undefined;
+    }
+    if (input.sourceDetail !== undefined) {
+      lead.sourceDetail =
+        typeof input.sourceDetail === "string" && input.sourceDetail.trim() ? input.sourceDetail.trim() : undefined;
+    }
+    lead.updatedAt = nowIso();
+    await this.persistence.saveCollection("leads", this.data.leads);
+    await this.audit(context, "lead.update", "lead", lead.id, lead.convertedPatientId, { stage: lead.stage });
+    return lead;
+  }
+
+  async convertLead(context: RequestContext, leadId: string, input: ConvertLeadInput) {
+    const lead = this.ensureLead(context, leadId);
+    let patientSummary: PatientSummary;
+    if (typeof input.patientId === "string" && input.patientId.trim()) {
+      const patient = this.ensureKnownPatient(context, input.patientId.trim());
+      patientSummary = this.summarizePatient(context, patient);
+      lead.convertedPatientId = patient.id;
+    } else {
+      patientSummary = await this.createPatient(context, {
+        displayName: lead.name,
+        primaryPhone: lead.phone,
+        branchId: lead.branchId
+      });
+      lead.convertedPatientId = patientSummary.id;
+    }
+    lead.stage = "converted";
+    lead.updatedAt = nowIso();
+    await this.persistence.saveCollection("leads", this.data.leads);
+    await this.audit(context, "lead.convert", "lead", lead.id, lead.convertedPatientId, {
+      linked: Boolean(input.patientId)
+    });
+    return patientSummary;
+  }
+
+  async importLeads(context: RequestContext, input: ImportLeadsInput) {
+    const rows = Array.isArray(input.rows) ? input.rows : [];
+    const source = sanitizeLeadSource(input.source, "import");
+    const mapping = input.mapping ?? {};
+    const nameKey = typeof mapping.name === "string" && mapping.name ? mapping.name : "name";
+    const phoneKey = typeof mapping.phone === "string" && mapping.phone ? mapping.phone : "phone";
+    const emailKey = typeof mapping.email === "string" && mapping.email ? mapping.email : "email";
+
+    const created: Lead[] = [];
+    const seenPhones = new Set<string>();
+    let skipped = 0;
+
+    for (const row of rows) {
+      const record = isPlainRecord(row) ? row : {};
+      const name = typeof record[nameKey] === "string" ? (record[nameKey] as string).trim() : "";
+      const phoneRaw = typeof record[phoneKey] === "string" ? (record[phoneKey] as string).trim() : "";
+      const normalized = normalizePhone(phoneRaw);
+      if (!name || !phoneRaw || !normalized || seenPhones.has(normalized)) {
+        skipped += 1;
+        continue;
+      }
+      seenPhones.add(normalized);
+      const email = typeof record[emailKey] === "string" ? (record[emailKey] as string).trim() : "";
+      const lead = this.buildLead(context, {
+        name,
+        phone: phoneRaw,
+        email: email || undefined,
+        source,
+        formData: sanitizeStringMap(record)
+      });
+      this.data.leads.push(lead);
+      created.push(lead);
+    }
+
+    if (created.length > 0) {
+      await this.persistence.saveCollection("leads", this.data.leads);
+    }
+    await this.audit(context, "lead.import", "lead", undefined, undefined, {
+      source,
+      created: created.length,
+      skipped
+    });
+    return { created: created.length, skipped };
+  }
+
+  // ---- Lead forms (camp registration) --------------------------------------
+
+  listForms(context: RequestContext) {
+    return this.data.forms
+      .filter((form) => form.tenantId === context.tenantId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async createForm(context: RequestContext, input: CreateFormInput) {
+    const title = ensureString(input.title, "title");
+    const form: LeadForm = {
+      id: createId("form"),
+      tenantId: context.tenantId,
+      title,
+      description: typeof input.description === "string" && input.description.trim() ? input.description.trim() : undefined,
+      slug: this.uniqueFormSlug(context.tenantId, title),
+      fields: sanitizeFormFields(input.fields),
+      status: input.status === "inactive" ? "inactive" : "active",
+      branchId: typeof input.branchId === "string" && input.branchId.trim() ? input.branchId.trim() : undefined,
+      submissions: 0,
+      createdAt: nowIso()
+    };
+    this.data.forms.push(form);
+    await this.persistence.saveCollection("forms", this.data.forms);
+    await this.audit(context, "form.create", "form", form.id, undefined, { slug: form.slug });
+    return form;
+  }
+
+  async updateForm(context: RequestContext, formId: string, input: UpdateFormInput) {
+    const form = this.data.forms.find((entry) => entry.id === formId && entry.tenantId === context.tenantId);
+    if (!form) {
+      throw new ApiError(404, `Form not found: ${formId}`);
+    }
+    if (typeof input.title === "string" && input.title.trim()) {
+      form.title = input.title.trim();
+    }
+    if (input.description !== undefined) {
+      form.description =
+        typeof input.description === "string" && input.description.trim() ? input.description.trim() : undefined;
+    }
+    if (input.fields !== undefined) {
+      form.fields = sanitizeFormFields(input.fields);
+    }
+    if (input.status === "active" || input.status === "inactive") {
+      form.status = input.status;
+    }
+    if (input.branchId !== undefined) {
+      form.branchId = typeof input.branchId === "string" && input.branchId.trim() ? input.branchId.trim() : undefined;
+    }
+    await this.persistence.saveCollection("forms", this.data.forms);
+    await this.audit(context, "form.create", "form", form.id, undefined, { slug: form.slug, updated: true });
+    return form;
+  }
+
+  /** Unique-ish slug within a tenant: kebab-case of the title, suffixed on collision. */
+  private uniqueFormSlug(tenantId: string, title: string): string {
+    const base =
+      title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || "form";
+    let slug = base;
+    let counter = 1;
+    while (this.data.forms.some((form) => form.tenantId === tenantId && form.slug === slug)) {
+      counter += 1;
+      slug = `${base}-${counter}`;
+    }
+    return slug;
+  }
+
+  // ---- Public (unauthenticated) form endpoints -----------------------------
+
+  /** Public form schema for rendering. Throws 404 if missing or inactive. */
+  getPublicForm(slug: string) {
+    const form = this.data.forms.find((entry) => entry.slug === slug && entry.status === "active");
+    if (!form) {
+      throw new ApiError(404, "Form not found");
+    }
+    return {
+      title: form.title,
+      description: form.description,
+      slug: form.slug,
+      fields: form.fields
+    };
+  }
+
+  /** Public submission: creates a Lead in the form's tenant and bumps the count. */
+  async submitPublicForm(slug: string, input: PublicFormSubmitInput) {
+    const form = this.data.forms.find((entry) => entry.slug === slug && entry.status === "active");
+    if (!form) {
+      throw new ApiError(404, "Form not found");
+    }
+    const values = sanitizeStringMap(input.values) ?? {};
+    const name = values.name?.trim();
+    const phone = values.phone?.trim();
+    if (!name || !phone) {
+      throw new ApiError(400, "Form submission requires name and phone");
+    }
+    const timestamp = nowIso();
+    const lead: Lead = {
+      id: createId("lead"),
+      tenantId: form.tenantId,
+      name,
+      phone,
+      email: values.email?.trim() || undefined,
+      source: "form",
+      sourceDetail: form.title,
+      stage: "new",
+      branchId: form.branchId,
+      formData: values,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    const matched = this.findPatientByPhone(form.tenantId, phone);
+    if (matched) {
+      lead.matchedPatientId = matched.id;
+    }
+    this.data.leads.push(lead);
+    form.submissions += 1;
+    const auditEvent: AuditEvent = {
+      id: createId("audit"),
+      tenantId: form.tenantId,
+      actorType: "service",
+      actorId: "public_form",
+      actorDisplayName: "Public form",
+      action: "form.submit",
+      resourceType: "form",
+      resourceId: form.id,
+      details: { leadId: lead.id, slug: form.slug, matchedPatientId: lead.matchedPatientId },
+      createdAt: timestamp
+    };
+    this.data.auditEvents.push(auditEvent);
+    await this.persistence.saveCollection("leads", this.data.leads);
+    await this.persistence.saveCollection("forms", this.data.forms);
+    await this.persistence.saveCollection("auditEvents", this.data.auditEvents);
+    return { ok: true };
   }
 
   private async audit(
