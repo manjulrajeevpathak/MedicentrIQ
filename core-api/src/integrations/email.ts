@@ -89,7 +89,9 @@ let singleton: EmailService | undefined;
 export const createEmailService = (): EmailService => {
   if (singleton) return singleton;
   const user = process.env.GMAIL_USER;
-  const appPassword = process.env.GMAIL_APP_PASSWORD;
+  // Google displays App Passwords in 4 space-separated groups; SMTP needs them
+  // without spaces. Normalize so it works however it's stored.
+  const appPassword = process.env.GMAIL_APP_PASSWORD?.replace(/\s+/g, "");
   if (user && appPassword) {
     singleton = new GmailEmailService(user, appPassword, process.env.GMAIL_FROM_NAME);
     console.log(`[email] Gmail transport active (from ${user}).`);
