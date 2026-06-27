@@ -1,0 +1,33 @@
+{
+  "name": "@healthcareos/platform-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HealthOS superadmin console for the MedicentrIQ healthcare platform.",
+  "scripts": {
+    "dev": "next dev --port 3202",
+    "build": "next build",
+    "start": "next start --port 3202",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.456.0",
+    "next": "^15.3.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^2.5.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.15.29",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^15.3.3",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.8.3"
+  }
+}
