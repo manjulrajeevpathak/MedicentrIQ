@@ -1,362 +1,777 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
-  CheckCheck,
-  CircleSlash,
-  FileText,
-  Gauge,
-  Languages,
-  MailCheck,
+  AlertTriangle,
+  CheckCircle2,
   Megaphone,
   MessageCircle,
-  Pause,
-  Play,
-  Reply,
+  Plus,
   Send,
-  ShieldCheck
+  Sparkles,
+  Users,
+  X,
+  Zap
 } from "lucide-react";
-import type { Campaign, CampaignsData, WaTemplate } from "@/lib/campaigns";
-import { formatNumber } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { Panel, SectionTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { StatTile, StatGrid } from "@/components/ui/stat";
-import { Segmented } from "@/components/ui/segmented";
-import { Donut } from "@/components/ui/charts";
-import { useToast } from "@/components/ui/toast";
-import { EmptyState } from "@/components/ui/empty";
+import { Input, Field, FormError } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { EmptyState } from "@/components/ui/empty";
+import { Segmented } from "@/components/ui/segmented";
+import { useToast } from "@/components/ui/toast";
+import { cn } from "@/lib/utils";
+import {
+  AUDIENCE_INCLUDE_OPTIONS,
+  AUDIENCE_LEAD_SOURCES,
+  AUDIENCE_LEAD_STAGES,
+  AUDIENCE_PATIENT_STAGES,
+  AUTOMATED_ON_OPTIONS,
+  CHANNEL_OPTIONS,
+  CHANNEL_LABELS,
+  CHANNEL_TONE,
+  STATUS_LABELS,
+  STATUS_TONE,
+  TRIGGER_LABELS,
+  TRIGGER_OPTIONS,
+  automatedOnLabel,
+  formatCampaignDate,
+  formatCampaignDateTime,
+  type AudienceInclude,
+  type AudiencePreview,
+  type Campaign,
+  type CampaignAudience,
+  type CampaignChannel,
+  type CampaignTrigger,
+  type ConditionCatalogEntry
+} from "@/lib/campaigns-types";
+import {
+  createCampaignAction,
+  previewAudienceAction,
+  sendCampaignAction
+} from "@/app/(app)/campaigns/actions";
 
-type Tab = "campaigns" | "templates";
+const selectClass =
+  "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
-const statusTone: Record<Campaign["status"], "good" | "brand" | "high" | "neutral" | "low"> = {
-  running: "good",
-  scheduled: "brand",
-  completed: "neutral",
-  paused: "high",
-  draft: "low"
+type Props = {
+  campaigns: Campaign[];
+  conditions: ConditionCatalogEntry[];
 };
 
-export function CampaignsWorkspace({ data, canSend }: { data: CampaignsData; canSend: boolean }) {
-  const { toast } = useToast();
-  const [tab, setTab] = useState<Tab>("campaigns");
-  const [campaigns, setCampaigns] = useState<Campaign[]>(data.campaigns);
+export function CampaignsWorkspace({ campaigns, conditions }: Props) {
   const [composerOpen, setComposerOpen] = useState(false);
-
-  const optTotal = data.optIn.optedIn + data.optIn.optedOut + data.optIn.pending;
-  const optInRate = Math.round((data.optIn.optedIn / optTotal) * 100);
-
-  const setStatus = (id: string, status: Campaign["status"]) =>
-    setCampaigns((cs) => cs.map((c) => (c.id === id ? { ...c, status } : c)));
-
-  const createCampaign = (draft: Pick<Campaign, "name" | "template" | "audience" | "language" | "throttlePerMin">) => {
-    setCampaigns((cs) => [
-      {
-        ...draft,
-        id: `cmp-${Math.round(optTotal % 997) + cs.length + 400}`,
-        status: "scheduled",
-        schedule: "Today 6:00 PM",
-        audienceSize: 80 + cs.length * 11,
-        sent: 0,
-        delivered: 0,
-        read: 0,
-        replied: 0,
-        optOut: 0
-      },
-      ...cs
-    ]);
-    toast(`Campaign “${draft.name}” scheduled.`, "success");
-  };
 
   return (
     <div className="space-y-5">
-      {/* KPIs + opt-in */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <StatGrid cols={4} className="content-start">
-          <StatTile label="Opt-in rate" value={`${optInRate}%`} icon={<ShieldCheck className="size-4" />} tone="good" />
-          <StatTile label="Delivery rate" value={`${data.delivery.deliveryRate}%`} icon={<CheckCheck className="size-4" />} tone="brand" />
-          <StatTile label="Read rate" value={`${data.delivery.readRate}%`} icon={<MailCheck className="size-4" />} tone="brand" />
-          <StatTile label="Reply rate" value={`${data.delivery.replyRate}%`} icon={<Reply className="size-4" />} tone="brand" />
-          <StatTile label="Opted in" value={formatNumber(data.optIn.optedIn)} icon={<MessageCircle className="size-4" />} tone="good" />
-          <StatTile label="Opted out" value={formatNumber(data.optIn.optedOut)} icon={<CircleSlash className="size-4" />} tone="risk" />
-          <StatTile label="Templates live" value={String(data.templates.filter((t) => t.status === "approved").length)} icon={<FileText className="size-4" />} tone="neutral" />
-          <StatTile label="Active campaigns" value={String(data.campaigns.filter((c) => c.status === "running" || c.status === "scheduled").length)} icon={<Megaphone className="size-4" />} tone="brand" />
-        </StatGrid>
-        <Panel>
-          <SectionTitle icon={<ShieldCheck className="size-4" />} title="Consent" subtitle="Opt-in governance" />
-          <Donut
-            className="mt-4"
-            size={130}
-            segments={[
-              { label: "Opted in", value: data.optIn.optedIn, color: "var(--color-good)" },
-              { label: "Pending", value: data.optIn.pending, color: "var(--color-high)" },
-              { label: "Opted out", value: data.optIn.optedOut, color: "var(--color-critical)" }
-            ]}
-            centerLabel={`${optInRate}%`}
-            centerSub="opt-in"
-          />
-        </Panel>
-      </div>
-
-      <div className="flex items-center justify-between">
-        <Segmented
-          value={tab}
-          onChange={(v) => setTab(v as Tab)}
-          options={[
-            { value: "campaigns", label: "Campaigns", count: campaigns.length },
-            { value: "templates", label: "Templates", count: data.templates.length }
-          ]}
-        />
-        <Button size="sm" onClick={() => (canSend ? setComposerOpen(true) : toast("Campaign send permission required", "error"))}>
-          <Send className="size-3.5" /> New campaign
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 flex size-7 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+            <Megaphone className="size-4" />
+          </span>
+          <div>
+            <h1 className="text-sm font-semibold tracking-tight text-ink">Campaigns</h1>
+            <p className="mt-0.5 text-xs text-ink-muted">
+              WhatsApp broadcasts to lead and patient segments — transactional or marketing.
+            </p>
+          </div>
+        </div>
+        <Button size="sm" onClick={() => setComposerOpen(true)}>
+          <Plus className="size-3.5" /> New campaign
         </Button>
       </div>
 
-      {tab === "campaigns" ? (
+      {campaigns.length === 0 ? (
+        <Panel>
+          <EmptyState
+            icon={<Megaphone className="size-5" />}
+            title="No campaigns yet"
+            description="Build an audience segment and send a WhatsApp broadcast to leads or patients."
+          />
+        </Panel>
+      ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {campaigns.map((campaign) => (
-            <CampaignCard
-              key={campaign.id}
-              campaign={campaign}
-              canSend={canSend}
-              onAction={(msg, ok) => toast(msg, ok ? "success" : "error")}
-              onStatusChange={(status) => setStatus(campaign.id, status)}
-            />
+            <CampaignCard key={campaign.id} campaign={campaign} />
           ))}
-          {campaigns.length === 0 ? (
-            <Panel className="lg:col-span-2">
-              <EmptyState icon={<Megaphone className="size-5" />} title="No campaigns yet" description="Create a WhatsApp broadcast to close care gaps at scale." />
-            </Panel>
-          ) : null}
         </div>
-      ) : (
-        <Panel padded={false}>
-          <ul className="divide-y divide-line">
-            {data.templates.map((template) => (
-              <TemplateRow key={template.id} template={template} />
-            ))}
-          </ul>
-        </Panel>
       )}
 
-      <CampaignComposer open={composerOpen} onClose={() => setComposerOpen(false)} templates={data.templates} onCreate={createCampaign} />
+      <CampaignComposer
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        conditions={conditions}
+      />
     </div>
   );
 }
 
-function CampaignCard({
-  campaign,
-  canSend,
-  onAction,
-  onStatusChange
-}: {
-  campaign: Campaign;
-  canSend: boolean;
-  onAction: (msg: string, ok: boolean) => void;
-  onStatusChange: (status: Campaign["status"]) => void;
-}) {
-  const pct = (n: number) => (campaign.audienceSize ? Math.round((n / campaign.audienceSize) * 100) : 0);
+// ============================================================================
+// Campaign card
+// ============================================================================
 
-  const primary = (() => {
-    if (campaign.status === "running") return { label: "Pause", icon: <Pause className="size-3.5" />, msg: "Campaign paused", next: "paused" as const };
-    if (campaign.status === "scheduled") return { label: "Launch now", icon: <Play className="size-3.5" />, msg: "Campaign launched", next: "running" as const };
-    if (campaign.status === "paused") return { label: "Resume", icon: <Play className="size-3.5" />, msg: "Campaign resumed", next: "running" as const };
-    if (campaign.status === "draft") return { label: "Submit", icon: <Send className="size-3.5" />, msg: "Awaiting template approval", ok: false, next: null };
-    return null;
-  })();
+function CampaignCard({ campaign }: { campaign: Campaign }) {
+  const { toast } = useToast();
+  const [sending, startSending] = useTransition();
+  const stats = campaign.stats;
+
+  function send() {
+    startSending(async () => {
+      const result = await sendCampaignAction(campaign.id);
+      if (!result.ok) {
+        toast(result.error ?? "Could not send the campaign.", "error");
+        return;
+      }
+      toast(result.message ?? "Campaign sent.", "success");
+    });
+  }
 
   return (
     <Panel padded={false}>
       <div className="flex items-start justify-between gap-3 p-4 pb-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-semibold text-ink">{campaign.name}</h3>
-            <Badge tone={statusTone[campaign.status]} dot className="capitalize">{campaign.status}</Badge>
+            <Badge tone={STATUS_TONE[campaign.status]} dot>
+              {STATUS_LABELS[campaign.status]}
+            </Badge>
           </div>
-          <p className="mt-0.5 truncate text-xs text-ink-muted">{campaign.audience}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <Badge tone={CHANNEL_TONE[campaign.channelType]}>
+              {CHANNEL_LABELS[campaign.channelType]}
+            </Badge>
+            <Badge tone="neutral">
+              {campaign.trigger === "automated" ? (
+                <Zap className="size-3" />
+              ) : (
+                <Send className="size-3" />
+              )}
+              {TRIGGER_LABELS[campaign.trigger]}
+            </Badge>
+            {campaign.trigger === "automated" && campaign.automatedOn ? (
+              <span className="text-[11px] text-ink-muted">{automatedOnLabel(campaign.automatedOn)}</span>
+            ) : null}
+          </div>
         </div>
-        {primary ? (
-          <Button
-            size="sm"
-            variant={campaign.status === "running" ? "outline" : "primary"}
-            onClick={() => {
-              if (!canSend) return onAction("Campaign send permission required", false);
-              onAction(primary.msg, primary.ok !== false);
-              if (primary.next) onStatusChange(primary.next);
-            }}
-          >
-            {primary.icon} {primary.label}
-          </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={send}
+          disabled={sending}
+        >
+          <Send className="size-3.5" /> {sending ? "Sending…" : "Send now"}
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-3 text-[11px] text-ink-muted">
+        <span className="inline-flex items-center gap-1">
+          <Users className="size-3" /> {audienceSummary(campaign.audience)}
+        </span>
+        {campaign.channelType === "marketing" && campaign.aisensyCampaign ? (
+          <span className="inline-flex items-center gap-1">
+            <Sparkles className="size-3" /> {campaign.aisensyCampaign}
+          </span>
         ) : null}
+        <span>· created {formatCampaignDate(campaign.createdAt)}</span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-3 text-[11px] text-ink-muted">
-        <span className="inline-flex items-center gap-1"><FileText className="size-3" /> {campaign.template}</span>
-        <span className="inline-flex items-center gap-1"><Languages className="size-3" /> {campaign.language}</span>
-        <span className="inline-flex items-center gap-1"><Gauge className="size-3" /> {campaign.throttlePerMin}/min</span>
-        <span>· {campaign.schedule}</span>
-      </div>
+      {campaign.channelType === "transactional" && campaign.body ? (
+        <p className="mx-4 mb-3 rounded-lg bg-surface-muted px-3 py-2 text-xs text-ink-soft">
+          {campaign.body}
+        </p>
+      ) : null}
 
-      {/* delivery funnel */}
       <div className="border-t border-line px-4 py-3">
-        <div className="mb-2 flex h-2 overflow-hidden rounded-full bg-fill">
-          <div className="bg-brand-500" style={{ width: `${pct(campaign.delivered)}%` }} />
-          <div className="bg-brand-300" style={{ width: `${Math.max(0, pct(campaign.read) - pct(campaign.replied))}%` }} />
-          <div className="bg-[var(--color-good)]" style={{ width: `${pct(campaign.replied)}%` }} />
-        </div>
-        <div className="grid grid-cols-4 gap-2 text-center">
-          <Stat n={campaign.sent} label="Sent" of={campaign.audienceSize} />
-          <Stat n={campaign.delivered} label="Delivered" of={campaign.audienceSize} />
-          <Stat n={campaign.read} label="Read" of={campaign.audienceSize} />
-          <Stat n={campaign.replied} label="Replied" of={campaign.audienceSize} tone="good" />
-        </div>
+        {stats ? (
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <StatCell label="Audience" value={stats.audienceSize ?? "—"} />
+            <StatCell label="Sent" value={stats.sent} tone="good" />
+            <StatCell label="Failed" value={stats.failed} tone={stats.failed ? "critical" : undefined} />
+          </div>
+        ) : (
+          <p className="text-center text-[11px] text-ink-muted">Not sent yet.</p>
+        )}
+        {stats?.lastRunAt ? (
+          <p className="mt-2 text-center text-[10px] text-ink-faint">
+            Last run {formatCampaignDateTime(stats.lastRunAt)}
+          </p>
+        ) : null}
       </div>
     </Panel>
   );
 }
 
-function Stat({ n, label, of, tone }: { n: number; label: string; of: number; tone?: "good" }) {
-  const pct = of ? Math.round((n / of) * 100) : 0;
+function StatCell({
+  label,
+  value,
+  tone
+}: {
+  label: string;
+  value: number | string;
+  tone?: "good" | "critical";
+}) {
   return (
     <div>
-      <p className={cn("text-sm font-semibold tabular-nums", tone === "good" ? "text-[var(--color-good)]" : "text-ink")}>{formatNumber(n)}</p>
-      <p className="text-[10px] text-ink-muted">{label} · {pct}%</p>
+      <p
+        className={cn(
+          "text-sm font-semibold tabular-nums text-ink",
+          tone === "good" && "text-[var(--color-good)]",
+          tone === "critical" && "text-[var(--color-critical)]"
+        )}
+      >
+        {typeof value === "number" ? value.toLocaleString("en-IN") : value}
+      </p>
+      <p className="text-[10px] text-ink-muted">{label}</p>
     </div>
   );
 }
 
-function TemplateRow({ template }: { template: WaTemplate }) {
-  const categoryTone = { utility: "brand", marketing: "neutral", authentication: "neutral" } as const;
-  const statusTone = { approved: "good", pending: "high", rejected: "critical" } as const;
-  return (
-    <li className="px-5 py-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><MessageCircle className="size-3.5" /></span>
-          <code className="font-mono text-sm font-semibold text-ink">{template.name}</code>
-          <Badge tone={categoryTone[template.category]} className="capitalize">{template.category}</Badge>
-          <Badge tone={statusTone[template.status]} dot className="capitalize">{template.status}</Badge>
-        </div>
-        <span className="text-[11px] text-ink-faint">{template.useCount.toLocaleString("en-IN")} sends · {template.lastUsed}</span>
-      </div>
-      <p className="mt-2 rounded-lg bg-surface-muted px-3 py-2 text-xs text-ink-soft">{template.body}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <Languages className="size-3 text-ink-faint" />
-        {template.languages.map((language) => (
-          <Badge key={language} tone="neutral">{language}</Badge>
-        ))}
-      </div>
-    </li>
-  );
+function audienceSummary(a: CampaignAudience): string {
+  const parts: string[] = [];
+  const incl = AUDIENCE_INCLUDE_OPTIONS.find((o) => o.value === a.include)?.label ?? a.include;
+  parts.push(incl);
+  const counts: string[] = [];
+  if (a.leadStages?.length) counts.push(`${a.leadStages.length} lead stage${a.leadStages.length > 1 ? "s" : ""}`);
+  if (a.patientStages?.length) counts.push(`${a.patientStages.length} patient stage${a.patientStages.length > 1 ? "s" : ""}`);
+  if (a.conditionCodes?.length) counts.push(`${a.conditionCodes.length} condition${a.conditionCodes.length > 1 ? "s" : ""}`);
+  if (a.tags?.length) counts.push(`${a.tags.length} tag${a.tags.length > 1 ? "s" : ""}`);
+  return counts.length ? `${parts[0]} · ${counts.join(", ")}` : parts[0];
 }
+
+// ============================================================================
+// New campaign composer
+// ============================================================================
 
 function CampaignComposer({
   open,
   onClose,
-  templates,
-  onCreate
+  conditions
 }: {
   open: boolean;
   onClose: () => void;
-  templates: WaTemplate[];
-  onCreate: (draft: Pick<Campaign, "name" | "template" | "audience" | "language" | "throttlePerMin">) => void;
+  conditions: ConditionCatalogEntry[];
 }) {
-  const approved = templates.filter((t) => t.status === "approved");
-  const audiences = [
-    "Post-op patients with no booked review",
-    "Diabetes review due, report missing",
-    "Advised procedure, estimate viewed, not booked",
-    "No-show last 30 days, reachable"
-  ];
+  const { toast } = useToast();
+  const [saving, startSaving] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
   const [name, setName] = useState("");
-  const [template, setTemplate] = useState(approved[0]?.name ?? "");
-  const [audience, setAudience] = useState(audiences[0]);
-  const [language, setLanguage] = useState("Hindi");
-  const [throttle, setThrottle] = useState(30);
+  const [channelType, setChannelType] = useState<CampaignChannel>("transactional");
+  const [trigger, setTrigger] = useState<CampaignTrigger>("manual");
+  const [automatedOn, setAutomatedOn] = useState(AUTOMATED_ON_OPTIONS[0].value);
 
-  const selectedTemplate = approved.find((t) => t.name === template);
-  const languages = selectedTemplate?.languages ?? ["English"];
+  // transactional
+  const [body, setBody] = useState("");
+  // marketing
+  const [aisensyCampaign, setAisensyCampaign] = useState("");
+  const [templateParams, setTemplateParams] = useState("");
 
-  const submit = () => {
-    onCreate({ name: name.trim() || audience, template, audience, language, throttlePerMin: throttle });
-    onClose();
+  // audience
+  const [audience, setAudience] = useState<CampaignAudience>({ include: "leads" });
+
+  function reset() {
     setName("");
-  };
+    setChannelType("transactional");
+    setTrigger("manual");
+    setAutomatedOn(AUTOMATED_ON_OPTIONS[0].value);
+    setBody("");
+    setAisensyCampaign("");
+    setTemplateParams("");
+    setAudience({ include: "leads" });
+    setError(null);
+  }
+
+  function submit() {
+    if (!name.trim()) return setError("Enter a campaign name.");
+    if (channelType === "transactional" && !body.trim())
+      return setError("Enter the WhatsApp message body.");
+    if (channelType === "marketing" && !aisensyCampaign.trim())
+      return setError("Enter the AISensy campaign name.");
+    setError(null);
+
+    const params = templateParams
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    startSaving(async () => {
+      const result = await createCampaignAction({
+        name,
+        channelType,
+        trigger,
+        automatedOn: trigger === "automated" ? automatedOn : undefined,
+        audience,
+        body: channelType === "transactional" ? body : undefined,
+        aisensyCampaign: channelType === "marketing" ? aisensyCampaign : undefined,
+        templateParams: channelType === "marketing" && params.length ? params : undefined
+      });
+      if (!result.ok) {
+        setError(result.error ?? "Could not create the campaign.");
+        return;
+      }
+      reset();
+      onClose();
+      toast(result.message ?? "Campaign saved as a draft.", "success");
+    });
+  }
+
+  const channelHint = CHANNEL_OPTIONS.find((c) => c.value === channelType)?.hint;
 
   return (
-    <Modal open={open} onClose={onClose} labelledBy="composer-title" className="max-w-lg">
+    <Modal open={open} onClose={onClose} labelledBy="new-campaign-title" className="max-w-2xl">
       <div className="border-b border-line p-5">
-        <h2 id="composer-title" className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink">
-          <Megaphone className="size-4 text-brand-600" /> New WhatsApp campaign
+        <h2
+          id="new-campaign-title"
+          className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink"
+        >
+          <Megaphone className="size-4 text-brand-600" /> New campaign
         </h2>
-        <p className="mt-1 text-xs text-ink-muted">Governed broadcast — approved templates only, opt-out respected.</p>
+        <p className="mt-1 text-xs text-ink-muted">
+          Sends use the hospital&apos;s configured WhatsApp channels (Admin → Integrations).
+        </p>
       </div>
-      <div className="space-y-4 p-5">
-        <Field label="Campaign name">
-          <input
+
+      <div className="max-h-[70vh] space-y-5 overflow-y-auto p-5">
+        <Field label="Campaign name" htmlFor="nc-name">
+          <Input
+            id="nc-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cataract review — back into care"
-            className="h-10 w-full rounded-xl border border-line bg-surface-muted px-3 text-sm text-ink outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
           />
         </Field>
-        <Field label="Audience segment">
-          <select value={audience} onChange={(e) => setAudience(e.target.value)} className="h-10 w-full rounded-xl border border-line bg-surface-muted px-3 text-sm text-ink outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100">
-            {audiences.map((a) => (
-              <option key={a}>{a}</option>
-            ))}
-          </select>
-        </Field>
+
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Template">
+          <Field label="Channel" htmlFor="nc-channel">
             <select
-              value={template}
-              onChange={(e) => {
-                setTemplate(e.target.value);
-                const t = approved.find((x) => x.name === e.target.value);
-                if (t && !t.languages.includes(language)) setLanguage(t.languages[0]);
-              }}
-              className="h-10 w-full rounded-xl border border-line bg-surface-muted px-3 text-sm text-ink outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+              id="nc-channel"
+              value={channelType}
+              onChange={(e) => setChannelType(e.target.value as CampaignChannel)}
+              className={selectClass}
             >
-              {approved.map((t) => (
-                <option key={t.id}>{t.name}</option>
+              {CHANNEL_OPTIONS.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
               ))}
             </select>
           </Field>
-          <Field label="Language">
-            <select value={language} onChange={(e) => setLanguage(e.target.value)} className="h-10 w-full rounded-xl border border-line bg-surface-muted px-3 text-sm text-ink outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100">
-              {languages.map((l) => (
-                <option key={l}>{l}</option>
+          <Field label="Trigger" htmlFor="nc-trigger">
+            <select
+              id="nc-trigger"
+              value={trigger}
+              onChange={(e) => setTrigger(e.target.value as CampaignTrigger)}
+              className={selectClass}
+            >
+              {TRIGGER_OPTIONS.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
               ))}
             </select>
           </Field>
         </div>
-        <Field label={`Throttle · ${throttle}/min`}>
-          <input type="range" min={10} max={60} step={5} value={throttle} onChange={(e) => setThrottle(Number(e.target.value))} className="w-full accent-brand-600" />
-        </Field>
-        {selectedTemplate ? (
-          <p className="rounded-xl bg-surface-muted px-3 py-2 text-xs text-ink-soft">{selectedTemplate.body}</p>
+
+        {channelHint ? <p className="-mt-2 text-[11px] text-ink-muted">{channelHint}</p> : null}
+
+        {trigger === "automated" ? (
+          <Field label="Run automatically" htmlFor="nc-auto">
+            <select
+              id="nc-auto"
+              value={automatedOn}
+              onChange={(e) => setAutomatedOn(e.target.value)}
+              className={selectClass}
+            >
+              {AUTOMATED_ON_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
         ) : null}
+
+        {channelType === "transactional" ? (
+          <Field
+            label="Message body"
+            htmlFor="nc-body"
+            hint={
+              <>
+                Free-text WhatsApp via UltraMsg. Use <code className="font-mono">{"{{name}}"}</code> to
+                merge the recipient&apos;s name.
+              </>
+            }
+          >
+            <textarea
+              id="nc-body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={3}
+              placeholder="Namaste {{name}}, your follow-up is due. Reply to book a slot."
+              className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            />
+          </Field>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="AISensy campaign" htmlFor="nc-aisensy">
+              <Input
+                id="nc-aisensy"
+                value={aisensyCampaign}
+                onChange={(e) => setAisensyCampaign(e.target.value)}
+                placeholder="e.g. eye_camp_invite"
+              />
+            </Field>
+            <Field
+              label="Template params (optional)"
+              htmlFor="nc-params"
+              hint="Comma-separated values for the template's placeholders."
+            >
+              <Input
+                id="nc-params"
+                value={templateParams}
+                onChange={(e) => setTemplateParams(e.target.value)}
+                placeholder="Indiranagar, 12 Jul"
+              />
+            </Field>
+          </div>
+        )}
+
+        <AudienceBuilder value={audience} onChange={setAudience} conditions={conditions} />
+
+        <FormError message={error} />
       </div>
+
       <div className="flex justify-end gap-2 border-t border-line p-4">
-        <Button variant="outline" onClick={onClose}>
+        <Button variant="outline" onClick={onClose} disabled={saving}>
           Cancel
         </Button>
-        <Button onClick={submit}>
-          <Send className="size-3.5" /> Schedule campaign
+        <Button onClick={submit} disabled={saving}>
+          <Plus className="size-3.5" /> {saving ? "Saving…" : "Save draft"}
         </Button>
       </div>
     </Modal>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+// ============================================================================
+// Audience segment builder + live preview
+// ============================================================================
+
+function AudienceBuilder({
+  value,
+  onChange,
+  conditions
+}: {
+  value: CampaignAudience;
+  onChange: (next: CampaignAudience) => void;
+  conditions: ConditionCatalogEntry[];
+}) {
+  const showLeads = value.include === "leads" || value.include === "both";
+  const showPatients = value.include === "patients" || value.include === "both";
+
+  const [tagInput, setTagInput] = useState("");
+
+  function toggle(key: "leadStages" | "leadSources" | "patientStages" | "conditionCodes", v: string) {
+    const cur = value[key] ?? [];
+    const next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v];
+    onChange({ ...value, [key]: next });
+  }
+
+  function addTag() {
+    const t = tagInput.trim();
+    if (!t) return;
+    const cur = value.tags ?? [];
+    if (!cur.includes(t)) onChange({ ...value, tags: [...cur, t] });
+    setTagInput("");
+  }
+
+  function removeTag(t: string) {
+    onChange({ ...value, tags: (value.tags ?? []).filter((x) => x !== t) });
+  }
+
   return (
-    <label className="block">
+    <div className="rounded-xl border border-line bg-surface-muted/40 p-4">
+      <SectionTitle
+        icon={<Users className="size-4" />}
+        title="Audience segment"
+        subtitle="Who should receive this campaign"
+      />
+
+      <div className="mt-4 space-y-4">
+        <Field label="Include" htmlFor="aud-include">
+          <Segmented
+            value={value.include}
+            onChange={(v) => onChange({ ...value, include: v as AudienceInclude })}
+            options={AUDIENCE_INCLUDE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          />
+        </Field>
+
+        {showLeads ? (
+          <>
+            <ChipGroup
+              label="Lead stages"
+              options={AUDIENCE_LEAD_STAGES}
+              selected={value.leadStages ?? []}
+              onToggle={(v) => toggle("leadStages", v)}
+            />
+            <ChipGroup
+              label="Lead sources"
+              options={AUDIENCE_LEAD_SOURCES}
+              selected={value.leadSources ?? []}
+              onToggle={(v) => toggle("leadSources", v)}
+            />
+          </>
+        ) : null}
+
+        {showPatients ? (
+          <>
+            <ChipGroup
+              label="Patient lifecycle stages"
+              options={AUDIENCE_PATIENT_STAGES}
+              selected={value.patientStages ?? []}
+              onToggle={(v) => toggle("patientStages", v)}
+            />
+            <ConditionFilter
+              conditions={conditions}
+              selected={value.conditionCodes ?? []}
+              onToggle={(v) => toggle("conditionCodes", v)}
+            />
+          </>
+        ) : null}
+
+        <Field label="Tags (optional)" htmlFor="aud-tags">
+          <div className="flex gap-2">
+            <Input
+              id="aud-tags"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addTag();
+                }
+              }}
+              placeholder="Type a tag and press Enter"
+            />
+            <Button variant="outline" size="md" onClick={addTag}>
+              Add
+            </Button>
+          </div>
+          {value.tags?.length ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {value.tags.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => removeTag(t)}
+                  className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700 ring-1 ring-inset ring-black/5 hover:bg-brand-100"
+                >
+                  {t}
+                  <X className="size-3" />
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </Field>
+
+        <AudiencePreviewPanel audience={value} />
+      </div>
+    </div>
+  );
+}
+
+function ChipGroup({
+  label,
+  options,
+  selected,
+  onToggle
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div>
       <span className="mb-1.5 block text-xs font-medium text-ink-soft">{label}</span>
-      {children}
-    </label>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => {
+          const active = selected.includes(o.value);
+          return (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => onToggle(o.value)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition",
+                active
+                  ? "bg-brand-600 text-white ring-brand-600"
+                  : "bg-surface text-ink-soft ring-line-strong hover:bg-surface-muted hover:text-ink"
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ConditionFilter({
+  conditions,
+  selected,
+  onToggle
+}: {
+  conditions: ConditionCatalogEntry[];
+  selected: string[];
+  onToggle: (code: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return conditions
+      .filter(
+        (c) =>
+          !selected.includes(c.icd10Code) &&
+          (c.label.toLowerCase().includes(q) || c.icd10Code.toLowerCase().includes(q))
+      )
+      .slice(0, 8);
+  }, [conditions, query, selected]);
+
+  const byCode = useMemo(
+    () => new Map(conditions.map((c) => [c.icd10Code, c.label])),
+    [conditions]
+  );
+
+  return (
+    <div>
+      <span className="mb-1.5 block text-xs font-medium text-ink-soft">Conditions (ICD-10)</span>
+      {conditions.length === 0 ? (
+        <p className="text-[11px] text-ink-muted">Condition catalog unavailable.</p>
+      ) : (
+        <div className="relative">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search a diagnosis or ICD-10 code…"
+          />
+          {matches.length > 0 ? (
+            <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-line-strong bg-surface py-1 shadow-lg">
+              {matches.map((c) => (
+                <li key={c.icd10Code}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onToggle(c.icd10Code);
+                      setQuery("");
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs text-ink hover:bg-surface-muted"
+                  >
+                    <span className="truncate">{c.label}</span>
+                    <code className="shrink-0 font-mono text-[10px] text-ink-muted">{c.icd10Code}</code>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      )}
+      {selected.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {selected.map((code) => (
+            <button
+              key={code}
+              type="button"
+              onClick={() => onToggle(code)}
+              className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700 ring-1 ring-inset ring-black/5 hover:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300"
+            >
+              {byCode.get(code) ?? code}
+              <X className="size-3" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AudiencePreviewPanel({ audience }: { audience: CampaignAudience }) {
+  const [preview, setPreview] = useState<AudiencePreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startPreview] = useTransition();
+  // Invalidate a stale preview whenever the segment changes.
+  const audienceKey = useMemo(() => JSON.stringify(audience), [audience]);
+  const lastPreviewKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (lastPreviewKey.current !== null && lastPreviewKey.current !== audienceKey) {
+      setPreview(null);
+      setError(null);
+    }
+  }, [audienceKey]);
+
+  function run() {
+    setError(null);
+    startPreview(async () => {
+      const result = await previewAudienceAction(audience);
+      lastPreviewKey.current = audienceKey;
+      if (!result.ok || !result.data) {
+        setPreview(null);
+        setError(result.error ?? "Could not preview the audience.");
+        return;
+      }
+      setPreview(result.data);
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-ink-soft">Preview audience</span>
+        <Button variant="outline" size="sm" onClick={run} disabled={pending}>
+          <Users className="size-3.5" /> {pending ? "Counting…" : "Preview audience"}
+        </Button>
+      </div>
+
+      {error ? (
+        <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--color-critical)]">
+          <AlertTriangle className="size-3.5" /> {error}
+        </p>
+      ) : preview ? (
+        <div className="mt-3">
+          <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
+            <CheckCircle2 className="size-4 text-[var(--color-good)]" />
+            {preview.size.toLocaleString("en-IN")} recipient{preview.size === 1 ? "" : "s"}
+          </p>
+          {preview.sample.length > 0 ? (
+            <ul className="mt-2 space-y-1">
+              {preview.sample.slice(0, 5).map((s, i) => (
+                <li
+                  key={`${s.phone}-${i}`}
+                  className="flex items-center justify-between gap-2 text-xs text-ink-soft"
+                >
+                  <span className="inline-flex items-center gap-1.5 truncate">
+                    <MessageCircle className="size-3 text-ink-faint" />
+                    {s.name}
+                    <Badge tone={s.kind === "patient" ? "good" : "brand"}>{s.kind}</Badge>
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-ink-muted">{s.phone}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-xs text-ink-muted">No matching recipients.</p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-ink-muted">
+          Run a preview to see how many leads/patients match this segment.
+        </p>
+      )}
+    </div>
   );
 }
