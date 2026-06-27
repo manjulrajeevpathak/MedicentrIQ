@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { URL } from "node:url";
 import { ApiError, type CoreService } from "../services/core-service.js";
 import type { Permission, RequestContext } from "../domain/types.js";
+import type { ModuleKey } from "../domain/platform.js";
 
 type RouteHandler = (context: {
   request: IncomingMessage;
@@ -17,6 +18,8 @@ type Route = {
   pattern: RegExp;
   paramNames: string[];
   permission?: Permission;
+  /** Entitlement module this route belongs to; staff actors must have it enabled. */
+  module?: ModuleKey;
   handler: RouteHandler;
 };
 
@@ -49,7 +52,13 @@ const toRecord = (body: unknown): Record<string, unknown> => {
   return body as Record<string, unknown>;
 };
 
-const route = (method: string, path: string, permission: Permission | undefined, handler: RouteHandler): Route => {
+const route = (
+  method: string,
+  path: string,
+  permission: Permission | undefined,
+  handler: RouteHandler,
+  module?: ModuleKey
+): Route => {
   const paramNames: string[] = [];
   const expression = path
     .split("/")
@@ -67,6 +76,7 @@ const route = (method: string, path: string, permission: Permission | undefined,
     pattern: new RegExp(`^${expression}$`),
     paramNames,
     permission,
+    module,
     handler
   };
 };
@@ -74,12 +84,12 @@ const route = (method: string, path: string, permission: Permission | undefined,
 const createRoutes = (service: CoreService): Route[] => [
   route("GET", "/health", undefined, () => service.health()),
   route("GET", "/auth/me", "auth:read_self", ({ auth }) => service.getCurrentUser(auth)),
-  route("GET", "/api/staff/dashboard", "patients:read", ({ auth }) => service.getStaffDashboard(auth)),
+  route("GET", "/api/staff/dashboard", "patients:read", ({ auth }) => service.getStaffDashboard(auth), "today"),
   route("GET", "/audit/events", "audit:read", ({ auth, query }) =>
     service.listAuditEvents(auth, {
       patientId: query.get("patientId") ?? undefined,
       action: query.get("action") ?? undefined
-    })
+    }), "operations"
   ),
 
   // Platform tier — HealthOS superadmin: provision tenants and manage entitlements.
@@ -96,7 +106,7 @@ const createRoutes = (service: CoreService): Route[] => [
     service.updateTenant(auth, params.tenantId, toRecord(body))
   ),
 
-  route("GET", "/patients", "patients:read", ({ auth }) => service.listPatients(auth)),
+  route("GET", "/patients", "patients:read", ({ auth }) => service.listPatients(auth), "patients"),
   route("POST", "/patients", "patients:create", ({ auth, body }) => service.createPatient(auth, toRecord(body))),
   route("GET", "/patients/:patientId", "patients:read", ({ auth, params }) => service.getPatient(auth, params.patientId)),
   route("GET", "/patients/:patientId/timeline", "patients:read", ({ auth, params }) =>
@@ -131,13 +141,13 @@ const createRoutes = (service: CoreService): Route[] => [
     service.listInteractions(auth, {
       status: query.get("status") ?? undefined,
       patientId: query.get("patientId") ?? undefined
-    })
+    }), "inbox"
   ),
   route("POST", "/interactions", "interactions:create", ({ auth, body }) => service.createInteraction(auth, toRecord(body))),
   route("POST", "/interactions/:interactionId/assign", "tasks:update", ({ auth, params, body }) =>
     service.assignInteraction(auth, params.interactionId, toRecord(body))
   ),
-  route("GET", "/inbox", "interactions:read", ({ auth }) => service.listInbox(auth)),
+  route("GET", "/inbox", "interactions:read", ({ auth }) => service.listInbox(auth), "inbox"),
   route("GET", "/inbox/:interactionId", "interactions:read", ({ auth, params }) =>
     service.getInboxThread(auth, params.interactionId)
   ),
@@ -155,7 +165,7 @@ const createRoutes = (service: CoreService): Route[] => [
     service.listAccessRequests(auth, {
       status: query.get("status") ?? undefined,
       patientId: query.get("patientId") ?? undefined
-    })
+    }), "access"
   ),
   route("POST", "/access/requests", "access_requests:update", ({ auth, body }) =>
     service.createAccessRequest(auth, toRecord(body))
@@ -184,7 +194,7 @@ const createRoutes = (service: CoreService): Route[] => [
       status: query.get("status") ?? undefined,
       ownerRole: query.get("ownerRole") ?? undefined,
       patientId: query.get("patientId") ?? undefined
-    })
+    }), "today"
   ),
   route("PATCH", "/workbench/tasks/:taskId", "tasks:update", ({ auth, params, body }) =>
     service.updateTask(auth, params.taskId, toRecord(body))
@@ -194,7 +204,7 @@ const createRoutes = (service: CoreService): Route[] => [
     service.listAppointments(auth, {
       patientId: query.get("patientId") ?? undefined,
       status: query.get("status") ?? undefined
-    })
+    }), "access"
   ),
   route("POST", "/appointments", "appointments:create", ({ auth, body }) => service.createAppointment(auth, toRecord(body))),
   route("POST", "/appointments/:appointmentId/confirm", "appointments:confirm", ({ auth, params, body }) =>
@@ -231,13 +241,13 @@ const createRoutes = (service: CoreService): Route[] => [
 
   route("POST", "/workflows/trigger", "tasks:update", ({ auth, body }) => service.triggerWorkflow(auth, toRecord(body))),
 
-  route("GET", "/journey-templates", "journeys:read", ({ auth }) => service.listJourneyTemplates(auth)),
+  route("GET", "/journey-templates", "journeys:read", ({ auth }) => service.listJourneyTemplates(auth), "journeys"),
   route("POST", "/journey-templates", "journeys:update", ({ auth, body }) => service.createJourneyTemplate(auth, toRecord(body))),
   route("GET", "/patient-journeys", "journeys:read", ({ auth, query }) =>
     service.listPatientJourneys(auth, {
       patientId: query.get("patientId") ?? undefined,
       status: query.get("status") ?? undefined
-    })
+    }), "journeys"
   ),
   route("POST", "/patient-journeys", "journeys:update", ({ auth, body }) => service.createPatientJourney(auth, toRecord(body))),
   route("GET", "/patient-journeys/:journeyId", "journeys:read", ({ auth, params }) =>
@@ -326,6 +336,9 @@ export const createApiServer = (service: CoreService) =>
       const auth = service.authenticate(requestHeaders(request), mobileLinkToken);
       if (matchedRoute.permission) {
         service.ensurePermission(auth, matchedRoute.permission);
+      }
+      if (matchedRoute.module) {
+        service.ensureModuleEnabled(auth, matchedRoute.module);
       }
       const body = await parseJsonBody(request);
       const result = await matchedRoute.handler({

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronsLeft, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { navGroups, type NavItem } from "@/lib/ia";
+import { navGroups, filterNavGroups, type NavItem, type ModuleKey } from "@/lib/ia";
 import type { DemoAuthContext, PermissionKey } from "@/lib/types";
 import type { NavBadges } from "./app-shell";
 import { Avatar } from "@/components/ui/avatar";
@@ -23,6 +23,7 @@ const roleLabel: Record<string, string> = {
 export function Sidebar({
   auth,
   badges,
+  enabledModules,
   collapsed,
   mobileOpen,
   onToggleCollapse,
@@ -30,6 +31,7 @@ export function Sidebar({
 }: {
   auth: DemoAuthContext;
   badges: NavBadges;
+  enabledModules?: ModuleKey[];
   collapsed: boolean;
   mobileOpen: boolean;
   onToggleCollapse: () => void;
@@ -37,6 +39,7 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const granted = new Set(auth.activeUser.permissions);
+  const groups = filterNavGroups(navGroups, enabledModules);
 
   const badgeFor = (item: NavItem): number | undefined => {
     if (!item.badgeKey) return undefined;
@@ -83,7 +86,7 @@ export function Sidebar({
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto scrollbar-none px-3 py-2">
-          {navGroups.map((group) => (
+          {groups.map((group) => (
             <div key={group.label} className="mb-4">
               <p
                 className={cn(

@@ -4,6 +4,8 @@
    per-workspace detail the next-generation UI renders.
    ------------------------------------------------------------------------- */
 
+import type { ModuleKey } from "./ia";
+
 export type ServiceHealth = "online" | "degraded" | "offline";
 export type QueuePriority = "critical" | "high" | "medium" | "low";
 export type Channel = "WhatsApp" | "Call" | "Web" | "Walk-in" | "Referral";
@@ -282,6 +284,8 @@ export type NeedsPersonCard = {
 export type DashboardData = {
   generatedAt: string;
   source: "core-api" | "mock";
+  /** Entitlements for the active tenant; drives which nav surfaces render. */
+  entitlements?: { planId: string | null; enabledModules: ModuleKey[] };
   authContext: DemoAuthContext;
   metrics: Metric[];
   daySummary: string;

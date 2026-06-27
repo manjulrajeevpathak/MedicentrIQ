@@ -568,6 +568,24 @@ export class CoreService {
     }
   }
 
+  /**
+   * Entitlement guard: staff actors may only reach a module their tenant's plan
+   * (plus overrides) enables. Platform/service/patient-link actors are not
+   * module-gated (they operate outside the per-hospital module model).
+   */
+  ensureModuleEnabled(context: RequestContext, module: ModuleKey) {
+    if (context.actorType !== "staff") {
+      return;
+    }
+    const tenant = this.data.organizations.find((entry) => entry.id === context.tenantId);
+    const enabled = tenant
+      ? resolveEnabledModules(tenant.planId, tenant.moduleOverrides)
+      : MODULE_CATALOG.map((entry) => entry.key);
+    if (!enabled.includes(module)) {
+      throw new ApiError(403, `Module not enabled for this tenant: ${module}`);
+    }
+  }
+
   getCurrentUser(context: RequestContext) {
     const tenant = this.data.organizations.find((entry) => entry.id === context.tenantId);
     const enabledModules: ModuleKey[] = tenant
@@ -782,10 +800,15 @@ export class CoreService {
     const branch = this.data.branches.find((entry) => entry.id === primaryPatient?.branchId) ?? this.data.branches[0];
     const priorityRank: Record<Priority, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
     const now = Date.now();
+    const tenant = this.data.organizations.find((entry) => entry.id === context.tenantId);
+    const enabledModules: ModuleKey[] = tenant
+      ? resolveEnabledModules(tenant.planId, tenant.moduleOverrides)
+      : MODULE_CATALOG.map((entry) => entry.key);
 
     return {
       generatedAt: nowIso(),
       source: "core-api",
+      entitlements: { planId: tenant?.planId ?? null, enabledModules },
       metrics: [
         {
           label: "Open work items",

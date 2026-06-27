@@ -65,6 +65,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar
         auth={data.authContext}
         badges={badges}
+        enabledModules={data.entitlements?.enabledModules}
         collapsed={collapsed}
         mobileOpen={mobileOpen}
         onToggleCollapse={() => setCollapsed((c) => !c)}
