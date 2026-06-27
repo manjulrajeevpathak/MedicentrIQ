@@ -31,7 +31,9 @@ const allStaffPermissions: Permission[] = [
   "leads:manage",
   "campaigns:read",
   "campaigns:manage",
-  "campaigns:send"
+  "campaigns:send",
+  "calls:read",
+  "calls:manage"
 ];
 
 export const rolePermissions: Record<Role, Permission[]> = {
@@ -61,7 +63,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "journeys:update",
     "leads:read",
     "leads:manage",
-    "campaigns:read"
+    "campaigns:read",
+    "calls:read",
+    "calls:manage"
   ],
   call_center: [
     "auth:read_self",
@@ -81,7 +85,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "access_requests:update",
     "leads:read",
     "leads:manage",
-    "campaigns:read"
+    "campaigns:read",
+    "calls:read",
+    "calls:manage"
   ],
   care_coordinator: [
     "auth:read_self",
@@ -111,7 +117,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "leads:manage",
     "campaigns:read",
     "campaigns:manage",
-    "campaigns:send"
+    "campaigns:send",
+    "calls:read",
+    "calls:manage"
   ],
   nurse: [
     "auth:read_self",

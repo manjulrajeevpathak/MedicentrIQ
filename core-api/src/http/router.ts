@@ -410,6 +410,20 @@ const createRoutes = (service: CoreService): Route[] => [
     service.sendCampaign(auth, params.campaignId), "campaigns"
   ),
 
+  // Telephony call log (seam: provider dialing + AI-voice are future). No module
+  // gate — always-available like messaging, governed by permission only.
+  route("GET", "/calls", "calls:read", ({ auth, query }) =>
+    service.listCalls(auth, {
+      leadId: query.get("leadId") ?? undefined,
+      patientId: query.get("patientId") ?? undefined,
+      status: query.get("status") ?? undefined
+    })
+  ),
+  route("POST", "/calls", "calls:manage", ({ auth, body }) => service.createCall(auth, toRecord(body))),
+  route("PATCH", "/calls/:callId", "calls:manage", ({ auth, params, body }) =>
+    service.updateCall(auth, params.callId, toRecord(body))
+  ),
+
   route("POST", "/service-events/integration", "service_events:ingest", ({ auth, body }) =>
     service.intakeIntegrationEvent(auth, toRecord(body))
   ),

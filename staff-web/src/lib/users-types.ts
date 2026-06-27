@@ -41,6 +41,7 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 export type ChannelStatus = {
   ultramsg: { configured: boolean; enabled: boolean; instanceId: string | null; tokenTail: string | null };
   aisensy: { configured: boolean; enabled: boolean; apiKeyTail: string | null };
+  telephony: { configured: boolean; enabled: boolean; provider: string | null; callerId: string | null; apiKeyTail: string | null };
 };
 
 export const STAFF_ROLES: { value: StaffRole; label: string }[] = [

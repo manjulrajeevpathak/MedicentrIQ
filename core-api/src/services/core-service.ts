@@ -13,6 +13,7 @@ import {
 } from "../integrations/email.js";
 import { sendUltraMsg } from "../integrations/channels/ultramsg.js";
 import { sendAiSensy } from "../integrations/channels/aisensy.js";
+import { placeCall } from "../integrations/channels/telephony.js";
 import { createStorageService, type StorageService } from "../integrations/storage.js";
 import { OPHTHALMOLOGY_CONDITION_CATALOG } from "../domain/clinical-catalog.js";
 import type {
@@ -20,6 +21,9 @@ import type {
   Appointment,
   AppointmentDisposition,
   AuditEvent,
+  Call,
+  CallDirection,
+  CallStatus,
   Campaign,
   CampaignAudience,
   CampaignAutomatedOn,
@@ -1514,6 +1518,13 @@ export class CoreService {
         configured: Boolean(c?.aisensy?.apiKey),
         enabled: c?.aisensy?.enabled ?? false,
         apiKeyTail: tail(c?.aisensy?.apiKey)
+      },
+      telephony: {
+        configured: Boolean(c?.telephony?.apiKey),
+        enabled: c?.telephony?.enabled ?? false,
+        provider: c?.telephony?.provider ?? null,
+        callerId: c?.telephony?.callerId ?? null,
+        apiKeyTail: tail(c?.telephony?.apiKey)
       }
     };
   }
@@ -1540,11 +1551,27 @@ export class CoreService {
       const apiKey = typeof a.apiKey === "string" && a.apiKey.trim() ? a.apiKey.trim() : c.aisensy?.apiKey ?? "";
       c.aisensy = { apiKey, enabled: typeof a.enabled === "boolean" ? a.enabled : c.aisensy?.enabled ?? true };
     }
+    const tel = input.telephony;
+    if (tel && typeof tel === "object") {
+      const t = tel as Record<string, unknown>;
+      const apiKey = typeof t.apiKey === "string" && t.apiKey.trim() ? t.apiKey.trim() : c.telephony?.apiKey ?? "";
+      const provider =
+        typeof t.provider === "string" && t.provider.trim() ? t.provider.trim() : c.telephony?.provider;
+      const callerId =
+        typeof t.callerId === "string" && t.callerId.trim() ? t.callerId.trim() : c.telephony?.callerId;
+      c.telephony = {
+        apiKey,
+        provider,
+        callerId,
+        enabled: typeof t.enabled === "boolean" ? t.enabled : c.telephony?.enabled ?? true
+      };
+    }
     c.updatedAt = now;
     await this.persistence.saveCollection("channelConfigs", this.data.channelConfigs);
     await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
       ultramsg: c.ultramsg ? { configured: Boolean(c.ultramsg.instanceId), enabled: c.ultramsg.enabled } : null,
-      aisensy: c.aisensy ? { configured: Boolean(c.aisensy.apiKey), enabled: c.aisensy.enabled } : null
+      aisensy: c.aisensy ? { configured: Boolean(c.aisensy.apiKey), enabled: c.aisensy.enabled } : null,
+      telephony: c.telephony ? { configured: Boolean(c.telephony.apiKey), enabled: c.telephony.enabled } : null
     });
     return this.getTenantChannels(context);
   }
@@ -1610,6 +1637,104 @@ export class CoreService {
       .filter((entry) => entry.tenantId === context.tenantId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, limit);
+  }
+
+  // ---- Telephony (per-tenant call log) --------------------------------------
+
+  /** Tenant call log, newest first. Optional filters by lead/patient/status. */
+  listCalls(context: RequestContext, filters: { leadId?: string; patientId?: string; status?: string } = {}) {
+    return this.data.calls
+      .filter((call) => call.tenantId === context.tenantId)
+      .filter((call) => (filters.leadId ? call.leadId === filters.leadId : true))
+      .filter((call) => (filters.patientId ? call.patientId === filters.patientId : true))
+      .filter((call) => (filters.status ? call.status === filters.status : true))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /**
+   * Place (or log) an outbound call. Resolves the tenant's telephony creds and
+   * attempts the stub adapter. The seam: if telephony is configured the stub
+   * returns a queued providerId; if not, we still RECORD the call (status
+   * "queued", disposition noting config is pending) so the call log is never
+   * lossy. Never throws a 5xx — a missing config is an expected state.
+   */
+  async createCall(context: RequestContext, input: Record<string, unknown>) {
+    const to = ensureString(input.to, "to");
+    const direction: CallDirection = input.direction === "inbound" ? "inbound" : "outbound";
+    const config = this.tenantChannelConfig(context.tenantId);
+    const from = config?.telephony?.callerId;
+
+    let status: CallStatus = "queued";
+    let providerId: string | undefined;
+    let disposition: string | undefined;
+    try {
+      const result = placeCall({ creds: config?.telephony, to, from });
+      providerId = result.providerId;
+      status = result.status;
+    } catch (error) {
+      // Expected when telephony is not configured: log the call anyway so the
+      // call history stays complete. (Real provider dialing is future work.)
+      if (error instanceof ApiError && error.statusCode === 400) {
+        status = "queued";
+        disposition = "logged (telephony not configured)";
+      } else {
+        throw error;
+      }
+    }
+
+    const now = nowIso();
+    const call: Call = {
+      id: createId("call"),
+      tenantId: context.tenantId,
+      to,
+      from,
+      direction,
+      status,
+      leadId: typeof input.leadId === "string" && input.leadId.trim() ? input.leadId.trim() : undefined,
+      patientId: typeof input.patientId === "string" && input.patientId.trim() ? input.patientId.trim() : undefined,
+      disposition,
+      notes: typeof input.notes === "string" && input.notes.trim() ? input.notes.trim() : undefined,
+      providerId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.data.calls.push(call);
+    await this.persistence.saveCollection("calls", this.data.calls);
+    await this.audit(context, "call.create", "call", call.id, call.patientId, {
+      direction,
+      status,
+      configured: Boolean(config?.telephony?.apiKey && config.telephony.enabled)
+    });
+    return call;
+  }
+
+  async updateCall(context: RequestContext, callId: string, input: Record<string, unknown>) {
+    const call = this.data.calls.find((entry) => entry.id === callId && entry.tenantId === context.tenantId);
+    if (!call) {
+      throw new ApiError(404, `Call not found: ${callId}`);
+    }
+    const statuses: CallStatus[] = ["queued", "ringing", "completed", "missed", "failed"];
+    if (typeof input.status === "string" && (statuses as string[]).includes(input.status)) {
+      call.status = input.status as CallStatus;
+    }
+    if (input.disposition !== undefined) {
+      call.disposition =
+        typeof input.disposition === "string" && input.disposition.trim() ? input.disposition.trim() : undefined;
+    }
+    if (input.notes !== undefined) {
+      call.notes = typeof input.notes === "string" && input.notes.trim() ? input.notes.trim() : undefined;
+    }
+    if (input.recordingUrl !== undefined) {
+      call.recordingUrl =
+        typeof input.recordingUrl === "string" && input.recordingUrl.trim() ? input.recordingUrl.trim() : undefined;
+    }
+    call.updatedAt = nowIso();
+    await this.persistence.saveCollection("calls", this.data.calls);
+    await this.audit(context, "call.update", "call", call.id, call.patientId, {
+      status: call.status,
+      disposition: call.disposition
+    });
+    return call;
   }
 
   // ---- Platform admin management (superadmin) -------------------------------

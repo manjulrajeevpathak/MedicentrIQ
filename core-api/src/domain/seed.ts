@@ -3,6 +3,7 @@ import type {
   AccessRequest,
   AuditEvent,
   Branch,
+  Call,
   Campaign,
   ClinicalRecord,
   Doctor,
@@ -64,6 +65,7 @@ export type SeedData = {
   passwordResetTokens: PasswordResetToken[];
   channelConfigs: TenantChannelConfig[];
   messages: MessageLog[];
+  calls: Call[];
   apiKeys: ServiceApiKey[];
   households: Household[];
   patients: Patient[];
@@ -182,6 +184,21 @@ export const createSeedData = (): SeedData => ({
   passwordResetTokens: [],
   channelConfigs: [],
   messages: [],
+  calls: [
+    {
+      id: "call_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      to: "+919876543210",
+      from: "+918000000000",
+      direction: "outbound",
+      status: "completed",
+      patientId: "patient_demo_001",
+      disposition: "reached",
+      notes: "Post-op follow-up reminder call.",
+      createdAt: daysFromNow(-5),
+      updatedAt: daysFromNow(-5)
+    }
+  ],
   apiKeys: [
     {
       id: "api_key_demo_integration",
@@ -855,6 +872,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     passwordResetTokens: data.passwordResetTokens ?? [],
     channelConfigs: data.channelConfigs ?? [],
     messages: data.messages ?? [],
+    calls: withTenant(data.calls ?? []),
     apiKeys: data.apiKeys?.length ? withTenant(data.apiKeys) : seed.apiKeys,
     households: data.households?.length ? withTenant(data.households) : seed.households,
     patients: withTenant(data.patients ?? []),

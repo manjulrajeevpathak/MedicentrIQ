@@ -39,7 +39,8 @@ export default async function AdminPage() {
     ? channelsResult.data
     : {
         ultramsg: { configured: false, enabled: false, instanceId: null, tokenTail: null },
-        aisensy: { configured: false, enabled: false, apiKeyTail: null }
+        aisensy: { configured: false, enabled: false, apiKeyTail: null },
+        telephony: { configured: false, enabled: false, provider: null, callerId: null, apiKeyTail: null }
       };
 
   return (

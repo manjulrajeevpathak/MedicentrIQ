@@ -101,6 +101,18 @@ export async function saveChannelsAction(_prev: ChannelActionState, formData: Fo
     const apiKey = String(formData.get("apiKey") ?? "").trim();
     const enabled = formData.get("enabled") === "on";
     body.aisensy = { ...(apiKey ? { apiKey } : {}), enabled };
+  } else if (provider === "telephony") {
+    const telProvider = String(formData.get("telProvider") ?? "").trim();
+    const callerId = String(formData.get("callerId") ?? "").trim();
+    const apiKey = String(formData.get("apiKey") ?? "").trim();
+    const enabled = formData.get("enabled") === "on";
+    // Blank apiKey = keep the existing secret (core-api handles this).
+    body.telephony = {
+      ...(telProvider ? { provider: telProvider } : {}),
+      ...(callerId ? { callerId } : {}),
+      ...(apiKey ? { apiKey } : {}),
+      enabled
+    };
   } else {
     return { ok: false, error: "Unknown channel." };
   }

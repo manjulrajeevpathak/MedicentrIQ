@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { MessageSquare, Megaphone, Send, CheckCircle2, Circle } from "lucide-react";
+import { MessageSquare, Megaphone, Phone, Send, CheckCircle2, Circle } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import {
   saveChannelsAction,
@@ -29,14 +29,15 @@ function StatusPill({ ok }: { ok: boolean }) {
 export function IntegrationsPanel({ channels }: { channels: ChannelStatus }) {
   const [umState, saveUm] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
   const [aiState, saveAi] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
+  const [telState, saveTel] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
   const [testState, sendTest] = useActionState<ChannelActionState, FormData>(sendTestMessageAction, { ok: false });
 
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-sm font-semibold text-ink">Integrations · WhatsApp channels</h2>
+        <h2 className="text-sm font-semibold text-ink">Integrations · Channels</h2>
         <p className="text-xs text-ink-muted">
-          Configure this hospital&rsquo;s own messaging credentials. Transactional messages send via UltraMsg; marketing via AISensy.
+          Configure this hospital&rsquo;s own messaging &amp; telephony credentials. Transactional messages send via UltraMsg; marketing via AISensy; calls are logged via telephony.
         </p>
       </div>
 
@@ -95,6 +96,41 @@ export function IntegrationsPanel({ channels }: { channels: ChannelStatus }) {
               {aiState.error ? <span className="text-xs text-critical">{aiState.error}</span> : aiState.ok ? <span className="text-xs text-good">{aiState.message}</span> : null}
             </div>
             <p className="text-[11px] text-ink-faint">AISensy sends pre-approved templates — a test needs an existing campaign name.</p>
+          </form>
+        </Panel>
+
+        {/* Telephony */}
+        <Panel>
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Phone className="size-4 text-brand-600" />
+              <span className="text-sm font-semibold text-ink">Telephony</span>
+              <span className="rounded bg-fill px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted">Calls</span>
+            </div>
+            <StatusPill ok={channels.telephony.configured} />
+          </div>
+          <form action={saveTel} className="space-y-3">
+            <input type="hidden" name="provider" value="telephony" />
+            <div>
+              <label className={labelCls}>Provider</label>
+              <input name="telProvider" defaultValue={channels.telephony.provider ?? ""} placeholder="e.g. twilio, exotel" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Caller ID</label>
+              <input name="callerId" defaultValue={channels.telephony.callerId ?? ""} placeholder="+9180xxxxxxxx" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>API key {channels.telephony.apiKeyTail ? `(saved ${channels.telephony.apiKeyTail})` : ""}</label>
+              <input name="apiKey" type="password" placeholder={channels.telephony.configured ? "•••••• leave blank to keep" : "Telephony API key"} className={inputCls} />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input type="checkbox" name="enabled" defaultChecked={channels.telephony.enabled} className="size-4" /> Enabled
+            </label>
+            <div className="flex items-center gap-3">
+              <button type="submit" className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">Save</button>
+              {telState.error ? <span className="text-xs text-critical">{telState.error}</span> : telState.ok ? <span className="text-xs text-good">{telState.message}</span> : null}
+            </div>
+            <p className="text-[11px] text-ink-faint">Click-to-call &amp; AI-voice — provider integration coming soon. Calls are logged via the call-log API today.</p>
           </form>
         </Panel>
       </div>

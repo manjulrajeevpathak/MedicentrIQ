@@ -84,6 +84,8 @@ export type Permission =
   | "campaigns:read"
   | "campaigns:manage"
   | "campaigns:send"
+  | "calls:read"
+  | "calls:manage"
   | "platform:tenants:read"
   | "platform:tenants:manage"
   | "platform:entitlements:manage"
@@ -204,6 +206,8 @@ export type TenantChannelConfig = {
   ultramsg?: { instanceId: string; token: string; enabled: boolean };
   /** AISensy — template/campaign (marketing). */
   aisensy?: { apiKey: string; enabled: boolean };
+  /** Telephony — per-tenant click-to-call / call-log provider (stub for now). */
+  telephony?: { provider?: string; apiKey?: string; callerId?: string; enabled: boolean };
   createdAt: string;
   updatedAt: string;
 };
@@ -221,6 +225,30 @@ export type MessageLog = {
   providerId?: string;
   error?: string;
   createdAt: string;
+};
+
+// ---- Telephony (per-tenant call log) --------------------------------------
+
+export type CallDirection = "outbound" | "inbound";
+export type CallStatus = "queued" | "ringing" | "completed" | "missed" | "failed";
+
+/** A telephony call-log row. The seam: dialing is via a provider stub today, so
+ *  most rows are logged interactions; providerId is set when a stub call queues. */
+export type Call = {
+  id: string;
+  tenantId: string;
+  to: string;
+  from?: string;
+  direction: CallDirection;
+  status: CallStatus;
+  leadId?: string;
+  patientId?: string;
+  disposition?: string;
+  notes?: string;
+  recordingUrl?: string;
+  providerId?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 // ---- Leads & data sources (top of funnel) ---------------------------------
@@ -398,6 +426,8 @@ export type AuditEvent = {
     | "campaign.create"
     | "campaign.update"
     | "campaign.send"
+    | "call.create"
+    | "call.update"
     | "auth.login"
     | "auth.login_failed"
     | "auth.logout"

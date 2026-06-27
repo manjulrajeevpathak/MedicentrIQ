@@ -17,6 +17,7 @@ const collections: CollectionName[] = [
   "passwordResetTokens",
   "channelConfigs",
   "messages",
+  "calls",
   "apiKeys",
   "households",
   "patients",
