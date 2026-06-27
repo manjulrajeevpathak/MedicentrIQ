@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import { Check, Loader2, Lock, Mail, Pencil } from "lucide-react";
 import {
   setModuleOverrideAction,
@@ -29,7 +29,13 @@ export function AdminEditor({
     {}
   );
 
-  if (!editing && !state.ok) {
+  // Collapse back to the read-only view after a successful save. Keyed on the
+  // state object (a fresh reference per submit) so it re-fires on repeat edits.
+  useEffect(() => {
+    if (state.ok) setEditing(false);
+  }, [state]);
+
+  if (!editing) {
     return (
       <div className="flex items-start justify-between gap-2">
         <div>
@@ -66,7 +72,6 @@ export function AdminEditor({
         className="w-full rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-sm"
       />
       {state.error ? <p className="text-xs text-[var(--color-danger,#dc2626)]">{state.error}</p> : null}
-      {state.ok ? <p className="text-xs text-[var(--color-good,#16a34a)]">Saved.</p> : null}
       <div className="flex items-center gap-2">
         <button
           type="submit"
