@@ -33,6 +33,13 @@ export class PostgresPersistence implements CorePersistence {
   readonly mode = "postgres" as const;
   private readonly pool: Pool;
 
+  /**
+   * Per-record snapshot of what was last persisted (recordId -> serialized payload),
+   * keyed by collection. Lets saveCollection() write only the rows that actually
+   * changed instead of rewriting the whole collection on every mutation.
+   */
+  private readonly persistedSnapshots = new Map<CollectionName, Map<string, string>>();
+
   constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
@@ -56,11 +63,37 @@ export class PostgresPersistence implements CorePersistence {
   }
 
   async saveCollection<K extends CollectionName>(collection: K, records: SeedData[K]): Promise<void> {
+    const previous = this.persistedSnapshots.get(collection) ?? new Map<string, string>();
+    const next = new Map<string, string>();
+
+    // Determine which rows are new/changed (upserts) and which disappeared (deletes),
+    // so a mutation that touches one record writes one row — not the whole collection.
+    const upserts: { id: string; record: unknown; payload: string }[] = [];
+    for (const record of records) {
+      const id = recordId(collection, record);
+      const payload = JSON.stringify(record);
+      next.set(id, payload);
+      if (previous.get(id) !== payload) {
+        upserts.push({ id, record, payload });
+      }
+    }
+    const deletes: string[] = [];
+    for (const id of previous.keys()) {
+      if (!next.has(id)) {
+        deletes.push(id);
+      }
+    }
+
+    if (upserts.length === 0 && deletes.length === 0) {
+      this.persistedSnapshots.set(collection, next);
+      return;
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
 
-      for (const record of records) {
+      for (const { id, record, payload } of upserts) {
         await client.query(
           `INSERT INTO healthcareos_core_records
             (collection, record_id, tenant_id, patient_id, status, payload, updated_at)
@@ -72,18 +105,19 @@ export class PostgresPersistence implements CorePersistence {
              status = EXCLUDED.status,
              payload = EXCLUDED.payload,
              updated_at = now()`,
-          [
-            collection,
-            recordId(collection, record),
-            tenantId(record),
-            patientId(record),
-            status(record),
-            JSON.stringify(record)
-          ]
+          [collection, id, tenantId(record), patientId(record), status(record), payload]
+        );
+      }
+
+      if (deletes.length > 0) {
+        await client.query(
+          "DELETE FROM healthcareos_core_records WHERE collection = $1 AND record_id = ANY($2::text[])",
+          [collection, deletes]
         );
       }
 
       await client.query("COMMIT");
+      this.persistedSnapshots.set(collection, next);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

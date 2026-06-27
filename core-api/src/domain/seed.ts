@@ -19,7 +19,9 @@ import type {
   WorkbenchTask
 } from "./types.js";
 
-const now = new Date("2026-06-11T09:00:00.000Z");
+// Anchor demo timestamps to the current time so seeded appointments, sessions, and
+// mobile-link expiries stay fresh on every boot (a fixed date silently expires them).
+const now = new Date();
 const minutesFromNow = (minutes: number) => new Date(now.getTime() + minutes * 60_000).toISOString();
 const daysFromNow = (days: number) => new Date(now.getTime() + days * 24 * 60 * 60_000).toISOString();
 
