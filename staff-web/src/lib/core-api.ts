@@ -10,9 +10,12 @@ const AUDIT_EVENTS_PATH = "/audit/events";
  * fields (threads, slots, journeys, directory) are always merged from mock so
  * the console looks complete even against a minimal live response.
  */
-export async function getDashboardData(userId?: string): Promise<DashboardData> {
+export async function getDashboardData(userId?: string, sessionToken?: string): Promise<DashboardData> {
   const baseUrl = process.env.NEXT_PUBLIC_CORE_API_URL;
-  const authContext = buildDemoAuthContext(resolveDemoUserId(userId), baseUrl ? resolveAuthMode() : "fallback");
+  const authContext = buildDemoAuthContext(
+    resolveDemoUserId(userId),
+    baseUrl ? resolveAuthMode(sessionToken) : "fallback"
+  );
 
   if (!baseUrl) {
     return withGovernance({ ...mockDashboardData, source: "mock" }, authContext, mockAuditEvents);
@@ -20,7 +23,7 @@ export async function getDashboardData(userId?: string): Promise<DashboardData> 
 
   try {
     const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
-    const headers = buildAuthHeaders(authContext.activeUser);
+    const headers = buildAuthHeaders(authContext.activeUser, sessionToken);
     const [dashboardResponse, auditEvents] = await Promise.all([
       fetch(`${normalizedBaseUrl}${DASHBOARD_PATH}`, {
         cache: "no-store",
@@ -103,16 +106,18 @@ function resolveDemoUserId(requestedUserId?: string): string | undefined {
   return requestedUserId || process.env.NEXT_PUBLIC_DEMO_USER_ID || process.env.DEMO_USER_ID;
 }
 
-function resolveAuthMode(): DemoAuthContext["mode"] {
-  return staffSessionToken() ? "staff-session" : "demo-headers";
+function resolveAuthMode(sessionToken?: string): DemoAuthContext["mode"] {
+  return sessionToken || staffSessionToken() ? "staff-session" : "demo-headers";
 }
 
 function staffSessionToken(): string | undefined {
   return process.env.NEXT_PUBLIC_CORE_API_STAFF_SESSION_TOKEN || process.env.CORE_API_STAFF_SESSION_TOKEN;
 }
 
-function buildAuthHeaders(activeUser: Pick<DemoUser, "id">): HeadersInit {
-  const token = staffSessionToken();
+function buildAuthHeaders(activeUser: Pick<DemoUser, "id">, sessionToken?: string): HeadersInit {
+  // A logged-in session cookie wins over any static env token; both win over
+  // demo headers (used in cookie-less demo mode).
+  const token = sessionToken || staffSessionToken();
   if (token) {
     return { authorization: `Bearer ${token}` };
   }
@@ -150,7 +155,7 @@ function withGovernance(data: DashboardData, authContext: DemoAuthContext, audit
     auditEvents: auditEvents.length ? auditEvents : mockAuditEvents,
     serviceStatus: data.serviceStatus.map((service) => ({
       ...service,
-      authMode: service.authMode ?? (staffSessionToken() ? "staff session" : "demo headers"),
+      authMode: service.authMode ?? (authContext.mode === "staff-session" ? "staff session" : "demo headers"),
       scope: service.scope ?? `${demoTenant.id} / ${demoBranch.id}`
     }))
   };

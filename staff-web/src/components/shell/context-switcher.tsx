@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Check, ChevronDown, GitBranch, ShieldCheck } from "lucide-react";
+import { Building2, Check, ChevronDown, GitBranch, LogOut, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ACTIVE_USER_COOKIE } from "@/lib/constants";
+import { logoutAction } from "@/app/(auth)/actions";
 import { useApp } from "@/lib/store";
 import type { DemoAuthContext } from "@/lib/types";
 import { Avatar } from "@/components/ui/avatar";
@@ -158,6 +159,19 @@ export function ContextSwitcher({ auth }: { auth: DemoAuthContext }) {
                 </button>
               );
             })}
+          </div>
+
+          {/* Sign out */}
+          <div className="mt-2 border-t border-line px-1 pt-2">
+            <form action={logoutAction}>
+              <button
+                type="submit"
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-ink-soft transition hover:bg-surface-muted hover:text-ink"
+              >
+                <LogOut className="size-4 text-ink-muted" />
+                Sign out
+              </button>
+            </form>
           </div>
         </div>
       ) : null}

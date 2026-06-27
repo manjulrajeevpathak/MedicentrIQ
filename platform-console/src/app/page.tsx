@@ -3,12 +3,15 @@ import {
   Building2,
   ChevronRight,
   Layers,
+  LogOut,
   Plus,
   ShieldCheck,
+  UsersRound,
   Users
 } from "lucide-react";
 import { listTenants, type TenantView } from "@/lib/platform-api";
 import { PlanBadge, StatusBadge, TypeBadge } from "@/components/badges";
+import { logoutAction } from "@/app/(auth)/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -43,13 +46,31 @@ export default async function DashboardPage() {
             modules per tenant.
           </p>
         </div>
-        <Link
-          href="/tenants/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-brand-600)] px-4 py-2.5 text-sm font-medium text-white shadow-[var(--shadow-card)] transition hover:bg-[var(--color-brand-700)]"
-        >
-          <Plus className="h-4 w-4" />
-          Onboard hospital
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/admins"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-ink-soft)] transition hover:bg-[var(--color-fill)]"
+          >
+            <UsersRound className="h-4 w-4" />
+            Admins
+          </Link>
+          <Link
+            href="/tenants/new"
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-brand-600)] px-4 py-2.5 text-sm font-medium text-white shadow-[var(--shadow-card)] transition hover:bg-[var(--color-brand-700)]"
+          >
+            <Plus className="h-4 w-4" />
+            Onboard hospital
+          </Link>
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-3 py-2.5 text-sm font-medium text-[var(--color-ink-muted)] transition hover:bg-[var(--color-fill)]"
+              aria-label="Sign out"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </form>
+        </div>
       </header>
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
