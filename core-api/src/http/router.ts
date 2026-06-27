@@ -82,6 +82,20 @@ const createRoutes = (service: CoreService): Route[] => [
     })
   ),
 
+  // Platform tier — HealthOS superadmin: provision tenants and manage entitlements.
+  route("GET", "/platform/plans", "platform:tenants:read", () => service.listPlans()),
+  route("GET", "/platform/modules", "platform:tenants:read", () => service.listModules()),
+  route("GET", "/platform/tenants", "platform:tenants:read", () => service.listTenants()),
+  route("POST", "/platform/tenants", "platform:tenants:manage", ({ auth, body }) =>
+    service.createTenant(auth, toRecord(body))
+  ),
+  route("GET", "/platform/tenants/:tenantId", "platform:tenants:read", ({ params }) =>
+    service.getTenant(params.tenantId)
+  ),
+  route("PATCH", "/platform/tenants/:tenantId", "platform:entitlements:manage", ({ auth, params, body }) =>
+    service.updateTenant(auth, params.tenantId, toRecord(body))
+  ),
+
   route("GET", "/patients", "patients:read", ({ auth }) => service.listPatients(auth)),
   route("POST", "/patients", "patients:create", ({ auth, body }) => service.createPatient(auth, toRecord(body))),
   route("GET", "/patients/:patientId", "patients:read", ({ auth, params }) => service.getPatient(auth, params.patientId)),
@@ -255,7 +269,7 @@ const sendJson = (response: ServerResponse, statusCode: number, payload: unknown
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
-    "access-control-allow-headers": "content-type,authorization,x-demo-user-id,x-demo-tenant-id,x-service-api-key"
+    "access-control-allow-headers": "content-type,authorization,x-demo-user-id,x-demo-tenant-id,x-service-api-key,x-platform-api-key"
   });
   response.end(JSON.stringify(payload, null, 2));
 };
@@ -270,7 +284,8 @@ const requestHeaders = (request: IncomingMessage): Record<string, string | undef
     authorization: value("authorization"),
     "x-demo-user-id": value("x-demo-user-id"),
     "x-demo-tenant-id": value("x-demo-tenant-id"),
-    "x-service-api-key": value("x-service-api-key")
+    "x-service-api-key": value("x-service-api-key"),
+    "x-platform-api-key": value("x-platform-api-key")
   };
 };
 

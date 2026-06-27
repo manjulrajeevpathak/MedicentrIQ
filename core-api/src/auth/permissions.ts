@@ -108,6 +108,12 @@ export const rolePermissions: Record<Role, Permission[]> = {
   workflow_service: [
     "auth:read_self",
     "service_events:ingest"
+  ],
+  platform_admin: [
+    "auth:read_self",
+    "platform:tenants:read",
+    "platform:tenants:manage",
+    "platform:entitlements:manage"
   ]
 };
 

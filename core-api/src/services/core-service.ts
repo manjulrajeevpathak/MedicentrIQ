@@ -21,6 +21,9 @@ import type {
   MobileLinkSession,
   PatientJourney,
   PatientJourneyStatus,
+  Organization,
+  Branch,
+  User,
   Patient,
   PatientSummary,
   Permission,
@@ -28,12 +31,25 @@ import type {
   RequestContext,
   Role,
   TaskStatus,
+  TenantType,
   TimelineEvent,
   WorkbenchTask,
   WorkbenchTaskView
 } from "../domain/types.js";
+import {
+  MODULE_CATALOG,
+  PLAN_CATALOG,
+  DEFAULT_PLAN_ID,
+  isPlanId,
+  resolveEnabledModules,
+  type ModuleKey,
+  type PlanId
+} from "../domain/platform.js";
 import { createPersistence, type CorePersistence } from "../persistence/index.js";
 import { createOutboundClients, type OutboundClients } from "../integrations/outbound-clients.js";
+
+/** Sentinel tenant id for platform-tier actors that operate across all tenants. */
+export const PLATFORM_SCOPE = "*";
 
 type CreatePatientInput = {
   householdId?: string;
@@ -287,6 +303,21 @@ const ensureString = (value: unknown, field: string): string => {
   return value.trim();
 };
 
+const validModuleKeys = new Set<ModuleKey>(MODULE_CATALOG.map((module) => module.key));
+
+const sanitizeModuleOverrides = (value: unknown): Partial<Record<ModuleKey, boolean>> | undefined => {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const overrides: Partial<Record<ModuleKey, boolean>> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (validModuleKeys.has(key as ModuleKey) && typeof raw === "boolean") {
+      overrides[key as ModuleKey] = raw;
+    }
+  }
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+};
+
 const staffPriority = (priority: Priority): "critical" | "high" | "medium" | "low" =>
   priority === "urgent" ? "critical" : priority;
 
@@ -416,6 +447,26 @@ export class CoreService {
       };
     }
 
+    const platformApiKey = headers["x-platform-api-key"];
+    const envPlatformKey = process.env.PLATFORM_API_KEY ?? "platform_demo_key";
+    if (platformApiKey) {
+      if (platformApiKey !== envPlatformKey) {
+        throw new ApiError(401, "Invalid platform API key");
+      }
+      const roles: Role[] = ["platform_admin"];
+      return {
+        actorType: "platform",
+        tenantId: PLATFORM_SCOPE,
+        actorId: "platform_admin",
+        displayName: "HealthOS platform admin",
+        roles,
+        branchIds: [],
+        permissions: permissionsForRoles(roles),
+        isDemoMode: process.env.PLATFORM_API_KEY ? false : true,
+        source: "platform_api_key"
+      };
+    }
+
     const serviceApiKey = headers["x-service-api-key"];
     const envServiceKey = process.env.CORE_API_SERVICE_KEY;
     const matchedApiKey = serviceApiKey
@@ -518,10 +569,18 @@ export class CoreService {
   }
 
   getCurrentUser(context: RequestContext) {
+    const tenant = this.data.organizations.find((entry) => entry.id === context.tenantId);
+    const enabledModules: ModuleKey[] = tenant
+      ? resolveEnabledModules(tenant.planId, tenant.moduleOverrides)
+      : MODULE_CATALOG.map((module) => module.key);
     return {
-      tenant: this.data.organizations.find((entry) => entry.id === context.tenantId),
+      tenant,
       context,
-      branches: this.data.branches.filter((entry) => entry.tenantId === context.tenantId)
+      branches: this.data.branches.filter((entry) => entry.tenantId === context.tenantId),
+      entitlements: {
+        planId: tenant?.planId ?? null,
+        enabledModules
+      }
     };
   }
 
@@ -566,6 +625,148 @@ export class CoreService {
         branchIds: user.branchIds
       }
     };
+  }
+
+  // ---- Platform tier (HealthOS superadmin) ----------------------------------
+
+  listPlans() {
+    return PLAN_CATALOG;
+  }
+
+  listModules() {
+    return MODULE_CATALOG;
+  }
+
+  private tenantView(org: Organization) {
+    return {
+      id: org.id,
+      displayName: org.displayName,
+      type: org.type,
+      status: org.status,
+      planId: org.planId,
+      moduleOverrides: org.moduleOverrides ?? {},
+      enabledModules: resolveEnabledModules(org.planId, org.moduleOverrides),
+      branchCount: this.data.branches.filter((entry) => entry.tenantId === org.id).length,
+      userCount: this.data.users.filter((entry) => entry.tenantId === org.id).length,
+      createdAt: org.createdAt
+    };
+  }
+
+  listTenants() {
+    return this.data.organizations
+      .slice()
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      .map((org) => this.tenantView(org));
+  }
+
+  getTenant(tenantId: string) {
+    const org = this.data.organizations.find((entry) => entry.id === tenantId);
+    if (!org) {
+      throw new ApiError(404, `Tenant not found: ${tenantId}`);
+    }
+    return {
+      ...this.tenantView(org),
+      branches: this.data.branches
+        .filter((entry) => entry.tenantId === org.id)
+        .map((entry) => ({ id: entry.id, displayName: entry.displayName, city: entry.city, status: entry.status })),
+      admins: this.data.users
+        .filter((entry) => entry.tenantId === org.id && entry.roles.includes("org_admin"))
+        .map((entry) => ({ id: entry.id, displayName: entry.displayName, email: entry.email }))
+    };
+  }
+
+  async createTenant(context: RequestContext, input: Record<string, unknown>) {
+    const displayName = ensureString(input.displayName, "displayName");
+    const type = (input.type === "clinic" ? "clinic" : "hospital") as TenantType;
+    const planId: PlanId = isPlanId(input.planId) ? input.planId : DEFAULT_PLAN_ID;
+    const branchName = ensureString(input.branchName, "branchName");
+    const adminName = ensureString(input.adminName, "adminName");
+    const adminEmail = typeof input.adminEmail === "string" ? input.adminEmail : undefined;
+    const branchCity = typeof input.branchCity === "string" ? input.branchCity : "";
+    const moduleOverrides = sanitizeModuleOverrides(input.moduleOverrides);
+    const timestamp = nowIso();
+
+    const slug = displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 32) || "tenant";
+    const tenantId = `org_${slug}_${randomUUID().slice(0, 6)}`;
+
+    const org: Organization = {
+      id: tenantId,
+      displayName,
+      status: "active",
+      type,
+      planId,
+      ...(moduleOverrides ? { moduleOverrides } : {}),
+      createdAt: timestamp
+    };
+    const branch: Branch = {
+      id: `branch_${slug}_${randomUUID().slice(0, 6)}`,
+      tenantId,
+      displayName: branchName,
+      city: branchCity,
+      status: "active",
+      createdAt: timestamp
+    };
+    const admin: User = {
+      id: `user_${slug}_admin_${randomUUID().slice(0, 6)}`,
+      tenantId,
+      displayName: adminName,
+      email: adminEmail,
+      roles: ["org_admin"],
+      branchIds: [branch.id],
+      status: "active",
+      createdAt: timestamp
+    };
+
+    this.data.organizations.push(org);
+    this.data.branches.push(branch);
+    this.data.users.push(admin);
+    await this.persistence.saveCollection("organizations", this.data.organizations);
+    await this.persistence.saveCollection("branches", this.data.branches);
+    await this.persistence.saveCollection("users", this.data.users);
+    await this.audit(context, "tenant.create", "tenant", tenantId, undefined, {
+      displayName,
+      type,
+      planId,
+      branchId: branch.id,
+      adminId: admin.id
+    });
+
+    return this.getTenant(tenantId);
+  }
+
+  async updateTenant(context: RequestContext, tenantId: string, input: Record<string, unknown>) {
+    const org = this.data.organizations.find((entry) => entry.id === tenantId);
+    if (!org) {
+      throw new ApiError(404, `Tenant not found: ${tenantId}`);
+    }
+    if (isPlanId(input.planId)) {
+      org.planId = input.planId;
+    }
+    if (input.status === "active" || input.status === "inactive" || input.status === "suspended") {
+      org.status = input.status;
+    }
+    if (input.type === "hospital" || input.type === "clinic") {
+      org.type = input.type;
+    }
+    if (typeof input.displayName === "string" && input.displayName.trim()) {
+      org.displayName = input.displayName.trim();
+    }
+    if (input.moduleOverrides !== undefined) {
+      const overrides = sanitizeModuleOverrides(input.moduleOverrides);
+      if (overrides) org.moduleOverrides = overrides;
+      else delete org.moduleOverrides;
+    }
+    await this.persistence.saveCollection("organizations", this.data.organizations);
+    await this.audit(context, "tenant.update", "tenant", tenantId, undefined, {
+      planId: org.planId,
+      status: org.status,
+      moduleOverrides: org.moduleOverrides ?? {}
+    });
+    return this.getTenant(tenantId);
   }
 
   getStaffDashboard(context: RequestContext) {

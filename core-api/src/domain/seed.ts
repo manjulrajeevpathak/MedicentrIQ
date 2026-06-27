@@ -58,6 +58,8 @@ export const createSeedData = (): SeedData => ({
       id: DEMO_TENANT_ID,
       displayName: "Demo Specialty Care Network",
       status: "active",
+      type: "hospital",
+      planId: "enterprise",
       createdAt: daysFromNow(-120)
     }
   ],

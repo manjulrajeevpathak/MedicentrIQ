@@ -44,7 +44,12 @@ export class PostgresPersistence implements CorePersistence {
     this.pool = new Pool({
       connectionString,
       max: Number.parseInt(process.env.DATABASE_POOL_SIZE ?? "5", 10),
-      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined
+      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+      // The trusted core-api role runs with platform scope so its boot load and
+      // service-layer-filtered reads/writes see all tenants. RLS (see migrate())
+      // is enforced as defense-in-depth: any connection WITHOUT this scope set
+      // only sees rows for the tenant in `app.tenant_scope` (and global config).
+      options: "-c app.tenant_scope=platform"
     });
   }
 
@@ -187,6 +192,28 @@ export class PostgresPersistence implements CorePersistence {
       CREATE INDEX IF NOT EXISTS idx_healthcareos_core_records_status
         ON healthcareos_core_records (status)
         WHERE status IS NOT NULL;
+    `);
+
+    // Row-Level Security: tenant isolation enforced at the database (defense-in-depth).
+    // A connection sees a row only if it runs with platform scope, the row is global
+    // (tenant_id IS NULL), or the row's tenant matches `app.tenant_scope`. FORCE makes
+    // this apply even to the table owner. core-api connects with platform scope (Pool
+    // options) and additionally filters by tenant in the service layer.
+    await this.pool.query(`
+      ALTER TABLE healthcareos_core_records ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE healthcareos_core_records FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS tenant_isolation ON healthcareos_core_records;
+      CREATE POLICY tenant_isolation ON healthcareos_core_records
+        USING (
+          current_setting('app.tenant_scope', true) = 'platform'
+          OR tenant_id IS NULL
+          OR tenant_id = current_setting('app.tenant_scope', true)
+        )
+        WITH CHECK (
+          current_setting('app.tenant_scope', true) = 'platform'
+          OR tenant_id IS NULL
+          OR tenant_id = current_setting('app.tenant_scope', true)
+        );
     `);
   }
 }

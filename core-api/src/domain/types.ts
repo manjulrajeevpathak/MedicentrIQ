@@ -1,3 +1,5 @@
+import type { ModuleKey, PlanId } from "./platform.js";
+
 export type IdentityStatus = "unverified" | "suggested_match" | "verified" | "conflict";
 export type Priority = "urgent" | "high" | "medium" | "low";
 export type InteractionChannel = "whatsapp" | "call" | "missed_call" | "web" | "referral" | "walk_in" | "staff_note";
@@ -21,7 +23,7 @@ export type JourneyTemplateStatus = "draft" | "active" | "retired";
 export type PatientJourneyStatus = "planned" | "active" | "paused" | "completed" | "cancelled";
 export type JourneyTaskStatus = "pending" | "in_progress" | "completed" | "cancelled" | "skipped";
 export type ConsentStatus = "granted" | "revoked" | "unknown";
-export type ActorType = "staff" | "service" | "patient_link";
+export type ActorType = "staff" | "service" | "patient_link" | "platform";
 export type Role =
   | "front_desk"
   | "call_center"
@@ -31,7 +33,8 @@ export type Role =
   | "admin"
   | "org_admin"
   | "integration_service"
-  | "workflow_service";
+  | "workflow_service"
+  | "platform_admin";
 export type Permission =
   | "auth:read_self"
   | "patients:read"
@@ -53,12 +56,23 @@ export type Permission =
   | "journeys:read"
   | "journeys:update"
   | "audit:read"
-  | "service_events:ingest";
+  | "service_events:ingest"
+  | "platform:tenants:read"
+  | "platform:tenants:manage"
+  | "platform:entitlements:manage";
+
+export type TenantType = "hospital" | "clinic";
 
 export type Organization = {
   id: string;
   displayName: string;
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "suspended";
+  /** Hospital vs clinic — drives defaults and labelling in the superadmin console. */
+  type: TenantType;
+  /** Plan tier assigned by the HealthOS superadmin team. */
+  planId: PlanId;
+  /** Per-module on/off overrides on top of the plan bundle (sparse). */
+  moduleOverrides?: Partial<Record<ModuleKey, boolean>>;
   createdAt: string;
 };
 
@@ -101,7 +115,7 @@ export type RequestContext = {
   branchIds: string[];
   permissions: Permission[];
   isDemoMode: boolean;
-  source: "staff_session" | "demo_headers" | "service_api_key" | "mobile_link" | "system_default";
+  source: "staff_session" | "demo_headers" | "service_api_key" | "mobile_link" | "system_default" | "platform_api_key" | "platform_session";
   sessionId?: string;
 };
 
@@ -132,7 +146,9 @@ export type AuditEvent = {
     | "mobile_link.lookup"
     | "mobile_link.action"
     | "workflow.trigger"
-    | "service_webhook.intake";
+    | "service_webhook.intake"
+    | "tenant.create"
+    | "tenant.update";
   resourceType: string;
   resourceId?: string;
   patientId?: string;
