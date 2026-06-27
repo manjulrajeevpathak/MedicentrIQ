@@ -6,7 +6,9 @@ import { SESSION_COOKIE } from "@/lib/constants";
  * assets pass through. In `demo` auth mode the whole check is bypassed so the
  * existing cookie-less demo experience keeps working.
  */
-const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password"];
+// `/f/<slug>` is the public camp/lead-capture form — shared with the world, so
+// it must resolve without a session, like the auth pages.
+const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password", "/f"];
 
 export function middleware(request: NextRequest) {
   if (process.env.NEXT_PUBLIC_AUTH_MODE === "demo") {

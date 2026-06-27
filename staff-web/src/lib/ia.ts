@@ -8,6 +8,7 @@ import {
   Route,
   Settings2,
   ShieldCheck,
+  Sprout,
   Users
 } from "lucide-react";
 import type { PermissionKey } from "./types";
@@ -23,6 +24,7 @@ export type ModuleKey =
   | "access"
   | "journeys"
   | "continuity"
+  | "leads"
   | "campaigns"
   | "operations"
   | "admin";
@@ -61,8 +63,9 @@ export const navGroups: NavGroup[] = [
     ]
   },
   {
-    label: "Outcomes",
+    label: "Growth",
     items: [
+      { href: "/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
       { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" }
     ]
   },
