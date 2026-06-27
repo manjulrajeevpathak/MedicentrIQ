@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/* ----------------------------------------------------------------------------
+   HealthcareOS Clinician PWA — design tokens ("refined clinical").
+   Mobile-first; single light theme. Tokens mirror the sibling staff-web app so
+   the surfaces feel consistent across the platform.
+   ------------------------------------------------------------------------- */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  /* Brand — refined medical blue */
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe8ff;
+  --color-brand-200: #bdd4ff;
+  --color-brand-300: #92b6ff;
+  --color-brand-400: #5f8ef7;
+  --color-brand-500: #356fe8;
+  --color-brand-600: #2257d2;
+  --color-brand-700: #1c46ad;
+  --color-brand-800: #1d3d8a;
+  --color-brand-900: #1d386f;
+  --color-brand-950: #152347;
+
+  /* Canvas + surfaces — warm bone neutrals */
+  --color-canvas: #f7f6f3;
+  --color-surface: #ffffff;
+  --color-surface-muted: #faf9f6;
+  --color-line: #e9e7e1;
+  --color-line-strong: #d9d6cd;
+  --color-fill: #efede8;
+  --color-fill-strong: #e2dfd7;
+
+  /* Ink */
+  --color-ink: #1a1c20;
+  --color-ink-soft: #43484f;
+  --color-ink-muted: #6e747e;
+  --color-ink-faint: #9aa0aa;
+
+  /* Semantic state */
+  --color-critical: #e5484d;
+  --color-critical-soft: #fdecec;
+  --color-high: #dd8615;
+  --color-high-soft: #fdf2e0;
+  --color-medium: #356fe8;
+  --color-medium-soft: #e8f0fe;
+  --color-low: #64748b;
+  --color-low-soft: #eef1f5;
+  --color-good: #18936b;
+  --color-good-soft: #e4f5ee;
+
+  --radius-card: 0.75rem;
+
+  --shadow-card: 0 1px 2px rgba(26, 28, 32, 0.05);
+  --shadow-lift: 0 2px 8px rgba(26, 28, 32, 0.07), 0 8px 24px rgba(26, 28, 32, 0.06);
+  --shadow-pop: 0 8px 32px rgba(26, 28, 32, 0.16);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Comfortable minimum tap target across interactive controls. */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+
+  ::selection {
+    background-color: var(--color-brand-200);
+    color: var(--color-brand-900);
+  }
+}
+
+@layer utilities {
+  .surface-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .tap {
+    min-height: 2.75rem;
+  }
+}
