@@ -13,14 +13,20 @@ import {
 } from "../integrations/email.js";
 import { sendUltraMsg } from "../integrations/channels/ultramsg.js";
 import { sendAiSensy } from "../integrations/channels/aisensy.js";
+import { createStorageService, type StorageService } from "../integrations/storage.js";
+import { OPHTHALMOLOGY_CONDITION_CATALOG } from "../domain/clinical-catalog.js";
 import type {
   AccessRequest,
   Appointment,
+  AppointmentDisposition,
   AuditEvent,
   Caregiver,
+  ClinicalCondition,
+  ClinicalRecord,
   Doctor,
   DoctorWorkingWindow,
   DocumentMetadata,
+  DocumentType,
   FollowUp,
   Household,
   HouseholdCaregiverPermission,
@@ -260,9 +266,36 @@ type CreateJourneyEventInput = {
   payload?: Record<string, unknown>;
 };
 
+type DispositionInput = {
+  outcome?: string;
+  notes?: string;
+  nextStep?: string;
+  nextActionDate?: string;
+};
+
 type UpdateAppointmentInput = {
   status?: Appointment["status"];
   outcome?: string;
+  disposition?: DispositionInput;
+};
+
+type SetClinicalRecordInput = {
+  conditions?: unknown;
+  allergies?: unknown;
+  notes?: unknown;
+};
+
+type DocumentUploadUrlInput = {
+  filename?: string;
+  contentType?: string;
+  type?: DocumentType;
+};
+
+type RecordDocumentInput = {
+  key?: string;
+  filename?: string;
+  contentType?: string;
+  type?: DocumentType;
 };
 
 type ConfirmAppointmentInput = {
@@ -519,7 +552,8 @@ export class CoreService {
     private readonly data: SeedData,
     private readonly persistence: CorePersistence,
     private readonly outbound: OutboundClients,
-    private readonly email: EmailService = createEmailService()
+    private readonly email: EmailService = createEmailService(),
+    private readonly storage: StorageService = createStorageService()
   ) {}
 
   health() {
@@ -1853,7 +1887,66 @@ export class CoreService {
   async getPatient(context: RequestContext, patientId: string) {
     const patient = this.ensureKnownPatient(context, patientId);
     await this.audit(context, "patient.view", "patient", patient.id, patient.id);
-    return this.summarizePatient(context, patient);
+    return {
+      ...this.summarizePatient(context, patient),
+      lifecycle: this.patientLifecycle(context, patient.id)
+    };
+  }
+
+  /**
+   * Where the patient currently sits in the visit funnel:
+   * Scheduled → Checked-in → In-consult → OPD Done (completed) → Disposition,
+   * or Missed (no_show). Derived from the patient's latest appointment.
+   */
+  private patientLifecycle(context: RequestContext, patientId: string) {
+    const appointments = this.data.appointments
+      .filter((entry) => entry.tenantId === context.tenantId && entry.patientId === patientId)
+      .sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt));
+    const latest = appointments[0];
+
+    const stageFor = (status?: Appointment["status"]): string => {
+      switch (status) {
+        case "scheduled":
+        case "confirmed":
+        case "rescheduled":
+          return "scheduled";
+        case "checked_in":
+          return "checked_in";
+        case "in_consult":
+          return "in_consult";
+        case "completed":
+          return "opd_done";
+        case "no_show":
+          return "missed";
+        case "cancelled":
+          return "cancelled";
+        default:
+          return "no_visit";
+      }
+    };
+
+    // Most recent completed visit = last visit date.
+    const lastVisit = appointments.find((entry) => entry.status === "completed");
+    // Open next action: a disposition's nextStep, or the next upcoming appointment.
+    const upcoming = appointments
+      .filter((entry) => ["scheduled", "confirmed", "rescheduled", "checked_in", "in_consult"].includes(entry.status))
+      .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))[0];
+
+    return {
+      stage: stageFor(latest?.status),
+      latestAppointmentId: latest?.id,
+      latestStatus: latest?.status,
+      lastVisitAt: lastVisit?.scheduledAt,
+      lastDisposition: lastVisit?.disposition,
+      openNextAction: lastVisit?.disposition?.nextStep
+        ? {
+            description: lastVisit.disposition.nextStep,
+            dueAt: lastVisit.disposition.nextActionDate
+          }
+        : upcoming
+          ? { description: `Upcoming: ${upcoming.reason}`, dueAt: upcoming.scheduledAt }
+          : undefined
+    };
   }
 
   async getPatientTimeline(context: RequestContext, patientId: string) {
@@ -2865,6 +2958,61 @@ export class CoreService {
   }
 
   async updateAppointment(context: RequestContext, appointmentId: string, input: UpdateAppointmentInput) {
+    const appointment = this.ensureVisibleAppointment(context, appointmentId);
+    if (input.status) {
+      appointment.status = input.status;
+    }
+    // A disposition only makes sense for a completed visit — accept it when the
+    // appointment is (being) completed, otherwise reject to avoid silent drops.
+    let dispositionRecorded = false;
+    if (input.disposition) {
+      if (appointment.status !== "completed") {
+        throw new ApiError(400, "A disposition can only be set when the appointment is completed");
+      }
+      appointment.disposition = this.buildDisposition(context, input.disposition);
+      dispositionRecorded = true;
+    }
+    appointment.updatedAt = nowIso();
+    await this.persistence.saveCollection("appointments", this.data.appointments);
+    await this.audit(context, "appointment.update", "appointment", appointment.id, appointment.patientId, {
+      status: appointment.status,
+      outcome: input.outcome ?? appointment.disposition?.outcome
+    });
+    if (dispositionRecorded) {
+      await this.audit(context, "appointment.disposition", "appointment", appointment.id, appointment.patientId, {
+        outcome: appointment.disposition?.outcome,
+        nextStep: appointment.disposition?.nextStep
+      });
+    }
+    return appointment;
+  }
+
+  /** Convenience endpoint: complete an appointment and record its disposition in one call. */
+  async recordAppointmentDisposition(context: RequestContext, appointmentId: string, input: DispositionInput) {
+    const appointment = this.ensureVisibleAppointment(context, appointmentId);
+    appointment.status = "completed";
+    appointment.disposition = this.buildDisposition(context, input);
+    appointment.updatedAt = nowIso();
+    await this.persistence.saveCollection("appointments", this.data.appointments);
+    await this.audit(context, "appointment.disposition", "appointment", appointment.id, appointment.patientId, {
+      outcome: appointment.disposition.outcome,
+      nextStep: appointment.disposition.nextStep
+    });
+    return appointment;
+  }
+
+  private buildDisposition(context: RequestContext, input: DispositionInput): AppointmentDisposition {
+    return {
+      outcome: ensureString(input.outcome, "outcome"),
+      ...(typeof input.notes === "string" ? { notes: input.notes } : {}),
+      ...(typeof input.nextStep === "string" ? { nextStep: input.nextStep } : {}),
+      ...(typeof input.nextActionDate === "string" ? { nextActionDate: input.nextActionDate } : {}),
+      recordedBy: context.actorId,
+      recordedAt: nowIso()
+    };
+  }
+
+  private ensureVisibleAppointment(context: RequestContext, appointmentId: string): Appointment {
     const appointment = this.data.appointments.find((entry) => entry.id === appointmentId && entry.tenantId === context.tenantId);
     if (!appointment) {
       throw new ApiError(404, `Appointment not found: ${appointmentId}`);
@@ -2872,15 +3020,6 @@ export class CoreService {
     if (!this.canAccessBranch(context, appointment.branchId)) {
       throw new ApiError(403, "Appointment is outside the actor's branch scope");
     }
-    if (input.status) {
-      appointment.status = input.status;
-    }
-    appointment.updatedAt = nowIso();
-    await this.persistence.saveCollection("appointments", this.data.appointments);
-    await this.audit(context, "appointment.update", "appointment", appointment.id, appointment.patientId, {
-      status: appointment.status,
-      outcome: input.outcome
-    });
     return appointment;
   }
 
@@ -2976,6 +3115,216 @@ export class CoreService {
       action: "upload_document_metadata"
     });
     return document;
+  }
+
+  // ---- Clinical history (ICD-10 conditions) ---------------------------------
+
+  /** Static, curated ophthalmology ICD-10 condition catalog for the UI picker. */
+  listConditionCatalog() {
+    return OPHTHALMOLOGY_CONDITION_CATALOG;
+  }
+
+  /** Returns the patient's clinical record, or an empty shell if none exists yet. */
+  getClinicalRecord(context: RequestContext, patientId: string): ClinicalRecord {
+    this.ensureKnownPatient(context, patientId);
+    const existing = this.data.clinicalRecords.find(
+      (entry) => entry.patientId === patientId && entry.tenantId === context.tenantId
+    );
+    if (existing) {
+      return existing;
+    }
+    return {
+      patientId,
+      tenantId: context.tenantId,
+      conditions: [],
+      allergies: [],
+      notes: undefined,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+  }
+
+  async setClinicalRecord(context: RequestContext, patientId: string, input: SetClinicalRecordInput) {
+    this.ensureKnownPatient(context, patientId);
+    const conditions = this.sanitizeConditions(input.conditions);
+    const allergies = Array.isArray(input.allergies)
+      ? input.allergies.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
+      : [];
+    const notes = typeof input.notes === "string" && input.notes.trim().length > 0 ? input.notes.trim() : undefined;
+    const timestamp = nowIso();
+
+    const existing = this.data.clinicalRecords.find(
+      (entry) => entry.patientId === patientId && entry.tenantId === context.tenantId
+    );
+    let record: ClinicalRecord;
+    if (existing) {
+      existing.conditions = conditions;
+      existing.allergies = allergies;
+      existing.notes = notes;
+      existing.updatedAt = timestamp;
+      record = existing;
+    } else {
+      record = {
+        patientId,
+        tenantId: context.tenantId,
+        conditions,
+        allergies,
+        notes,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      this.data.clinicalRecords.push(record);
+    }
+    await this.persistence.saveCollection("clinicalRecords", this.data.clinicalRecords);
+    await this.audit(context, "clinical.update", "clinical_record", patientId, patientId, {
+      conditionCount: record.conditions.length,
+      allergyCount: record.allergies?.length ?? 0
+    });
+    return record;
+  }
+
+  private sanitizeConditions(value: unknown): ClinicalCondition[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const conditions: ClinicalCondition[] = [];
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const candidate = entry as Record<string, unknown>;
+      const icd10Code = typeof candidate.icd10Code === "string" ? candidate.icd10Code.trim() : "";
+      const label = typeof candidate.label === "string" ? candidate.label.trim() : "";
+      if (!icd10Code || !label) {
+        continue;
+      }
+      conditions.push({
+        icd10Code,
+        label,
+        ...(typeof candidate.since === "string" && candidate.since.trim() ? { since: candidate.since.trim() } : {}),
+        ...(typeof candidate.notes === "string" && candidate.notes.trim() ? { notes: candidate.notes.trim() } : {})
+      });
+    }
+    return conditions;
+  }
+
+  // ---- Patient documents (S3 / local storage) -------------------------------
+
+  private sanitizeDocumentType(value: unknown): DocumentType {
+    return value === "prescription" || value === "discharge" || value === "lab" ? value : "other";
+  }
+
+  /** Map the staff document type onto the legacy mobile-link documentType union. */
+  private legacyDocumentType(type: DocumentType): DocumentMetadata["documentType"] {
+    if (type === "lab") return "lab_report";
+    if (type === "prescription") return "prescription";
+    return "other";
+  }
+
+  async createDocumentUploadUrl(context: RequestContext, patientId: string, input: DocumentUploadUrlInput) {
+    const patient = this.ensureKnownPatient(context, patientId);
+    const filename = ensureString(input.filename, "filename");
+    const contentType = ensureString(input.contentType, "contentType");
+    const type = this.sanitizeDocumentType(input.type);
+    // key: <tenantId>/<patientId>/<uuid>-<filename> (filename slugified for safety).
+    const safeName = filename.replace(/[^A-Za-z0-9._-]/g, "_");
+    const key = `${context.tenantId}/${patient.id}/${randomUUID()}-${safeName}`;
+    const uploadUrl = await this.storage.getUploadUrl(key, contentType);
+    return { uploadUrl, key, storageMode: this.storage.mode, type };
+  }
+
+  async recordPatientDocument(context: RequestContext, patientId: string, input: RecordDocumentInput) {
+    const patient = this.ensureKnownPatient(context, patientId);
+    const key = ensureString(input.key, "key");
+    const filename = ensureString(input.filename, "filename");
+    const contentType = ensureString(input.contentType, "contentType");
+    const type = this.sanitizeDocumentType(input.type);
+    const timestamp = nowIso();
+    const document: DocumentMetadata = {
+      id: createId("document"),
+      tenantId: context.tenantId,
+      patientId: patient.id,
+      documentType: this.legacyDocumentType(type),
+      fileName: filename,
+      filename,
+      mimeType: contentType,
+      contentType,
+      type,
+      storageKey: key,
+      storageStatus: "uploaded",
+      uploadedBy: context.actorId,
+      createdAt: timestamp
+    };
+    this.data.documents.push(document);
+    await this.persistence.saveCollection("documents", this.data.documents);
+    await this.audit(context, "document.upload", "document", document.id, document.patientId, {
+      type,
+      filename,
+      storageKey: key
+    });
+    return document;
+  }
+
+  listPatientDocuments(context: RequestContext, patientId: string) {
+    this.ensureKnownPatient(context, patientId);
+    return this.data.documents
+      .filter((entry) => entry.tenantId === context.tenantId && entry.patientId === patientId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** Whether the local-disk storage fallback is active (drives the /storage/local routes). */
+  get storageMode() {
+    return this.storage.mode;
+  }
+
+  /** Local-disk fallback: persist raw bytes for a storage key under `.uploads/`. */
+  async putLocalObject(key: string, bytes: Buffer) {
+    if (this.storage.mode !== "local") {
+      throw new ApiError(404, "Local storage is not active");
+    }
+    const path = await import("node:path");
+    const fs = await import("node:fs/promises");
+    const root = path.resolve(process.cwd(), ".uploads");
+    const target = path.resolve(root, key);
+    // Guard against path traversal — the resolved target must stay under .uploads/.
+    if (!target.startsWith(root + path.sep)) {
+      throw new ApiError(400, "Invalid storage key");
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, bytes);
+    return { key, sizeBytes: bytes.length };
+  }
+
+  /** Local-disk fallback: read raw bytes for a storage key, or 404 if absent. */
+  async getLocalObject(key: string): Promise<Buffer> {
+    if (this.storage.mode !== "local") {
+      throw new ApiError(404, "Local storage is not active");
+    }
+    const path = await import("node:path");
+    const fs = await import("node:fs/promises");
+    const root = path.resolve(process.cwd(), ".uploads");
+    const target = path.resolve(root, key);
+    if (!target.startsWith(root + path.sep)) {
+      throw new ApiError(400, "Invalid storage key");
+    }
+    try {
+      return await fs.readFile(target);
+    } catch {
+      throw new ApiError(404, "Stored object not found");
+    }
+  }
+
+  async getDocumentDownloadUrl(context: RequestContext, docId: string) {
+    const document = this.data.documents.find((entry) => entry.id === docId && entry.tenantId === context.tenantId);
+    if (!document) {
+      throw new ApiError(404, `Document not found: ${docId}`);
+    }
+    this.ensureKnownPatient(context, document.patientId);
+    if (!document.storageKey) {
+      throw new ApiError(409, "Document has no stored file (metadata-only)");
+    }
+    const downloadUrl = await this.storage.getDownloadUrl(document.storageKey);
+    return { downloadUrl, key: document.storageKey, storageMode: this.storage.mode };
   }
 
   async confirmFollowUp(context: RequestContext, token: string, followUpId: string, input: ConfirmFollowUpInput) {

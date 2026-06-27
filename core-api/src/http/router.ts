@@ -258,6 +258,32 @@ const createRoutes = (service: CoreService): Route[] => [
   route("PATCH", "/appointments/:appointmentId", "appointments:create", ({ auth, params, body }) =>
     service.updateAppointment(auth, params.appointmentId, toRecord(body))
   ),
+  route("POST", "/appointments/:appointmentId/disposition", "appointments:create", ({ auth, params, body }) =>
+    service.recordAppointmentDisposition(auth, params.appointmentId, toRecord(body))
+  ),
+
+  // Clinical history (ICD-10 conditions) per patient.
+  route("GET", "/clinical/conditions", "clinical:read", () => service.listConditionCatalog()),
+  route("GET", "/patients/:patientId/clinical", "clinical:read", ({ auth, params }) =>
+    service.getClinicalRecord(auth, params.patientId)
+  ),
+  route("PUT", "/patients/:patientId/clinical", "clinical:write", ({ auth, params, body }) =>
+    service.setClinicalRecord(auth, params.patientId, toRecord(body))
+  ),
+
+  // Patient documents (S3 presigned URLs, local-disk fallback).
+  route("POST", "/patients/:patientId/documents/upload-url", "documents:create", ({ auth, params, body }) =>
+    service.createDocumentUploadUrl(auth, params.patientId, toRecord(body))
+  ),
+  route("POST", "/patients/:patientId/documents", "documents:create", ({ auth, params, body }) =>
+    service.recordPatientDocument(auth, params.patientId, toRecord(body))
+  ),
+  route("GET", "/patients/:patientId/documents", "documents:read", ({ auth, params }) =>
+    service.listPatientDocuments(auth, params.patientId)
+  ),
+  route("GET", "/documents/:docId/url", "documents:read", ({ auth, params }) =>
+    service.getDocumentDownloadUrl(auth, params.docId)
+  ),
 
   route("GET", "/mobile-link-sessions/:token", "mobile_links:use", ({ auth, params }) =>
     service.lookupMobileLinkSession(auth, params.token)
@@ -323,7 +349,7 @@ const sendJson = (response: ServerResponse, statusCode: number, payload: unknown
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,PATCH,PUT,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
     "access-control-allow-headers": "content-type,authorization,x-demo-user-id,x-demo-tenant-id,x-service-api-key,x-platform-api-key"
   });
   response.end(JSON.stringify(payload, null, 2));
@@ -389,6 +415,36 @@ export const createApiServer = (service: CoreService) =>
         }
         sendJson(response, 200, { data: service.getDevOutbox() });
         return;
+      }
+
+      // Local-disk storage fallback (no S3). These carry an unguessable storage key
+      // in the path (which itself contains slashes, so they can't use the regex
+      // router) and handle raw file bytes — PUT writes, GET streams. Keyed by the
+      // storage key only; acceptable for the local dev fallback, not for production.
+      if (url.pathname.startsWith("/storage/local/")) {
+        const key = decodeURIComponent(url.pathname.slice("/storage/local/".length));
+        if (!key) {
+          throw new ApiError(400, "Missing storage key");
+        }
+        if (method === "PUT") {
+          const chunks: Buffer[] = [];
+          for await (const chunk of request) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          const result = await service.putLocalObject(key, Buffer.concat(chunks));
+          sendJson(response, 200, { data: result });
+          return;
+        }
+        if (method === "GET") {
+          const bytes = await service.getLocalObject(key);
+          response.writeHead(200, {
+            "content-type": "application/octet-stream",
+            "access-control-allow-origin": "*"
+          });
+          response.end(bytes);
+          return;
+        }
+        throw new ApiError(405, `Method not allowed: ${method} ${url.pathname}`);
       }
 
       const routes = createRoutes(service);

@@ -7,7 +7,15 @@ export type InteractionDirection = "inbound" | "outbound" | "internal";
 export type InteractionStatus = "new" | "triaged" | "linked" | "closed";
 export type TaskStatus = "open" | "in_progress" | "completed" | "cancelled";
 export type TaskSource = "healthcareos";
-export type AppointmentStatus = "scheduled" | "confirmed" | "rescheduled" | "completed" | "no_show" | "cancelled";
+export type AppointmentStatus =
+  | "scheduled"
+  | "confirmed"
+  | "checked_in"
+  | "in_consult"
+  | "rescheduled"
+  | "completed"
+  | "no_show"
+  | "cancelled";
 export type DoctorStatus = "active" | "inactive";
 export type FollowUpStatus = "due" | "confirmed" | "completed" | "missed" | "escalated";
 export type AccessRequestStatus =
@@ -55,6 +63,9 @@ export type Permission =
   | "access_requests:update"
   | "mobile_links:use"
   | "documents:create"
+  | "documents:read"
+  | "clinical:read"
+  | "clinical:write"
   | "followups:confirm"
   | "journeys:read"
   | "journeys:update"
@@ -237,6 +248,9 @@ export type AuditEvent = {
     | "appointment.update"
     | "appointment.confirm"
     | "appointment.book"
+    | "appointment.disposition"
+    | "clinical.update"
+    | "document.upload"
     | "doctor.create"
     | "doctor.update"
     | "scheduling.send_confirmations"
@@ -453,9 +467,22 @@ export type Appointment = {
     confirmedBy: "patient" | "caregiver" | "staff";
     notes?: string;
   };
+  /** Captured when the visit reaches "completed" — the clinical outcome + next step. */
+  disposition?: AppointmentDisposition;
   noShowRisk?: Priority;
   createdAt: string;
   updatedAt: string;
+};
+
+/** Outcome of a completed visit (the patient funnel's terminal "Disposition" stage). */
+export type AppointmentDisposition = {
+  /** e.g. "advised_surgery" | "follow_up" | "prescribed" | "discharged" (free-form). */
+  outcome: string;
+  notes?: string;
+  nextStep?: string;
+  nextActionDate?: string;
+  recordedBy?: string;
+  recordedAt: string;
 };
 
 export type WorkbenchTask = {
@@ -495,6 +522,9 @@ export type MobileLinkSession = {
   createdAt: string;
 };
 
+/** Clinical document classification used by the staff upload→store→download flow. */
+export type DocumentType = "prescription" | "discharge" | "lab" | "other";
+
 export type DocumentMetadata = {
   id: string;
   tenantId: string;
@@ -507,6 +537,32 @@ export type DocumentMetadata = {
   sizeBytes?: number;
   storageStatus: "metadata_only" | "pending_upload" | "uploaded" | "rejected";
   notes?: string;
+  /** Object-storage key (S3 or local fallback) once a file is uploaded. */
+  storageKey?: string;
+  contentType?: string;
+  /** Original filename as provided by the uploader (mirrors fileName for staff uploads). */
+  filename?: string;
+  /** Staff-facing document classification (prescription/discharge/lab/other). */
+  type?: DocumentType;
+  uploadedBy?: string;
+  createdAt: string;
+};
+
+/** Per-patient clinical history (ICD-10 conditions, allergies). recordId = patientId. */
+export type ClinicalCondition = {
+  icd10Code: string;
+  label: string;
+  since?: string;
+  notes?: string;
+};
+
+export type ClinicalRecord = {
+  patientId: string;
+  tenantId: string;
+  conditions: ClinicalCondition[];
+  allergies?: string[];
+  notes?: string;
+  updatedAt: string;
   createdAt: string;
 };
 

@@ -26,6 +26,7 @@ const collections: CollectionName[] = [
   "appointments",
   "tasks",
   "sessions",
+  "clinicalRecords",
   "documents",
   "followUps",
   "journeyTemplates",
@@ -230,8 +231,16 @@ function recordId(collection: CollectionName, record: unknown): string {
   }
 
   const tokenKeyed = collection === "sessions" || collection === "loginChallenges" || collection === "passwordResetTokens";
-  // channelConfigs are one-per-tenant, keyed by tenantId.
-  const value = collection === "channelConfigs" ? record.tenantId : tokenKeyed ? record.token : record.id;
+  // channelConfigs are one-per-tenant (keyed by tenantId); clinicalRecords are
+  // one-per-patient (keyed by patientId).
+  const value =
+    collection === "channelConfigs"
+      ? record.tenantId
+      : collection === "clinicalRecords"
+        ? record.patientId
+        : tokenKeyed
+          ? record.token
+          : record.id;
   if (typeof value !== "string" || !value) {
     throw new Error(`Cannot persist ${collection} record without id.`);
   }

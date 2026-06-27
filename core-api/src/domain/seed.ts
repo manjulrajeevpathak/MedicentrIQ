@@ -3,6 +3,7 @@ import type {
   AccessRequest,
   AuditEvent,
   Branch,
+  ClinicalRecord,
   Doctor,
   DocumentMetadata,
   FollowUp,
@@ -68,6 +69,7 @@ export type SeedData = {
   appointments: Appointment[];
   tasks: WorkbenchTask[];
   sessions: MobileLinkSession[];
+  clinicalRecords: ClinicalRecord[];
   documents: DocumentMetadata[];
   followUps: FollowUp[];
   journeyTemplates: JourneyTemplate[];
@@ -493,6 +495,19 @@ export const createSeedData = (): SeedData => ({
       createdAt: daysFromNow(-1)
     }
   ],
+  clinicalRecords: [
+    {
+      patientId: "patient_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      conditions: [
+        { icd10Code: "H25.9", label: "Age-related cataract, unspecified", since: daysFromNow(-40), notes: "Right eye, post-op" }
+      ],
+      allergies: ["Sulfa drugs"],
+      notes: "Cataract surgery completed; monitoring post-op recovery.",
+      createdAt: daysFromNow(-20),
+      updatedAt: daysFromNow(-1)
+    }
+  ],
   documents: [],
   followUps: [
     {
@@ -630,6 +645,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     appointments: withTenant(data.appointments ?? []),
     tasks: withTenant(data.tasks ?? []),
     sessions: normalizeSessions(data.sessions ?? []),
+    clinicalRecords: withTenant(data.clinicalRecords ?? []),
     documents: withTenant(data.documents ?? []),
     followUps: withTenant(data.followUps ?? []),
     journeyTemplates: withTenant(data.journeyTemplates ?? []),
