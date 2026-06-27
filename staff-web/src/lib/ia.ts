@@ -2,12 +2,9 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   CalendarClock,
-  Gauge,
-  IndianRupee,
   Inbox,
   LayoutDashboard,
   Megaphone,
-  Receipt,
   Route,
   Settings2,
   ShieldCheck,
@@ -27,8 +24,6 @@ export type ModuleKey =
   | "journeys"
   | "continuity"
   | "campaigns"
-  | "care_recovery"
-  | "roi"
   | "operations"
   | "admin";
 
@@ -54,7 +49,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { href: "/today", label: "Today", icon: LayoutDashboard, description: "Your floor, right now", module: "today", badgeKey: "workbench" },
       { href: "/inbox", label: "Unified Inbox", icon: Inbox, description: "WhatsApp, call, web and referral conversations", module: "inbox", requires: "inbox:assign", badgeKey: "inbox" },
-      { href: "/access", label: "Access", icon: CalendarClock, description: "Appointment and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" }
+      { href: "/access", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" }
     ]
   },
   {
@@ -68,10 +63,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Outcomes",
     items: [
-      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
-      { href: "/leakage", label: "Care recovery", icon: IndianRupee, description: "Patients who fell out of care, and the worklist to bring them back", module: "care_recovery", requires: "analytics:view" },
-      { href: "/roi", label: "ROI Reports", icon: Receipt, description: "Care-impact ledger and board-ready reports", module: "roi", requires: "analytics:view" },
-      { href: "/command", label: "Command Center", icon: Gauge, description: "Operations & care-impact analytics dashboard", module: "operations", requires: "analytics:view" }
+      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" }
     ]
   },
   {
