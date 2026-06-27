@@ -1,229 +1,304 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   Activity,
   AlertTriangle,
+  BellRing,
   CheckCircle2,
-  Circle,
-  CircleDot,
   ClipboardList,
-  Route,
-  TrendingDown,
-  XCircle
+  Plus
 } from "lucide-react";
-import Link from "next/link";
-import { ArrowLeft, UserRound } from "lucide-react";
-import type { FollowUpQueueItem, JourneyStage, PermissionKey } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import { useApp } from "@/lib/store";
-import { useSelection } from "@/lib/use-selection";
 import { Panel, SectionTitle } from "@/components/ui/card";
-import { Badge, PriorityBadge } from "@/components/ui/badge";
-import { Avatar } from "@/components/ui/avatar";
-import { Meter } from "@/components/ui/meter";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input, Field } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/empty";
+import { Segmented } from "@/components/ui/segmented";
 import { StatTile } from "@/components/ui/stat";
-import { ActionButton } from "@/components/common/action-button";
+import { Avatar } from "@/components/ui/avatar";
+import { useToast } from "@/components/ui/toast";
+import {
+  FOLLOWUP_STATUSES,
+  FOLLOWUP_STATUS_TONE,
+  followUpStatusLabel,
+  formatFollowUpDue,
+  isOverdue,
+  toDatetimeLocal,
+  type FollowUp,
+  type FollowUpStatus
+} from "@/lib/continuity-types";
+import type { DirectoryPatient } from "@/lib/patients-types";
+import {
+  createFollowUpAction,
+  remindFollowUpAction,
+  updateFollowUpAction
+} from "@/app/(app)/continuity/actions";
 
-export function ContinuityWorkspace() {
-  const { data, completeFollowUp, escalateFollowUp, patientIdByName } = useApp();
-  const { activeUser } = data.authContext;
-  const has = (key: PermissionKey) => activeUser.permissions.includes(key);
-  const canManage = has("followup:manage");
+const selectClass =
+  "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
-  const { selectedId, select, clear, hasSelection } = useSelection(data.followUpQueue[0]?.id);
-  const selected = data.followUpQueue.find((j) => j.id === selectedId) ?? data.followUpQueue[0];
-  const patientId = patientIdByName(selected?.patient ?? "");
+type Filter = "all" | FollowUpStatus;
 
-  const summary = useMemo(() => {
-    const overdue = data.followUpQueue.filter((j) => j.due.toLowerCase().includes("overdue")).length;
-    const avgLeak = Math.round(
-      data.followUpQueue.reduce((sum, j) => sum + (j.leakageRisk ?? 0), 0) / Math.max(1, data.followUpQueue.length)
-    );
-    return { total: data.followUpQueue.length, overdue, avgLeak };
-  }, [data.followUpQueue]);
+type Props = {
+  followUps: FollowUp[];
+  patients: DirectoryPatient[];
+};
+
+const ROW_ACTIONS: { status: FollowUpStatus; label: string }[] = [
+  { status: "confirmed", label: "Confirm" },
+  { status: "completed", label: "Complete" },
+  { status: "missed", label: "Missed" },
+  { status: "escalated", label: "Escalate" }
+];
+
+export function ContinuityWorkspace({ followUps, patients }: Props) {
+  const [filter, setFilter] = useState<Filter>("all");
+
+  const counts = useMemo(() => {
+    const due = followUps.filter((f) => f.status === "due").length;
+    const overdue = followUps.filter((f) => f.status === "due" && isOverdue(f.dueAt)).length;
+    const escalated = followUps.filter((f) => f.status === "escalated").length;
+    return { total: followUps.length, due, overdue, escalated };
+  }, [followUps]);
+
+  const visible =
+    filter === "all" ? followUps : followUps.filter((f) => f.status === filter);
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatTile label="Active journeys" value={summary.total} icon={<Route className="size-4" />} />
-        <StatTile label="Overdue steps" value={summary.overdue} tone="risk" icon={<AlertTriangle className="size-4" />} />
-        <StatTile label="Avg drop-off risk" value={`${summary.avgLeak}%`} tone="high" icon={<TrendingDown className="size-4" />} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 flex size-7 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+            <Activity className="size-4" />
+          </span>
+          <div>
+            <h1 className="text-sm font-semibold tracking-tight text-ink">Continuity</h1>
+            <p className="mt-0.5 text-xs text-ink-muted">
+              Follow-up queue — keep patients in care and close the loop.
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
-        {/* Journey lanes */}
-        <Panel padded={false} className={cn("flex max-h-[calc(100dvh-12rem)] flex-col", hasSelection && "hidden lg:flex")}>
-          <div className="border-b border-line p-4">
-            <SectionTitle icon={<Activity className="size-4" />} title="Follow-up journeys" subtitle="Following patients through their care" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <StatTile label="Open follow-ups" value={counts.due} icon={<ClipboardList className="size-4" />} />
+        <StatTile label="Overdue" value={counts.overdue} tone="risk" icon={<AlertTriangle className="size-4" />} />
+        <StatTile label="Escalated" value={counts.escalated} tone="high" icon={<BellRing className="size-4" />} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <Panel padded={false}>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4">
+            <SectionTitle
+              icon={<Activity className="size-4" />}
+              title="Follow-up queue"
+              subtitle={`${followUps.length} total`}
+            />
+            <Segmented
+              size="sm"
+              options={[
+                { value: "all", label: "All", count: followUps.length },
+                ...FOLLOWUP_STATUSES.map((s) => ({
+                  value: s.value,
+                  label: s.label,
+                  count: followUps.filter((f) => f.status === s.value).length
+                }))
+              ]}
+              value={filter}
+              onChange={setFilter}
+            />
           </div>
-          <ul className="flex-1 divide-y divide-line overflow-y-auto">
-            {data.followUpQueue.map((journey) => (
-              <li key={journey.id}>
-                <button
-                  onClick={() => select(journey.id)}
-                  className={cn("w-full px-4 py-3 text-left transition-colors", journey.id === selected?.id ? "bg-brand-50" : "hover:bg-surface-muted")}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={journey.patient} size="sm" />
-                      <div>
-                        <p className="text-sm font-semibold text-ink">{journey.patient}</p>
-                        <p className="text-[11px] text-ink-muted">{journey.journey}</p>
-                      </div>
-                    </div>
-                    <PriorityBadge priority={journey.risk} />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between">
-                    <span className="text-[11px] text-ink-soft">{journey.stage}</span>
-                    <span className={cn("text-[11px] font-medium", journey.due.toLowerCase().includes("overdue") ? "text-[var(--color-critical)]" : "text-ink-muted")}>{journey.due}</span>
-                  </div>
-                  {typeof journey.leakageRisk === "number" ? <Meter value={journey.leakageRisk} className="mt-2" tone={journey.leakageRisk > 70 ? "critical" : "high"} /> : null}
-                </button>
-              </li>
-            ))}
-            {data.followUpQueue.length === 0 ? (
-              <EmptyState icon={<Activity className="size-5" />} title="No active journeys" description="Completed follow-ups clear from this queue." />
-            ) : null}
-          </ul>
+
+          {visible.length === 0 ? (
+            <EmptyState
+              icon={<Activity className="size-5" />}
+              title={filter === "all" ? "No follow-ups" : "Nothing here"}
+              description={
+                filter === "all"
+                  ? "Create a follow-up to start tracking continuity of care."
+                  : "No follow-ups match this filter."
+              }
+            />
+          ) : (
+            <ul className="divide-y divide-line">
+              {visible.map((followUp) => (
+                <FollowUpRow key={followUp.id} followUp={followUp} />
+              ))}
+            </ul>
+          )}
         </Panel>
 
-        {/* Journey detail */}
-        {selected ? (
-          <div className={cn("space-y-5", !hasSelection && "hidden lg:block")}>
-            <button onClick={clear} className="flex items-center gap-1.5 text-sm font-medium text-ink-soft lg:hidden">
-              <ArrowLeft className="size-4" /> All journeys
-            </button>
-            <Panel>
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <Avatar name={selected.patient} size="lg" />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      {patientId ? (
-                        <Link href={`/patients/${patientId}`} className="text-base font-semibold text-ink hover:text-brand-700 hover:underline">
-                          {selected.patient}
-                        </Link>
-                      ) : (
-                        <h2 className="text-base font-semibold text-ink">{selected.patient}</h2>
-                      )}
-                      <PriorityBadge priority={selected.risk} />
-                    </div>
-                    <p className="mt-0.5 text-sm text-ink-muted">{selected.journey} · owned by {selected.owner}</p>
-                  </div>
-                </div>
-                {typeof selected.leakageRisk === "number" ? (
-                  <div className="w-44 rounded-xl bg-surface-muted p-3">
-                    <p className="text-[11px] font-medium text-ink-muted">Drop-off risk</p>
-                    <Meter value={selected.leakageRisk} className="mt-1.5" tone={selected.leakageRisk > 70 ? "critical" : "high"} showLabel />
-                  </div>
-                ) : null}
-              </div>
-
-              {selected.stages ? <Stepper stages={selected.stages} /> : null}
-            </Panel>
-
-            <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-              {/* Protocol checklist */}
-              <Panel>
-                <SectionTitle icon={<ClipboardList className="size-4" />} title="Protocol checklist" subtitle={selected.stage} />
-                <ul className="mt-3 space-y-2">
-                  {(selected.protocol ?? []).map((step) => (
-                    <li key={step.label} className="flex items-center gap-2.5">
-                      {step.done ? <CheckCircle2 className="size-4 text-[var(--color-good)]" /> : <Circle className="size-4 text-ink-faint" />}
-                      <span className={cn("text-sm", step.done ? "text-ink-muted line-through" : "text-ink")}>{step.label}</span>
-                    </li>
-                  ))}
-                  {!selected.protocol?.length ? <li className="text-sm text-ink-muted">No protocol steps defined.</li> : null}
-                </ul>
-                <div className="mt-4 rounded-xl bg-brand-50 p-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700">Next step</p>
-                  <p className="mt-1 text-sm text-ink">{selected.nextStep}</p>
-                </div>
-              </Panel>
-
-              {/* Continuity guidance + actions */}
-              <Panel className="flex flex-col">
-                <SectionTitle icon={<TrendingDown className="size-4" />} title="Continuity analysis" />
-                <p className="mt-3 flex-1 text-sm leading-relaxed text-ink-soft">{leakageGuidance(selected)}</p>
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <ActionButton
-                    action={{ type: "complete_follow_up_task", id: selected.id }}
-                    userId={activeUser.id}
-                    variant="primary"
-                    icon={<CheckCircle2 className="size-3.5" />}
-                    permitted={canManage}
-                    restrictedReason="Follow-up manage permission required."
-                    onSuccess={() => completeFollowUp(selected.id)}
-                  >
-                    Complete step
-                  </ActionButton>
-                  <ActionButton
-                    action={{ type: "escalate_follow_up", id: selected.id }}
-                    userId={activeUser.id}
-                    variant="danger"
-                    icon={<AlertTriangle className="size-3.5" />}
-                    permitted={canManage}
-                    restrictedReason="Follow-up manage permission required."
-                    confirm={{ title: "Escalate to nurse?", body: `This moves ${selected.patient}'s ${selected.journey} to the nurse desk and flags it critical.`, confirmLabel: "Escalate", danger: true }}
-                    onSuccess={() => escalateFollowUp(selected.id)}
-                  >
-                    Escalate to nurse
-                  </ActionButton>
-                  {patientId ? (
-                    <Link href={`/patients/${patientId}`} className="ml-auto">
-                      <Button variant="outline" size="sm">
-                        <UserRound className="size-3.5" /> Patient 360
-                      </Button>
-                    </Link>
-                  ) : null}
-                </div>
-              </Panel>
-            </div>
-          </div>
-        ) : (
-          <Panel>
-            <EmptyState icon={<Activity className="size-5" />} title="Select a journey" />
-          </Panel>
-        )}
+        <NewFollowUpForm patients={patients} />
       </div>
     </div>
   );
 }
 
-function Stepper({ stages }: { stages: JourneyStage[] }) {
-  const icon = (state: JourneyStage["state"]) => {
-    if (state === "done") return <CheckCircle2 className="size-4 text-[var(--color-good)]" />;
-    if (state === "active") return <CircleDot className="size-4 text-brand-600" />;
-    if (state === "missed") return <XCircle className="size-4 text-[var(--color-critical)]" />;
-    return <Circle className="size-4 text-ink-faint" />;
+function FollowUpRow({ followUp }: { followUp: FollowUp }) {
+  const { toast } = useToast();
+  const [pending, startTransition] = useTransition();
+  const overdue = followUp.status === "due" && isOverdue(followUp.dueAt);
+
+  const setStatus = (status: FollowUpStatus) => {
+    if (status === followUp.status) return;
+    startTransition(async () => {
+      const result = await updateFollowUpAction(followUp.id, { status });
+      if (!result.ok) {
+        toast(result.error ?? "Could not update the follow-up.", "error");
+        return;
+      }
+      toast(result.message ?? "Follow-up updated.", "success");
+    });
   };
+
+  const remind = () => {
+    startTransition(async () => {
+      const result = await remindFollowUpAction(followUp.id);
+      toast(
+        result.ok ? result.message ?? "Reminder sent." : result.error ?? "Could not send the reminder.",
+        result.ok ? "success" : "error"
+      );
+    });
+  };
+
   return (
-    <div className="mt-5 flex items-center">
-      {stages.map((stage, index) => (
-        <div key={stage.label} className="flex flex-1 items-center last:flex-none">
-          <div className="flex flex-col items-center gap-1.5">
-            {icon(stage.state)}
-            <span className={cn("whitespace-nowrap text-[11px]", stage.state === "active" ? "font-semibold text-brand-700" : "text-ink-muted")}>{stage.label}</span>
-          </div>
-          {index < stages.length - 1 ? (
-            <span className={cn("mx-2 mb-5 h-px flex-1", stage.state === "done" ? "bg-[var(--color-good)]" : "bg-line")} />
-          ) : null}
+    <li className="px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Avatar name={followUp.patientName ?? "Patient"} size="sm" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-ink">{followUp.title}</p>
+          <p className="truncate text-[11px] text-ink-muted">
+            {followUp.patientName ?? "Unknown patient"}
+          </p>
         </div>
-      ))}
-    </div>
+        <div className="text-right">
+          <Badge tone={FOLLOWUP_STATUS_TONE[followUp.status] ?? "neutral"} dot>
+            {followUpStatusLabel(followUp.status)}
+          </Badge>
+          <p
+            className={`mt-1 text-[11px] ${overdue ? "font-medium text-[var(--color-critical)]" : "text-ink-muted"}`}
+          >
+            {overdue ? "Overdue · " : "Due "}
+            {formatFollowUpDue(followUp.dueAt)}
+          </p>
+        </div>
+      </div>
+      {followUp.instructions ? (
+        <p className="mt-2 rounded-lg bg-surface-muted px-2.5 py-1.5 text-xs text-ink-soft">
+          {followUp.instructions}
+        </p>
+      ) : null}
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        {ROW_ACTIONS.map((action) => (
+          <Button
+            key={action.status}
+            size="sm"
+            variant="outline"
+            disabled={pending || followUp.status === action.status}
+            onClick={() => setStatus(action.status)}
+          >
+            {action.label}
+          </Button>
+        ))}
+        <Button size="sm" className="ml-auto" disabled={pending} onClick={remind}>
+          <BellRing className="size-3.5" /> Remind
+        </Button>
+      </div>
+    </li>
   );
 }
 
-function leakageGuidance(journey: FollowUpQueueItem): string {
-  const risk = journey.leakageRisk ?? 0;
-  if (risk > 75) {
-    return `High drop-off risk (${risk}%) on ${journey.journey}. ${journey.patient} is likely to fall out of care without contact today. ${journey.nextStep} If unreachable, escalate to nurse and log a missed-follow-up reason.`;
-  }
-  if (risk > 50) {
-    return `Moderate drop-off risk (${risk}%). Keep ${journey.patient} on protocol — ${journey.nextStep.toLowerCase()} A second reminder in the patient's language usually keeps them in care.`;
-  }
-  return `${journey.patient} is progressing on ${journey.journey}. ${journey.nextStep} Continue the protocol and confirm completion to close the loop.`;
+function NewFollowUpForm({ patients }: { patients: DirectoryPatient[] }) {
+  const { toast } = useToast();
+  const [patientId, setPatientId] = useState("");
+  const [title, setTitle] = useState("");
+  const [dueAt, setDueAt] = useState(toDatetimeLocal());
+  const [instructions, setInstructions] = useState("");
+  const [saving, startSaving] = useTransition();
+
+  const submit = () => {
+    startSaving(async () => {
+      const result = await createFollowUpAction({
+        patientId,
+        title,
+        dueAt,
+        instructions: instructions || undefined
+      });
+      if (!result.ok) {
+        toast(result.error ?? "Could not create the follow-up.", "error");
+        return;
+      }
+      toast(result.message ?? "Follow-up created.", "success");
+      setPatientId("");
+      setTitle("");
+      setDueAt(toDatetimeLocal());
+      setInstructions("");
+    });
+  };
+
+  return (
+    <Panel>
+      <SectionTitle
+        icon={<Plus className="size-4" />}
+        title="New follow-up"
+        subtitle="Schedule a continuity touchpoint"
+      />
+      <div className="mt-4 space-y-4">
+        <Field label="Patient" htmlFor="followup-patient">
+          <select
+            id="followup-patient"
+            className={selectClass}
+            value={patientId}
+            onChange={(e) => setPatientId(e.target.value)}
+          >
+            <option value="">Select a patient…</option>
+            {patients.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.displayName}
+                {p.primaryPhone ? ` · ${p.primaryPhone}` : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Title" htmlFor="followup-title">
+          <Input
+            id="followup-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Post-op review reminder"
+          />
+        </Field>
+        <Field label="Due" htmlFor="followup-due">
+          <input
+            id="followup-due"
+            type="datetime-local"
+            className={selectClass}
+            value={dueAt}
+            onChange={(e) => setDueAt(e.target.value)}
+          />
+        </Field>
+        <Field label="Instructions" htmlFor="followup-instructions" hint="Optional">
+          <textarea
+            id="followup-instructions"
+            rows={3}
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            placeholder="What the patient should do or be told"
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+          />
+        </Field>
+        {patients.length === 0 ? (
+          <p className="text-[11px] text-ink-muted">No patients yet — add patients first.</p>
+        ) : null}
+        <Button
+          className="w-full"
+          onClick={submit}
+          disabled={saving || !patientId || !title.trim() || !dueAt}
+        >
+          <CheckCircle2 className="size-3.5" /> Create follow-up
+        </Button>
+      </div>
+    </Panel>
+  );
 }

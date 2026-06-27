@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   CalendarClock,
+  IndianRupee,
   Inbox,
   LayoutDashboard,
   Megaphone,
@@ -26,6 +27,7 @@ export type ModuleKey =
   | "continuity"
   | "leads"
   | "campaigns"
+  | "billing"
   | "operations"
   | "admin";
 
@@ -66,7 +68,8 @@ export const navGroups: NavGroup[] = [
     label: "Growth",
     items: [
       { href: "/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
-      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" }
+      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
+      { href: "/billing", label: "Billing", icon: IndianRupee, description: "Invoices and payments — billed vs settled", module: "billing" }
     ]
   },
   {
