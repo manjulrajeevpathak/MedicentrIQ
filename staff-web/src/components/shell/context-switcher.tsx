@@ -134,7 +134,8 @@ export function ContextSwitcher({ auth }: { auth: DemoAuthContext }) {
             </div>
           </div>
 
-          {/* View as */}
+          {/* View as — only in demo mode; a real session shows the logged-in user */}
+          {!auth.isRealSession && (
           <div className="mt-2 border-t border-line px-1 pt-2">
             <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">View as role</p>
             {auth.availableUsers.map((user) => {
@@ -160,6 +161,7 @@ export function ContextSwitcher({ auth }: { auth: DemoAuthContext }) {
               );
             })}
           </div>
+          )}
 
           {/* Sign out */}
           <div className="mt-2 border-t border-line px-1 pt-2">

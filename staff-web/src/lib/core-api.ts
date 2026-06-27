@@ -147,11 +147,44 @@ async function fetchAuditEvents(baseUrl: string, headers: HeadersInit): Promise<
   }
 }
 
+const roleTitles: Record<string, string> = {
+  front_desk: "Front desk",
+  call_center: "Call center",
+  care_coordinator: "Care coordinator",
+  nurse: "Nurse",
+  doctor: "Doctor",
+  org_admin: "Administrator",
+  admin: "Administrator"
+};
+
 function withGovernance(data: DashboardData, authContext: DemoAuthContext, auditEvents: AuditEvent[]): DashboardData {
+  let effectiveAuth = authContext;
+  // On a real logged-in session, drive the displayed identity from the actual
+  // principal (not the demo "view as" user). Permissions are templated from a
+  // same-role demo user so UI gating roughly matches; the server is the real guard.
+  if (data.sessionUser) {
+    const realRoles = data.sessionUser.roles ?? [];
+    const template =
+      realRoles
+        .map((role) => authContext.availableUsers.find((user) => user.role === role))
+        .find(Boolean) ?? authContext.activeUser;
+    const primaryRole = (realRoles.find((role) => role in roleTitles) ?? template.role) as DemoUser["role"];
+    effectiveAuth = {
+      ...authContext,
+      isRealSession: true,
+      activeUser: {
+        ...template,
+        id: data.sessionUser.id,
+        name: data.sessionUser.displayName,
+        role: primaryRole,
+        title: roleTitles[primaryRole] ?? template.title
+      }
+    };
+  }
   return {
     ...data,
     generatedAt: data.generatedAt || new Date().toISOString(),
-    authContext,
+    authContext: effectiveAuth,
     auditEvents: auditEvents.length ? auditEvents : mockAuditEvents,
     serviceStatus: data.serviceStatus.map((service) => ({
       ...service,

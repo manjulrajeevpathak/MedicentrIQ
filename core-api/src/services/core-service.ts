@@ -930,10 +930,14 @@ export class CoreService {
     if (!principal) {
       throw new ApiError(404, "Account not found.");
     }
-    const current = ensureString(input.currentPassword, "currentPassword");
     const newPassword = ensureString(input.newPassword, "newPassword");
-    if (!verifyPassword(current, { hash: principal.passwordHash ?? "", salt: principal.passwordSalt ?? "" })) {
-      throw new ApiError(401, "Current password is incorrect.");
+    // Forced first-login: the principal just authenticated with their temp password,
+    // so completing the mandatory reset doesn't require re-entering it.
+    if (!principal.mustResetPassword) {
+      const current = ensureString(input.currentPassword, "currentPassword");
+      if (!verifyPassword(current, { hash: principal.passwordHash ?? "", salt: principal.passwordSalt ?? "" })) {
+        throw new ApiError(401, "Current password is incorrect.");
+      }
     }
     this.applyNewPassword(principal, newPassword);
     await this.persistPrincipal(type);
@@ -1398,10 +1402,21 @@ export class CoreService {
       ? resolveEnabledModules(tenant.planId, tenant.moduleOverrides)
       : MODULE_CATALOG.map((entry) => entry.key);
 
+    const sessionUser =
+      context.source === "staff_session"
+        ? {
+            id: context.actorId,
+            displayName: context.displayName,
+            roles: context.roles,
+            email: this.data.users.find((entry) => entry.id === context.actorId)?.email ?? null
+          }
+        : null;
+
     return {
       generatedAt: nowIso(),
       source: "core-api",
       entitlements: { planId: tenant?.planId ?? null, enabledModules },
+      sessionUser,
       metrics: [
         {
           label: "Open work items",

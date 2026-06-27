@@ -243,7 +243,12 @@ export type DemoAuthContext = {
   activeUser: DemoUser;
   availableUsers: DemoUser[];
   permissionBadges: PermissionBadge[];
+  /** True when a real logged-in session drives activeUser (disables "view as"). */
+  isRealSession?: boolean;
 };
+
+/** The real authenticated principal, surfaced by core-api when logged in. */
+export type SessionUser = { id: string; displayName: string; roles: string[]; email: string | null };
 
 export type FloorVitalTone = "neutral" | "good" | "watch" | "risk";
 
@@ -286,6 +291,8 @@ export type DashboardData = {
   source: "core-api" | "mock";
   /** Entitlements for the active tenant; drives which nav surfaces render. */
   entitlements?: { planId: string | null; enabledModules: ModuleKey[] };
+  /** Real authenticated principal (present only on a live logged-in session). */
+  sessionUser?: SessionUser | null;
   authContext: DemoAuthContext;
   metrics: Metric[];
   daySummary: string;
