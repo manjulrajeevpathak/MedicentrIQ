@@ -20,6 +20,13 @@ import type {
   Appointment,
   AppointmentDisposition,
   AuditEvent,
+  Campaign,
+  CampaignAudience,
+  CampaignAutomatedOn,
+  CampaignChannelType,
+  CampaignRecipient,
+  CampaignStatus,
+  CampaignTrigger,
   Caregiver,
   ClinicalCondition,
   ClinicalRecord,
@@ -401,6 +408,27 @@ type PublicFormSubmitInput = {
   values?: Record<string, unknown>;
 };
 
+type CampaignAudienceInput = {
+  include?: unknown;
+  leadStages?: unknown;
+  leadSources?: unknown;
+  patientStages?: unknown;
+  conditionCodes?: unknown;
+  tags?: unknown;
+};
+
+type UpsertCampaignInput = {
+  name?: unknown;
+  channelType?: unknown;
+  audience?: unknown;
+  body?: unknown;
+  aisensyCampaign?: unknown;
+  templateParams?: unknown;
+  trigger?: unknown;
+  automatedOn?: unknown;
+  status?: unknown;
+};
+
 export class ApiError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -513,6 +541,24 @@ const sanitizeModuleOverrides = (value: unknown): Partial<Record<ModuleKey, bool
 const LEAD_SOURCES: LeadSource[] = ["camp", "meta", "referral", "form", "import", "walk_in"];
 const LEAD_STAGES: LeadStage[] = ["new", "contacted", "qualified", "booked", "converted", "lost"];
 const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email", "number", "select", "textarea"]);
+
+const CAMPAIGN_AUTOMATED_ON: CampaignAutomatedOn[] = ["new_lead", "appointment_missed", "opd_done"];
+const CAMPAIGN_STATUSES: CampaignStatus[] = ["draft", "sending", "sent", "scheduled"];
+
+/** Coerce an arbitrary value into a clean string[] (trimmed, non-empty), or undefined. */
+const sanitizeStringArray = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const list = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim());
+  return list.length > 0 ? list : undefined;
+};
+
+/** Replace the {{name}} token with the recipient's first name (whole string falls back to "there"). */
+const personalize = (body: string, name: string): string => {
+  const firstName = name.trim().split(/\s+/)[0] || "there";
+  return body.replace(/\{\{\s*name\s*\}\}/gi, firstName);
+};
 
 const sanitizeLeadSource = (value: unknown, fallback: LeadSource = "import"): LeadSource =>
   typeof value === "string" && (LEAD_SOURCES as string[]).includes(value) ? (value as LeadSource) : fallback;
@@ -4537,6 +4583,226 @@ export class CoreService {
     await this.persistence.saveCollection("forms", this.data.forms);
     await this.persistence.saveCollection("auditEvents", this.data.auditEvents);
     return { ok: true };
+  }
+
+  // ---- Campaigns (segmented broadcasts over the channel layer) -------------
+
+  listCampaigns(context: RequestContext): Campaign[] {
+    return this.data.campaigns
+      .filter((campaign) => campaign.tenantId === context.tenantId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  private ensureCampaign(context: RequestContext, campaignId: string): Campaign {
+    const campaign = this.data.campaigns.find((entry) => entry.id === campaignId && entry.tenantId === context.tenantId);
+    if (!campaign) {
+      throw new ApiError(404, `Campaign not found: ${campaignId}`);
+    }
+    return campaign;
+  }
+
+  /** Coerce raw input into a clean CampaignAudience (defaults include="both"). */
+  private sanitizeAudience(value: unknown): CampaignAudience {
+    const raw = (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as CampaignAudienceInput;
+    const include = raw.include === "leads" || raw.include === "patients" ? raw.include : "both";
+    const audience: CampaignAudience = { include };
+    const leadStages = sanitizeStringArray(raw.leadStages);
+    const leadSources = sanitizeStringArray(raw.leadSources);
+    const patientStages = sanitizeStringArray(raw.patientStages);
+    const conditionCodes = sanitizeStringArray(raw.conditionCodes);
+    const tags = sanitizeStringArray(raw.tags);
+    if (leadStages) audience.leadStages = leadStages;
+    if (leadSources) audience.leadSources = leadSources;
+    if (patientStages) audience.patientStages = patientStages;
+    if (conditionCodes) audience.conditionCodes = conditionCodes;
+    if (tags) audience.tags = tags;
+    return audience;
+  }
+
+  /**
+   * Resolve an audience segment into a de-duplicated (by phone) recipient list.
+   * Leads use name/phone; patients use displayName/primaryPhone. Patient stage
+   * comes from the computed lifecycle; condition codes from clinicalRecords.
+   */
+  resolveCampaignAudience(context: RequestContext, audience: CampaignAudience): CampaignRecipient[] {
+    const include = audience.include;
+    const recipients: CampaignRecipient[] = [];
+    const seenPhones = new Set<string>();
+
+    const push = (recipient: CampaignRecipient) => {
+      const normalized = normalizePhone(recipient.phone);
+      if (!normalized || seenPhones.has(normalized)) {
+        return;
+      }
+      seenPhones.add(normalized);
+      recipients.push(recipient);
+    };
+
+    if (include === "leads" || include === "both") {
+      const leadStages = audience.leadStages;
+      const leadSources = audience.leadSources;
+      for (const lead of this.data.leads.filter((entry) => entry.tenantId === context.tenantId)) {
+        if (leadStages && !leadStages.includes(lead.stage)) continue;
+        if (leadSources && !leadSources.includes(lead.source)) continue;
+        if (!lead.phone || !lead.phone.trim()) continue;
+        push({ name: lead.name, phone: lead.phone, kind: "lead", id: lead.id });
+      }
+    }
+
+    if (include === "patients" || include === "both") {
+      const patientStages = audience.patientStages;
+      const tags = audience.tags;
+      const conditionCodes = audience.conditionCodes;
+      for (const patient of this.data.patients.filter((entry) => entry.tenantId === context.tenantId)) {
+        if (patientStages && !patientStages.includes(this.patientLifecycle(context, patient.id).stage)) continue;
+        if (tags && !tags.some((tag) => patient.tags.includes(tag))) continue;
+        if (conditionCodes) {
+          const record = this.data.clinicalRecords.find(
+            (entry) => entry.patientId === patient.id && entry.tenantId === context.tenantId
+          );
+          const codes = record?.conditions.map((condition) => condition.icd10Code) ?? [];
+          if (!conditionCodes.some((code) => codes.includes(code))) continue;
+        }
+        if (!patient.primaryPhone || !patient.primaryPhone.trim()) continue;
+        push({ name: patient.displayName, phone: patient.primaryPhone, kind: "patient", id: patient.id });
+      }
+    }
+
+    return recipients;
+  }
+
+  previewCampaignAudience(context: RequestContext, input: Record<string, unknown>) {
+    const audience = this.sanitizeAudience(input.audience);
+    const recipients = this.resolveCampaignAudience(context, audience);
+    return { size: recipients.length, sample: recipients.slice(0, 5) };
+  }
+
+  /** Build (but do not persist) a tenant-scoped Campaign from raw input. */
+  private buildCampaign(context: RequestContext, input: UpsertCampaignInput): Campaign {
+    const timestamp = nowIso();
+    const channelType: CampaignChannelType = input.channelType === "marketing" ? "marketing" : "transactional";
+    const trigger: CampaignTrigger = input.trigger === "automated" ? "automated" : "manual";
+    const status: CampaignStatus =
+      typeof input.status === "string" && (CAMPAIGN_STATUSES as string[]).includes(input.status)
+        ? (input.status as CampaignStatus)
+        : "draft";
+    const campaign: Campaign = {
+      id: createId("campaign"),
+      tenantId: context.tenantId,
+      name: ensureString(input.name, "name"),
+      channelType,
+      audience: this.sanitizeAudience(input.audience),
+      trigger,
+      status,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    if (typeof input.body === "string" && input.body.trim()) campaign.body = input.body.trim();
+    if (typeof input.aisensyCampaign === "string" && input.aisensyCampaign.trim()) {
+      campaign.aisensyCampaign = input.aisensyCampaign.trim();
+    }
+    const templateParams = sanitizeStringArray(input.templateParams);
+    if (templateParams) campaign.templateParams = templateParams;
+    if (typeof input.automatedOn === "string" && (CAMPAIGN_AUTOMATED_ON as string[]).includes(input.automatedOn)) {
+      campaign.automatedOn = input.automatedOn as CampaignAutomatedOn;
+    }
+    return campaign;
+  }
+
+  async createCampaign(context: RequestContext, input: UpsertCampaignInput) {
+    const campaign = this.buildCampaign(context, input);
+    this.data.campaigns.push(campaign);
+    await this.persistence.saveCollection("campaigns", this.data.campaigns);
+    await this.audit(context, "campaign.create", "campaign", campaign.id, undefined, {
+      channelType: campaign.channelType,
+      trigger: campaign.trigger,
+      include: campaign.audience.include
+    });
+    return campaign;
+  }
+
+  async updateCampaign(context: RequestContext, campaignId: string, input: UpsertCampaignInput) {
+    const campaign = this.ensureCampaign(context, campaignId);
+    if (typeof input.name === "string" && input.name.trim()) {
+      campaign.name = input.name.trim();
+    }
+    if (input.channelType === "marketing" || input.channelType === "transactional") {
+      campaign.channelType = input.channelType;
+    }
+    if (input.audience !== undefined) {
+      campaign.audience = this.sanitizeAudience(input.audience);
+    }
+    if (input.body !== undefined) {
+      campaign.body = typeof input.body === "string" && input.body.trim() ? input.body.trim() : undefined;
+    }
+    if (input.aisensyCampaign !== undefined) {
+      campaign.aisensyCampaign =
+        typeof input.aisensyCampaign === "string" && input.aisensyCampaign.trim() ? input.aisensyCampaign.trim() : undefined;
+    }
+    if (input.templateParams !== undefined) {
+      campaign.templateParams = sanitizeStringArray(input.templateParams);
+    }
+    if (input.trigger === "manual" || input.trigger === "automated") {
+      campaign.trigger = input.trigger;
+    }
+    if (input.automatedOn !== undefined) {
+      campaign.automatedOn =
+        typeof input.automatedOn === "string" && (CAMPAIGN_AUTOMATED_ON as string[]).includes(input.automatedOn)
+          ? (input.automatedOn as CampaignAutomatedOn)
+          : undefined;
+    }
+    if (typeof input.status === "string" && (CAMPAIGN_STATUSES as string[]).includes(input.status)) {
+      campaign.status = input.status as CampaignStatus;
+    }
+    campaign.updatedAt = nowIso();
+    await this.persistence.saveCollection("campaigns", this.data.campaigns);
+    await this.audit(context, "campaign.update", "campaign", campaign.id, undefined, { status: campaign.status });
+    return campaign;
+  }
+
+  /**
+   * Resolve the audience and broadcast via the channel layer. Each recipient send
+   * is wrapped in try/catch so one unconfigured/failed send (sendMessage throws
+   * when UltraMsg/AISensy isn't configured) doesn't abort the whole campaign —
+   * it's tallied as failed and the run continues.
+   */
+  async sendCampaign(context: RequestContext, campaignId: string) {
+    const campaign = this.ensureCampaign(context, campaignId);
+    const recipients = this.resolveCampaignAudience(context, campaign.audience);
+
+    let sent = 0;
+    let failed = 0;
+    for (const recipient of recipients) {
+      try {
+        const result = await this.sendMessage(context, {
+          to: recipient.phone,
+          type: campaign.channelType,
+          body: campaign.channelType === "transactional" && campaign.body ? personalize(campaign.body, recipient.name) : undefined,
+          campaign: campaign.aisensyCampaign,
+          userName: recipient.name,
+          params: campaign.templateParams
+        });
+        if (result.ok) {
+          sent += 1;
+        } else {
+          failed += 1;
+        }
+      } catch {
+        // Provider unconfigured / transport error for this recipient — tally and continue.
+        failed += 1;
+      }
+    }
+
+    campaign.stats = { audienceSize: recipients.length, sent, failed, lastRunAt: nowIso() };
+    campaign.status = "sent";
+    campaign.updatedAt = nowIso();
+    await this.persistence.saveCollection("campaigns", this.data.campaigns);
+    await this.audit(context, "campaign.send", "campaign", campaign.id, undefined, {
+      audienceSize: recipients.length,
+      sent,
+      failed
+    });
+    return { sent, failed, audienceSize: recipients.length };
   }
 
   private async audit(

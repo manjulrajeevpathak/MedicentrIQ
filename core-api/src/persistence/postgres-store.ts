@@ -35,6 +35,7 @@ const collections: CollectionName[] = [
   "journeyEvents",
   "leads",
   "forms",
+  "campaigns",
   "auditEvents"
 ];
 

@@ -362,6 +362,19 @@ const createRoutes = (service: CoreService): Route[] => [
     service.updateForm(auth, params.formId, toRecord(body)), "leads"
   ),
 
+  // Campaigns (segmented broadcasts over the channel layer).
+  route("GET", "/campaigns", "campaigns:read", ({ auth }) => service.listCampaigns(auth), "campaigns"),
+  route("POST", "/campaigns", "campaigns:manage", ({ auth, body }) => service.createCampaign(auth, toRecord(body)), "campaigns"),
+  route("POST", "/campaigns/preview-audience", "campaigns:read", ({ auth, body }) =>
+    service.previewCampaignAudience(auth, toRecord(body)), "campaigns"
+  ),
+  route("PATCH", "/campaigns/:campaignId", "campaigns:manage", ({ auth, params, body }) =>
+    service.updateCampaign(auth, params.campaignId, toRecord(body)), "campaigns"
+  ),
+  route("POST", "/campaigns/:campaignId/send", "campaigns:send", ({ auth, params }) =>
+    service.sendCampaign(auth, params.campaignId), "campaigns"
+  ),
+
   route("POST", "/service-events/integration", "service_events:ingest", ({ auth, body }) =>
     service.intakeIntegrationEvent(auth, toRecord(body))
   ),

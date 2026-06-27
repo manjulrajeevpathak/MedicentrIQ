@@ -3,6 +3,7 @@ import type {
   AccessRequest,
   AuditEvent,
   Branch,
+  Campaign,
   ClinicalRecord,
   Doctor,
   DocumentMetadata,
@@ -80,6 +81,7 @@ export type SeedData = {
   journeyEvents: JourneyEvent[];
   leads: Lead[];
   forms: LeadForm[];
+  campaigns: Campaign[];
   auditEvents: AuditEvent[];
 };
 
@@ -688,6 +690,27 @@ export const createSeedData = (): SeedData => ({
       createdAt: daysFromNow(-10)
     }
   ],
+  campaigns: [
+    {
+      id: "campaign_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      name: "Cataract camp follow-up",
+      channelType: "transactional",
+      audience: {
+        include: "both",
+        leadStages: ["new", "contacted"],
+        leadSources: ["camp"],
+        patientStages: [],
+        conditionCodes: [],
+        tags: ["cataract"]
+      },
+      body: "Hi {{name}}, this is Demo Specialty Care — your free eye screening report is ready. Reply to book a consult.",
+      trigger: "manual",
+      status: "draft",
+      createdAt: daysFromNow(-5),
+      updatedAt: daysFromNow(-5)
+    }
+  ],
   auditEvents: []
 });
 
@@ -738,6 +761,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     journeyEvents: withTenant(data.journeyEvents ?? []),
     leads: data.leads?.length ? withTenant(data.leads) : seed.leads,
     forms: data.forms?.length ? withTenant(data.forms) : seed.forms,
+    campaigns: data.campaigns?.length ? withTenant(data.campaigns) : seed.campaigns,
     auditEvents: withTenant(data.auditEvents ?? [])
   };
 };

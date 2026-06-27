@@ -78,6 +78,9 @@ export type Permission =
   | "leads:read"
   | "leads:manage"
   | "forms:manage"
+  | "campaigns:read"
+  | "campaigns:manage"
+  | "campaigns:send"
   | "platform:tenants:read"
   | "platform:tenants:manage"
   | "platform:entitlements:manage"
@@ -272,6 +275,59 @@ export type LeadForm = {
   createdAt: string;
 };
 
+// ---- Campaigns (segmented broadcasts over the channel layer) --------------
+
+export type CampaignChannelType = "transactional" | "marketing";
+export type CampaignTrigger = "manual" | "automated";
+export type CampaignAutomatedOn = "new_lead" | "appointment_missed" | "opd_done";
+export type CampaignStatus = "draft" | "sending" | "sent" | "scheduled";
+
+/** Audience segment for a campaign — leads and/or patients, filtered. */
+export type CampaignAudience = {
+  include: "leads" | "patients" | "both";
+  /** Filter leads by stage (new/contacted/qualified/booked/converted/lost). */
+  leadStages?: string[];
+  /** Filter leads by source (camp/meta/referral/form/import/walk_in). */
+  leadSources?: string[];
+  /** Filter patients by computed lifecycle.stage. */
+  patientStages?: string[];
+  /** Patients having any of these ICD-10 codes (from clinicalRecords). */
+  conditionCodes?: string[];
+  /** Patients having any of these tags. */
+  tags?: string[];
+};
+
+/** A segmented broadcast that targets leads+patients and sends via the channel layer. */
+export type Campaign = {
+  id: string;
+  tenantId: string;
+  name: string;
+  /** transactional → UltraMsg; marketing → AISensy. */
+  channelType: CampaignChannelType;
+  audience: CampaignAudience;
+  /** transactional: free text; supports {{name}} token. */
+  body?: string;
+  /** marketing: AISensy campaign/template name. */
+  aisensyCampaign?: string;
+  /** marketing: positional template params (may include {{name}}). */
+  templateParams?: string[];
+  trigger: CampaignTrigger;
+  /** Recorded only; automated execution is deferred to workflow-worker. */
+  automatedOn?: CampaignAutomatedOn;
+  status: CampaignStatus;
+  stats?: { audienceSize?: number; sent: number; failed: number; lastRunAt?: string };
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** A resolved campaign recipient (de-duplicated by phone). */
+export type CampaignRecipient = {
+  name: string;
+  phone: string;
+  kind: "lead" | "patient";
+  id: string;
+};
+
 export type RequestContext = {
   actorType: ActorType;
   tenantId: string;
@@ -330,6 +386,9 @@ export type AuditEvent = {
     | "lead.import"
     | "form.create"
     | "form.submit"
+    | "campaign.create"
+    | "campaign.update"
+    | "campaign.send"
     | "auth.login"
     | "auth.login_failed"
     | "auth.logout"
