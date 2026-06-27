@@ -40,6 +40,8 @@ import type {
   Interaction,
   InteractionChannel,
   InteractionDirection,
+  Invoice,
+  InvoiceLineItem,
   JourneyEvent,
   JourneyTask,
   JourneyTaskStatus,
@@ -276,6 +278,36 @@ type UpdateJourneyTaskInput = {
 type CreateJourneyEventInput = {
   type?: JourneyEvent["type"];
   payload?: Record<string, unknown>;
+};
+
+type JourneySendMessageInput = {
+  body?: string;
+};
+
+type CreateFollowUpInput = {
+  patientId?: string;
+  title?: string;
+  dueAt?: string;
+  instructions?: string;
+  journeyId?: string;
+};
+
+type UpdateFollowUpInput = {
+  status?: FollowUp["status"];
+  dueAt?: string;
+  instructions?: string;
+};
+
+type CreateInvoiceInput = {
+  patientId?: string;
+  appointmentId?: string;
+  items?: unknown;
+};
+
+type RecordPaymentInput = {
+  amount?: unknown;
+  method?: string;
+  note?: string;
 };
 
 type DispositionInput = {
@@ -3941,6 +3973,274 @@ export class CoreService {
       type: event.type
     });
     return event;
+  }
+
+  /**
+   * Journey-triggered transactional message: send a WhatsApp to the journey
+   * patient's primary phone and record a "message_sent" journey event. Real
+   * recurring journey automation lives in workflow-worker.
+   */
+  async sendJourneyMessage(context: RequestContext, journeyId: string, input: JourneySendMessageInput) {
+    const journey = this.ensureVisiblePatientJourney(context, journeyId);
+    const patient = this.ensureKnownPatient(context, journey.patientId);
+    const body = ensureString(input.body, "body");
+    if (!patient.primaryPhone || !patient.primaryPhone.trim()) {
+      throw new ApiError(400, "Patient has no primary phone on file.");
+    }
+    const send = await this.sendMessage(context, { to: patient.primaryPhone, type: "transactional", body });
+    const timestamp = nowIso();
+    const event = this.createJourneyEventRecord(context, journey, "message_sent", {
+      messageId: send.messageId,
+      to: patient.primaryPhone,
+      status: send.ok ? "sent" : "failed",
+      body
+    });
+    this.data.journeyEvents.push(event);
+    journey.updatedAt = timestamp;
+    await this.persistence.saveCollection("journeyEvents", this.data.journeyEvents);
+    await this.persistence.saveCollection("patientJourneys", this.data.patientJourneys);
+    await this.audit(context, "journey.message", "patient_journey", journey.id, journey.patientId, {
+      messageId: send.messageId,
+      status: send.ok ? "sent" : "failed"
+    });
+    return { ok: send.ok, journeyId: journey.id, event, message: send };
+  }
+
+  // ---- Continuity: staff follow-ups -----------------------------------------
+
+  private followUpView(context: RequestContext, followUp: FollowUp) {
+    const patient = this.data.patients.find(
+      (entry) => entry.id === followUp.patientId && entry.tenantId === context.tenantId
+    );
+    return { ...followUp, patientName: patient?.displayName };
+  }
+
+  listFollowUps(context: RequestContext, filters: { status?: string }) {
+    return this.data.followUps
+      .filter((entry) => {
+        if (entry.tenantId !== context.tenantId) return false;
+        if (!this.canAccessPatientId(context, entry.patientId)) return false;
+        if (filters.status && entry.status !== filters.status) return false;
+        return true;
+      })
+      .sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+      .map((entry) => this.followUpView(context, entry));
+  }
+
+  async createFollowUp(context: RequestContext, input: CreateFollowUpInput) {
+    const patient = this.ensureKnownPatient(context, ensureString(input.patientId, "patientId"));
+    const timestamp = nowIso();
+    const followUp: FollowUp = {
+      id: createId("followup"),
+      tenantId: context.tenantId,
+      patientId: patient.id,
+      title: ensureString(input.title, "title"),
+      dueAt: ensureString(input.dueAt, "dueAt"),
+      status: "due",
+      instructions: input.instructions ?? "",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.data.followUps.push(followUp);
+    await this.persistence.saveCollection("followUps", this.data.followUps);
+
+    if (input.journeyId) {
+      const journey = this.ensureVisiblePatientJourney(context, input.journeyId);
+      const task: JourneyTask = {
+        id: createId("journey_task"),
+        tenantId: context.tenantId,
+        journeyId: journey.id,
+        patientId: patient.id,
+        followUpId: followUp.id,
+        title: followUp.title,
+        status: "pending",
+        dueAt: followUp.dueAt,
+        ownerRole: journey.ownerRole,
+        instructions: followUp.instructions || "Follow journey task instructions.",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      this.data.journeyTasks.push(task);
+      this.data.journeyEvents.push(this.createJourneyEventRecord(context, journey, "task_created", { taskId: task.id }));
+      journey.updatedAt = timestamp;
+      await this.persistence.saveCollection("journeyTasks", this.data.journeyTasks);
+      await this.persistence.saveCollection("journeyEvents", this.data.journeyEvents);
+      await this.persistence.saveCollection("patientJourneys", this.data.patientJourneys);
+    }
+
+    await this.audit(context, "follow_up.create", "follow_up", followUp.id, followUp.patientId, {
+      journeyId: input.journeyId
+    });
+    return this.followUpView(context, followUp);
+  }
+
+  private ensureVisibleFollowUp(context: RequestContext, followUpId: string): FollowUp {
+    const followUp = this.data.followUps.find((entry) => entry.id === followUpId && entry.tenantId === context.tenantId);
+    if (!followUp) {
+      throw new ApiError(404, `Follow-up not found: ${followUpId}`);
+    }
+    this.ensureKnownPatient(context, followUp.patientId);
+    return followUp;
+  }
+
+  async updateFollowUp(context: RequestContext, followUpId: string, input: UpdateFollowUpInput) {
+    const followUp = this.ensureVisibleFollowUp(context, followUpId);
+    const timestamp = nowIso();
+    if (input.status) {
+      const allowed: FollowUp["status"][] = ["due", "confirmed", "completed", "missed", "escalated"];
+      if (!allowed.includes(input.status)) {
+        throw new ApiError(400, `Invalid follow-up status: ${input.status}`);
+      }
+      followUp.status = input.status;
+      if (input.status === "confirmed") {
+        followUp.confirmedAt = timestamp;
+      }
+    }
+    if (input.dueAt) followUp.dueAt = input.dueAt;
+    if (input.instructions !== undefined) followUp.instructions = input.instructions;
+    followUp.updatedAt = timestamp;
+    await this.persistence.saveCollection("followUps", this.data.followUps);
+    await this.audit(context, "follow_up.update", "follow_up", followUp.id, followUp.patientId, {
+      status: followUp.status
+    });
+    return this.followUpView(context, followUp);
+  }
+
+  async remindFollowUp(context: RequestContext, followUpId: string) {
+    const followUp = this.ensureVisibleFollowUp(context, followUpId);
+    const patient = this.ensureKnownPatient(context, followUp.patientId);
+    if (!patient.primaryPhone || !patient.primaryPhone.trim()) {
+      throw new ApiError(400, "Patient has no primary phone on file.");
+    }
+    const dueText = formatDue(followUp.dueAt);
+    const body = `Reminder: ${followUp.title} is due ${dueText}.${
+      followUp.instructions ? ` ${followUp.instructions}` : ""
+    }`;
+    const send = await this.sendMessage(context, { to: patient.primaryPhone, type: "transactional", body });
+    await this.audit(context, "follow_up.remind", "follow_up", followUp.id, followUp.patientId, {
+      messageId: send.messageId,
+      status: send.ok ? "sent" : "failed"
+    });
+    return { ok: send.ok, followUpId: followUp.id, message: send };
+  }
+
+  // ---- Billing: invoices & payments -----------------------------------------
+
+  private invoiceView(context: RequestContext, invoice: Invoice) {
+    const patient = this.data.patients.find(
+      (entry) => entry.id === invoice.patientId && entry.tenantId === context.tenantId
+    );
+    return { ...invoice, patientName: patient?.displayName };
+  }
+
+  private sanitizeInvoiceItems(value: unknown): InvoiceLineItem[] {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new ApiError(400, "At least one invoice item is required.");
+    }
+    return value.map((raw) => {
+      const item = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+      const description = ensureString(item.description, "items[].description");
+      const amount = Number(item.amount);
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new ApiError(400, "Each invoice item needs a non-negative numeric amount.");
+      }
+      return { description, amount };
+    });
+  }
+
+  listInvoices(context: RequestContext, filters: { patientId?: string; status?: string }) {
+    return this.data.invoices
+      .filter((entry) => {
+        if (entry.tenantId !== context.tenantId) return false;
+        if (!this.canAccessPatientId(context, entry.patientId)) return false;
+        if (filters.patientId && entry.patientId !== filters.patientId) return false;
+        if (filters.status && entry.status !== filters.status) return false;
+        return true;
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((entry) => this.invoiceView(context, entry));
+  }
+
+  getPatientInvoices(context: RequestContext, patientId: string) {
+    this.ensureKnownPatient(context, patientId);
+    const invoices = this.data.invoices
+      .filter((entry) => entry.tenantId === context.tenantId && entry.patientId === patientId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((entry) => this.invoiceView(context, entry));
+    const billed = invoices.reduce((sum, entry) => sum + entry.total, 0);
+    const settled = invoices.reduce((sum, entry) => sum + entry.amountSettled, 0);
+    return { invoices, summary: { billed, settled, outstanding: billed - settled } };
+  }
+
+  async createInvoice(context: RequestContext, input: CreateInvoiceInput) {
+    const patient = this.ensureKnownPatient(context, ensureString(input.patientId, "patientId"));
+    const items = this.sanitizeInvoiceItems(input.items);
+    const total = items.reduce((sum, item) => sum + item.amount, 0);
+    const timestamp = nowIso();
+    const invoice: Invoice = {
+      id: createId("invoice"),
+      tenantId: context.tenantId,
+      patientId: patient.id,
+      appointmentId: typeof input.appointmentId === "string" ? input.appointmentId : undefined,
+      items,
+      currency: "INR",
+      total,
+      amountSettled: 0,
+      status: "unpaid",
+      payments: [],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.data.invoices.push(invoice);
+    await this.persistence.saveCollection("invoices", this.data.invoices);
+    await this.audit(context, "invoice.create", "invoice", invoice.id, invoice.patientId, { total });
+    return this.invoiceView(context, invoice);
+  }
+
+  private ensureVisibleInvoice(context: RequestContext, invoiceId: string): Invoice {
+    const invoice = this.data.invoices.find((entry) => entry.id === invoiceId && entry.tenantId === context.tenantId);
+    if (!invoice) {
+      throw new ApiError(404, `Invoice not found: ${invoiceId}`);
+    }
+    this.ensureKnownPatient(context, invoice.patientId);
+    return invoice;
+  }
+
+  async recordInvoicePayment(context: RequestContext, invoiceId: string, input: RecordPaymentInput) {
+    const invoice = this.ensureVisibleInvoice(context, invoiceId);
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ApiError(400, "Payment amount must be a positive number.");
+    }
+    if (invoice.amountSettled + amount > invoice.total) {
+      throw new ApiError(400, "Payment exceeds the outstanding balance on this invoice.");
+    }
+    const timestamp = nowIso();
+    invoice.payments.push({
+      amount,
+      method: typeof input.method === "string" ? input.method : undefined,
+      note: typeof input.note === "string" ? input.note : undefined,
+      at: timestamp
+    });
+    invoice.amountSettled += amount;
+    invoice.status = invoice.amountSettled >= invoice.total ? "paid" : "partial";
+    invoice.updatedAt = timestamp;
+    await this.persistence.saveCollection("invoices", this.data.invoices);
+    await this.audit(context, "payment.record", "invoice", invoice.id, invoice.patientId, {
+      amount,
+      status: invoice.status
+    });
+    return this.invoiceView(context, invoice);
+  }
+
+  getBillingSummary(context: RequestContext) {
+    const invoices = this.data.invoices.filter(
+      (entry) => entry.tenantId === context.tenantId && this.canAccessPatientId(context, entry.patientId)
+    );
+    const billed = invoices.reduce((sum, entry) => sum + entry.total, 0);
+    const settled = invoices.reduce((sum, entry) => sum + entry.amountSettled, 0);
+    const unpaidCount = invoices.filter((entry) => entry.status !== "paid").length;
+    return { billed, settled, outstanding: billed - settled, unpaidCount };
   }
 
   private staffAuditEvents(context: RequestContext) {

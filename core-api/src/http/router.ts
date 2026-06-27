@@ -336,6 +336,41 @@ const createRoutes = (service: CoreService): Route[] => [
   route("PATCH", "/journey-tasks/:taskId", "journeys:update", ({ auth, params, body }) =>
     service.updateJourneyTask(auth, params.taskId, toRecord(body))
   ),
+  route("POST", "/patient-journeys/:journeyId/send-message", "journeys:update", ({ auth, params, body }) =>
+    service.sendJourneyMessage(auth, params.journeyId, toRecord(body)), "journeys"
+  ),
+
+  // Continuity: staff follow-ups (reads use followups:confirm; writes followups:manage).
+  route("GET", "/followups", "followups:confirm", ({ auth, query }) =>
+    service.listFollowUps(auth, { status: query.get("status") ?? undefined }), "continuity"
+  ),
+  route("POST", "/followups", "followups:manage", ({ auth, body }) =>
+    service.createFollowUp(auth, toRecord(body)), "continuity"
+  ),
+  route("PATCH", "/followups/:id", "followups:manage", ({ auth, params, body }) =>
+    service.updateFollowUp(auth, params.id, toRecord(body)), "continuity"
+  ),
+  route("POST", "/followups/:id/remind", "followups:manage", ({ auth, params }) =>
+    service.remindFollowUp(auth, params.id), "continuity"
+  ),
+
+  // Billing: invoices & payments.
+  route("GET", "/invoices", "billing:read", ({ auth, query }) =>
+    service.listInvoices(auth, {
+      patientId: query.get("patientId") ?? undefined,
+      status: query.get("status") ?? undefined
+    }), "billing"
+  ),
+  route("POST", "/invoices", "billing:manage", ({ auth, body }) =>
+    service.createInvoice(auth, toRecord(body)), "billing"
+  ),
+  route("POST", "/invoices/:id/payments", "billing:manage", ({ auth, params, body }) =>
+    service.recordInvoicePayment(auth, params.id, toRecord(body)), "billing"
+  ),
+  route("GET", "/billing/summary", "billing:read", ({ auth }) => service.getBillingSummary(auth), "billing"),
+  route("GET", "/patients/:patientId/invoices", "billing:read", ({ auth, params }) =>
+    service.getPatientInvoices(auth, params.patientId), "billing"
+  ),
 
   // Leads & data sources.
   route("GET", "/leads", "leads:read", ({ auth, query }) =>

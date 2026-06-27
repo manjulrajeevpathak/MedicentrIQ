@@ -10,6 +10,7 @@ import type {
   FollowUp,
   Household,
   Interaction,
+  Invoice,
   JourneyEvent,
   JourneyTask,
   JourneyTemplate,
@@ -75,6 +76,7 @@ export type SeedData = {
   clinicalRecords: ClinicalRecord[];
   documents: DocumentMetadata[];
   followUps: FollowUp[];
+  invoices: Invoice[];
   journeyTemplates: JourneyTemplate[];
   patientJourneys: PatientJourney[];
   journeyTasks: JourneyTask[];
@@ -541,7 +543,117 @@ export const createSeedData = (): SeedData => ({
       updatedAt: daysFromNow(-1)
     }
   ],
+  invoices: [
+    {
+      id: "invoice_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      appointmentId: "appointment_demo_001",
+      items: [
+        { description: "Cataract consultation", amount: 800 },
+        { description: "IOL lens", amount: 25000 }
+      ],
+      currency: "INR",
+      total: 25800,
+      amountSettled: 10000,
+      status: "partial",
+      payments: [{ amount: 10000, method: "upi", at: daysFromNow(-2), note: "Advance" }],
+      createdAt: daysFromNow(-3),
+      updatedAt: daysFromNow(-2)
+    },
+    {
+      id: "invoice_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      items: [{ description: "Pre-op investigations", amount: 1500 }],
+      currency: "INR",
+      total: 1500,
+      amountSettled: 1500,
+      status: "paid",
+      payments: [{ amount: 1500, method: "card", at: daysFromNow(-3), note: "Paid in full" }],
+      createdAt: daysFromNow(-3),
+      updatedAt: daysFromNow(-3)
+    }
+  ],
   journeyTemplates: [
+    {
+      id: "journey_template_cataract_surgery",
+      tenantId: DEMO_TENANT_ID,
+      name: "Cataract surgery pathway",
+      condition: "cataract",
+      status: "active",
+      defaultOwnerRole: "care_coordinator",
+      steps: [
+        {
+          key: "pre_op_counselling",
+          title: "Pre-op counselling",
+          offsetDays: -7,
+          instructions: "Explain procedure, IOL options, fasting, and consent."
+        },
+        {
+          key: "pre_op_tests",
+          title: "Pre-op tests",
+          offsetDays: -3,
+          instructions: "Biometry, blood tests, and anaesthesia fitness review."
+        },
+        {
+          key: "surgery_day",
+          title: "Surgery day",
+          offsetDays: 0,
+          instructions: "Confirm arrival, fasting status, and post-op drops handover."
+        },
+        {
+          key: "day_1_review",
+          title: "Day-1 review",
+          offsetDays: 1,
+          instructions: "Check vision, pain, redness, and drop adherence."
+        },
+        {
+          key: "day_7_review",
+          title: "7-day review",
+          offsetDays: 7,
+          instructions: "Assess healing and confirm next visit readiness."
+        },
+        {
+          key: "day_30_review",
+          title: "30-day review",
+          offsetDays: 30,
+          instructions: "Final refraction, spectacle prescription, and discharge."
+        }
+      ],
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-5)
+    },
+    {
+      id: "journey_template_glaucoma_management",
+      tenantId: DEMO_TENANT_ID,
+      name: "Glaucoma management",
+      condition: "glaucoma",
+      status: "active",
+      defaultOwnerRole: "care_coordinator",
+      steps: [
+        {
+          key: "baseline",
+          title: "Baseline assessment",
+          offsetDays: 0,
+          instructions: "Record baseline IOP, fields, and OCT; start therapy."
+        },
+        {
+          key: "iop_check_1_month",
+          title: "IOP check (1-month)",
+          offsetDays: 30,
+          instructions: "Recheck IOP and review medication tolerance."
+        },
+        {
+          key: "follow_up_3_month",
+          title: "3-month follow-up",
+          offsetDays: 90,
+          instructions: "Repeat IOP, fields review, and adjust therapy if needed."
+        }
+      ],
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-5)
+    },
     {
       id: "journey_template_post_op_cataract",
       tenantId: DEMO_TENANT_ID,
@@ -755,6 +867,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     clinicalRecords: withTenant(data.clinicalRecords ?? []),
     documents: withTenant(data.documents ?? []),
     followUps: withTenant(data.followUps ?? []),
+    invoices: withTenant(data.invoices ?? []),
     journeyTemplates: withTenant(data.journeyTemplates ?? []),
     patientJourneys: withTenant(data.patientJourneys ?? []),
     journeyTasks: withTenant(data.journeyTasks ?? []),

@@ -29,6 +29,7 @@ const collections: CollectionName[] = [
   "clinicalRecords",
   "documents",
   "followUps",
+  "invoices",
   "journeyTemplates",
   "patientJourneys",
   "journeyTasks",

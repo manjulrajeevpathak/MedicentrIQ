@@ -67,6 +67,9 @@ export type Permission =
   | "clinical:read"
   | "clinical:write"
   | "followups:confirm"
+  | "followups:manage"
+  | "billing:read"
+  | "billing:manage"
   | "journeys:read"
   | "journeys:update"
   | "audit:read"
@@ -370,8 +373,14 @@ export type AuditEvent = {
     | "scheduling.send_confirmations"
     | "document_metadata.create"
     | "follow_up.confirm"
+    | "follow_up.create"
+    | "follow_up.update"
+    | "follow_up.remind"
     | "journey.create"
     | "journey.update"
+    | "journey.message"
+    | "invoice.create"
+    | "payment.record"
     | "mobile_link.lookup"
     | "mobile_link.action"
     | "workflow.trigger"
@@ -704,6 +713,37 @@ export type FollowUp = {
   updatedAt: string;
 };
 
+export type InvoiceStatus = "unpaid" | "partial" | "paid";
+
+export type InvoiceLineItem = {
+  description: string;
+  amount: number;
+};
+
+export type InvoicePayment = {
+  amount: number;
+  method?: string;
+  at: string;
+  note?: string;
+};
+
+export type Invoice = {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  appointmentId?: string;
+  items: InvoiceLineItem[];
+  currency: "INR";
+  /** Sum of item amounts. */
+  total: number;
+  /** Running total settled across payments. */
+  amountSettled: number;
+  status: InvoiceStatus;
+  payments: InvoicePayment[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type JourneyTemplate = {
   id: string;
   tenantId: string;
@@ -757,7 +797,7 @@ export type JourneyEvent = {
   tenantId: string;
   journeyId: string;
   patientId: string;
-  type: "created" | "started" | "task_created" | "task_updated" | "follow_up_confirmed" | "workflow_callback" | "note" | "completed";
+  type: "created" | "started" | "task_created" | "task_updated" | "follow_up_confirmed" | "message_sent" | "workflow_callback" | "note" | "completed";
   payload: Record<string, unknown>;
   occurredAt: string;
 };
