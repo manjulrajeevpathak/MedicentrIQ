@@ -59,6 +59,7 @@ export type Permission =
   | "service_events:ingest"
   | "users:read"
   | "users:manage"
+  | "messages:send"
   | "tenant:settings:manage"
   | "platform:tenants:read"
   | "platform:tenants:manage"
@@ -167,6 +168,38 @@ export type ServiceApiKey = {
   createdAt: string;
 };
 
+// ---- Messaging channels (per-tenant) --------------------------------------
+
+export type ChannelProvider = "ultramsg" | "aisensy";
+export type MessageType = "transactional" | "marketing";
+
+/** Per-tenant WhatsApp channel credentials. recordId = tenantId. Secrets are
+ *  redacted on read everywhere except the manage path. */
+export type TenantChannelConfig = {
+  tenantId: string;
+  /** UltraMsg — free-form/session (transactional). */
+  ultramsg?: { instanceId: string; token: string; enabled: boolean };
+  /** AISensy — template/campaign (marketing). */
+  aisensy?: { apiKey: string; enabled: boolean };
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Outbound message audit log (basis for future campaign delivery tracking). */
+export type MessageLog = {
+  id: string;
+  tenantId: string;
+  to: string;
+  channel: ChannelProvider;
+  type: MessageType;
+  status: "sent" | "failed";
+  body?: string;
+  campaign?: string;
+  providerId?: string;
+  error?: string;
+  createdAt: string;
+};
+
 export type RequestContext = {
   actorType: ActorType;
   tenantId: string;
@@ -211,6 +244,7 @@ export type AuditEvent = {
     | "tenant.create"
     | "tenant.update"
     | "tenant.settings_update"
+    | "message.send"
     | "auth.login"
     | "auth.login_failed"
     | "auth.logout"

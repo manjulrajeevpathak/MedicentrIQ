@@ -93,6 +93,15 @@ const createRoutes = (service: CoreService): Route[] => [
   route("POST", "/users/:userId/reset-password", "users:manage", ({ auth, params }) => service.resetUserPassword(auth, params.userId)),
   route("PATCH", "/tenant/settings", "tenant:settings:manage", ({ auth, body }) => service.updateTenantSettings(auth, toRecord(body))),
 
+  // Messaging channels (per-tenant WhatsApp): config + send.
+  route("GET", "/tenant/channels", "tenant:settings:manage", ({ auth }) => service.getTenantChannels(auth)),
+  route("PATCH", "/tenant/channels", "tenant:settings:manage", ({ auth, body }) => service.updateTenantChannels(auth, toRecord(body))),
+  route("POST", "/messages/send", "messages:send", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
+  route("POST", "/messages/test", "tenant:settings:manage", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
+  route("GET", "/messages", "tenant:settings:manage", ({ auth, query }) =>
+    service.listMessages(auth, Number.parseInt(query.get("limit") ?? "25", 10))
+  ),
+
   // Platform admin management (superadmin).
   route("GET", "/platform/admins", "platform:admins:read", () => service.listPlatformAdmins()),
   route("POST", "/platform/admins", "platform:admins:manage", ({ auth, body }) => service.createPlatformAdmin(auth, toRecord(body))),

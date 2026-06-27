@@ -11,9 +11,11 @@ import type {
   JourneyTask,
   JourneyTemplate,
   LoginChallenge,
+  MessageLog,
   MobileLinkSession,
   Organization,
   PasswordResetToken,
+  TenantChannelConfig,
   PatientJourney,
   Patient,
   PlatformAdmin,
@@ -54,6 +56,8 @@ export type SeedData = {
   platformAdmins: PlatformAdmin[];
   loginChallenges: LoginChallenge[];
   passwordResetTokens: PasswordResetToken[];
+  channelConfigs: TenantChannelConfig[];
+  messages: MessageLog[];
   apiKeys: ServiceApiKey[];
   households: Household[];
   patients: Patient[];
@@ -164,6 +168,8 @@ export const createSeedData = (): SeedData => ({
   ],
   loginChallenges: [],
   passwordResetTokens: [],
+  channelConfigs: [],
+  messages: [],
   apiKeys: [
     {
       id: "api_key_demo_integration",
@@ -574,6 +580,8 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     platformAdmins: data.platformAdmins?.length ? data.platformAdmins : seed.platformAdmins,
     loginChallenges: data.loginChallenges ?? [],
     passwordResetTokens: data.passwordResetTokens ?? [],
+    channelConfigs: data.channelConfigs ?? [],
+    messages: data.messages ?? [],
     apiKeys: data.apiKeys?.length ? withTenant(data.apiKeys) : seed.apiKeys,
     households: data.households?.length ? withTenant(data.households) : seed.households,
     patients: withTenant(data.patients ?? []),

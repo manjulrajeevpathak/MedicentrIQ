@@ -11,6 +11,8 @@ import {
   type EmailService,
   type OutboxEntry
 } from "../integrations/email.js";
+import { sendUltraMsg } from "../integrations/channels/ultramsg.js";
+import { sendAiSensy } from "../integrations/channels/aisensy.js";
 import type {
   AccessRequest,
   Appointment,
@@ -38,6 +40,10 @@ import type {
   PasswordResetToken,
   PrincipalType,
   AuthCredentials,
+  TenantChannelConfig,
+  MessageLog,
+  ChannelProvider,
+  MessageType,
   Patient,
   PatientSummary,
   Permission,
@@ -1176,6 +1182,125 @@ export class CoreService {
     const list = Array.isArray(value) ? value : [];
     const roles = list.filter((r): r is Role => typeof r === "string" && (allowed as string[]).includes(r));
     return roles.length ? roles : ["front_desk"];
+  }
+
+  // ---- Messaging channels (per-tenant WhatsApp) -----------------------------
+
+  private tenantChannelConfig(tenantId: string): TenantChannelConfig | undefined {
+    return this.data.channelConfigs.find((entry) => entry.tenantId === tenantId);
+  }
+
+  /** Redacted channel status for the active tenant (never returns raw secrets). */
+  getTenantChannels(context: RequestContext) {
+    const c = this.tenantChannelConfig(context.tenantId);
+    const tail = (s?: string) => (s && s.length > 3 ? `…${s.slice(-4)}` : s ? "…" : null);
+    return {
+      ultramsg: {
+        configured: Boolean(c?.ultramsg?.instanceId && c.ultramsg.token),
+        enabled: c?.ultramsg?.enabled ?? false,
+        instanceId: c?.ultramsg?.instanceId ?? null,
+        tokenTail: tail(c?.ultramsg?.token)
+      },
+      aisensy: {
+        configured: Boolean(c?.aisensy?.apiKey),
+        enabled: c?.aisensy?.enabled ?? false,
+        apiKeyTail: tail(c?.aisensy?.apiKey)
+      }
+    };
+  }
+
+  /** Set/update a tenant's channel credentials. A blank secret keeps the existing
+   *  one (so admins can toggle/edit without re-entering keys). */
+  async updateTenantChannels(context: RequestContext, input: Record<string, unknown>) {
+    let c = this.tenantChannelConfig(context.tenantId);
+    const now = nowIso();
+    if (!c) {
+      c = { tenantId: context.tenantId, createdAt: now, updatedAt: now };
+      this.data.channelConfigs.push(c);
+    }
+    const um = input.ultramsg;
+    if (um && typeof um === "object") {
+      const u = um as Record<string, unknown>;
+      const instanceId = typeof u.instanceId === "string" && u.instanceId.trim() ? u.instanceId.trim() : c.ultramsg?.instanceId ?? "";
+      const token = typeof u.token === "string" && u.token.trim() ? u.token.trim() : c.ultramsg?.token ?? "";
+      c.ultramsg = { instanceId, token, enabled: typeof u.enabled === "boolean" ? u.enabled : c.ultramsg?.enabled ?? true };
+    }
+    const ai = input.aisensy;
+    if (ai && typeof ai === "object") {
+      const a = ai as Record<string, unknown>;
+      const apiKey = typeof a.apiKey === "string" && a.apiKey.trim() ? a.apiKey.trim() : c.aisensy?.apiKey ?? "";
+      c.aisensy = { apiKey, enabled: typeof a.enabled === "boolean" ? a.enabled : c.aisensy?.enabled ?? true };
+    }
+    c.updatedAt = now;
+    await this.persistence.saveCollection("channelConfigs", this.data.channelConfigs);
+    await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
+      ultramsg: c.ultramsg ? { configured: Boolean(c.ultramsg.instanceId), enabled: c.ultramsg.enabled } : null,
+      aisensy: c.aisensy ? { configured: Boolean(c.aisensy.apiKey), enabled: c.aisensy.enabled } : null
+    });
+    return this.getTenantChannels(context);
+  }
+
+  /**
+   * Unified WhatsApp send for the active tenant. transactional → UltraMsg,
+   * marketing → AISensy, using the tenant's own credentials. Logs every attempt.
+   * Returns a structured result (200 even on provider failure) so callers/UI can
+   * show success/failure without a 5xx.
+   */
+  async sendMessage(context: RequestContext, input: Record<string, unknown>) {
+    const to = ensureString(input.to, "to");
+    const type: MessageType = input.type === "marketing" ? "marketing" : "transactional";
+    const config = this.tenantChannelConfig(context.tenantId);
+
+    let channel: ChannelProvider;
+    let result: { ok: true; providerId?: string } | { ok: false; error: string };
+    let body: string | undefined;
+    let campaign: string | undefined;
+
+    if (type === "marketing") {
+      channel = "aisensy";
+      if (!config?.aisensy?.enabled || !config.aisensy.apiKey) {
+        throw new ApiError(400, "AISensy (marketing) is not configured for this hospital.");
+      }
+      campaign = typeof input.campaign === "string" ? input.campaign : undefined;
+      result = await sendAiSensy({ apiKey: config.aisensy.apiKey }, to, {
+        campaign,
+        userName: typeof input.userName === "string" ? input.userName : undefined,
+        params: Array.isArray(input.params) ? (input.params.filter((p) => typeof p === "string") as string[]) : undefined
+      });
+    } else {
+      channel = "ultramsg";
+      if (!config?.ultramsg?.enabled || !config.ultramsg.instanceId || !config.ultramsg.token) {
+        throw new ApiError(400, "UltraMsg (transactional) is not configured for this hospital.");
+      }
+      body = ensureString(input.body, "body");
+      result = await sendUltraMsg({ instanceId: config.ultramsg.instanceId, token: config.ultramsg.token }, to, body);
+    }
+
+    const log: MessageLog = {
+      id: createId("msg"),
+      tenantId: context.tenantId,
+      to,
+      channel,
+      type,
+      status: result.ok ? "sent" : "failed",
+      ...(body ? { body } : {}),
+      ...(campaign ? { campaign } : {}),
+      ...(result.ok && result.providerId ? { providerId: result.providerId } : {}),
+      ...(result.ok ? {} : { error: result.error }),
+      createdAt: nowIso()
+    };
+    this.data.messages.push(log);
+    await this.persistence.saveCollection("messages", this.data.messages);
+    await this.audit(context, "message.send", "message", log.id, undefined, { channel, type, status: log.status });
+
+    return { ok: result.ok, channel, type, messageId: log.id, providerId: result.ok ? result.providerId : undefined, error: result.ok ? undefined : result.error };
+  }
+
+  listMessages(context: RequestContext, limit = 25) {
+    return this.data.messages
+      .filter((entry) => entry.tenantId === context.tenantId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
   }
 
   // ---- Platform admin management (superadmin) -------------------------------

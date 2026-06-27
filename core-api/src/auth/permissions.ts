@@ -18,7 +18,8 @@ const allStaffPermissions: Permission[] = [
   "documents:create",
   "followups:confirm",
   "journeys:read",
-  "journeys:update"
+  "journeys:update",
+  "messages:send"
 ];
 
 export const rolePermissions: Record<Role, Permission[]> = {
@@ -30,6 +31,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "interactions:read",
     "interactions:create",
     "interactions:update",
+    "messages:send",
     "tasks:read",
     "tasks:update",
     "appointments:read",
@@ -49,6 +51,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "interactions:read",
     "interactions:create",
     "interactions:update",
+    "messages:send",
     "tasks:read",
     "tasks:update",
     "appointments:read",
@@ -64,6 +67,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "interactions:read",
     "interactions:create",
     "interactions:update",
+    "messages:send",
     "tasks:read",
     "tasks:update",
     "appointments:read",
@@ -81,6 +85,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "interactions:read",
     "interactions:create",
     "interactions:update",
+    "messages:send",
     "tasks:read",
     "tasks:update",
     "appointments:read",
