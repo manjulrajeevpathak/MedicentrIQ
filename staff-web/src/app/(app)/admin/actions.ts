@@ -82,3 +82,48 @@ export async function setMfaPolicyAction(policy: MfaPolicy): Promise<ActionState
   revalidatePath("/admin");
   return { ok: true, message: policy === "required" ? "MFA is now required for all staff." : "MFA set to optional." };
 }
+
+// ---- Messaging channels (Integrations) ------------------------------------
+
+export type ChannelActionState = { ok: boolean; error?: string; message?: string };
+
+export async function saveChannelsAction(_prev: ChannelActionState, formData: FormData): Promise<ChannelActionState> {
+  const provider = String(formData.get("provider") ?? "");
+  const body: Record<string, unknown> = {};
+
+  if (provider === "ultramsg") {
+    const instanceId = String(formData.get("instanceId") ?? "").trim();
+    const token = String(formData.get("token") ?? "").trim();
+    const enabled = formData.get("enabled") === "on";
+    // Blank token = keep the existing secret (core-api handles this).
+    body.ultramsg = { instanceId, ...(token ? { token } : {}), enabled };
+  } else if (provider === "aisensy") {
+    const apiKey = String(formData.get("apiKey") ?? "").trim();
+    const enabled = formData.get("enabled") === "on";
+    body.aisensy = { ...(apiKey ? { apiKey } : {}), enabled };
+  } else {
+    return { ok: false, error: "Unknown channel." };
+  }
+
+  const result = await coreApi<unknown>("/tenant/channels", { method: "PATCH", body });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not save the channel." };
+  revalidatePath("/admin");
+  return { ok: true, message: "Channel saved." };
+}
+
+export async function sendTestMessageAction(_prev: ChannelActionState, formData: FormData): Promise<ChannelActionState> {
+  const to = String(formData.get("to") ?? "").trim();
+  const type = String(formData.get("type") ?? "transactional");
+  if (!to) return { ok: false, error: "Enter a recipient number (with country code)." };
+
+  const body: Record<string, unknown> =
+    type === "marketing"
+      ? { to, type, campaign: String(formData.get("campaign") ?? "").trim(), userName: String(formData.get("userName") ?? "").trim() || undefined }
+      : { to, type, body: String(formData.get("body") ?? "").trim() || "HealthcareOS test message ✅" };
+
+  const result = await coreApi<{ ok: boolean; channel: string; error?: string }>("/messages/test", { method: "POST", body });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not send the test." };
+  revalidatePath("/admin");
+  if (!result.data.ok) return { ok: false, error: result.data.error ?? "The provider rejected the message." };
+  return { ok: true, message: `Test sent via ${result.data.channel}.` };
+}

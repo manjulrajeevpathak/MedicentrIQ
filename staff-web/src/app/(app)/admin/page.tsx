@@ -2,7 +2,9 @@ import { Lock } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty";
 import { AdminView } from "@/components/admin/admin-view";
-import { fetchBranches, fetchUsers } from "@/lib/users-api";
+import { IntegrationsPanel } from "@/components/admin/integrations-panel";
+import { fetchBranches, fetchChannels, fetchUsers } from "@/lib/users-api";
+import type { ChannelStatus } from "@/lib/users-types";
 
 export const dynamic = "force-dynamic";
 
@@ -32,14 +34,23 @@ export default async function AdminPage() {
     );
   }
 
-  const branches = await fetchBranches();
+  const [branches, channelsResult] = await Promise.all([fetchBranches(), fetchChannels()]);
+  const channels: ChannelStatus = channelsResult.ok
+    ? channelsResult.data
+    : {
+        ultramsg: { configured: false, enabled: false, instanceId: null, tokenTail: null },
+        aisensy: { configured: false, enabled: false, apiKeyTail: null }
+      };
 
   return (
-    <AdminView
-      users={usersResult.data.users}
-      seats={usersResult.data.seats}
-      mfaPolicy={usersResult.data.mfaPolicy}
-      branches={branches}
-    />
+    <div className="space-y-8">
+      <AdminView
+        users={usersResult.data.users}
+        seats={usersResult.data.seats}
+        mfaPolicy={usersResult.data.mfaPolicy}
+        branches={branches}
+      />
+      <IntegrationsPanel channels={channels} />
+    </div>
   );
 }

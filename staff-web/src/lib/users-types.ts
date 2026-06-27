@@ -38,6 +38,11 @@ export type Branch = {
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error?: string };
 
+export type ChannelStatus = {
+  ultramsg: { configured: boolean; enabled: boolean; instanceId: string | null; tokenTail: string | null };
+  aisensy: { configured: boolean; enabled: boolean; apiKeyTail: string | null };
+};
+
 export const STAFF_ROLES: { value: StaffRole; label: string }[] = [
   { value: "front_desk", label: "Front desk" },
   { value: "call_center", label: "Call center" },

@@ -1,26 +1,18 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { SESSION_COOKIE } from "@/lib/constants";
 
 /**
- * Server-side outbound WhatsApp send via UltraMsg.
- *
- * The UltraMsg token stays on the server (read from env) and is never shipped to
- * the browser. Mirrors:
- *   curl --request POST \
- *     --url https://api.ultramsg.com/<instance>/messages/chat \
- *     --header 'content-type: application/x-www-form-urlencoded' \
- *     --data-urlencode 'token=...' --data-urlencode 'to=...' --data-urlencode 'body=...'
+ * Outbound WhatsApp send for the inbox. Routes through core-api's per-tenant
+ * channel layer (transactional → the hospital's own UltraMsg config), so no
+ * global credential is used and each hospital sends from its own number.
  */
-const ULTRAMSG_BASE = "https://api.ultramsg.com";
+const API_BASE = (process.env.NEXT_PUBLIC_CORE_API_URL ?? "http://localhost:4100").replace(/\/$/, "");
 
 export async function POST(request: Request) {
-  const instanceId = process.env.ULTRAMSG_INSTANCE_ID;
-  const token = process.env.ULTRAMSG_TOKEN;
-
-  if (!instanceId || !token) {
-    return NextResponse.json(
-      { ok: false, error: "WhatsApp sending is not configured. Set ULTRAMSG_INSTANCE_ID and ULTRAMSG_TOKEN in staff-web/.env.local." },
-      { status: 503 }
-    );
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) {
+    return NextResponse.json({ ok: false, error: "Sign in to send messages." }, { status: 401 });
   }
 
   let payload: { to?: string; body?: string };
@@ -30,37 +22,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const to = (payload.to ?? process.env.ULTRAMSG_DEFAULT_TO ?? "").trim();
+  const to = (payload.to ?? "").trim();
   const body = (payload.body ?? "").trim();
-
   if (!to) return NextResponse.json({ ok: false, error: "Recipient number (to) is required." }, { status: 400 });
   if (!body) return NextResponse.json({ ok: false, error: "Message body is required." }, { status: 400 });
 
-  const form = new URLSearchParams({ token, to, body });
-
   try {
-    const response = await fetch(`${ULTRAMSG_BASE}/${instanceId}/messages/chat`, {
+    const res = await fetch(`${API_BASE}/messages/send`, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: form.toString()
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ to, type: "transactional", body })
     });
-
-    // UltraMsg returns { sent: "true", id, message } on success, or { error } otherwise.
-    const result = (await response.json().catch(() => ({}))) as {
-      sent?: string | boolean;
-      id?: string;
-      error?: string;
-      message?: string;
-    };
-
-    const sent = response.ok && (result.sent === "true" || result.sent === true);
-    if (!sent) {
-      const message = result.error ?? result.message ?? `UltraMsg responded with ${response.status}.`;
-      return NextResponse.json({ ok: false, error: String(message), raw: result }, { status: 502 });
+    const envelope = (await res.json().catch(() => ({}))) as { data?: { ok: boolean; providerId?: string; error?: string }; error?: { message?: string } };
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, error: envelope.error?.message ?? "WhatsApp channel is not configured for this hospital." }, { status: res.status });
     }
-
-    return NextResponse.json({ ok: true, id: result.id ?? null, to });
+    const result = envelope.data;
+    if (!result?.ok) {
+      return NextResponse.json({ ok: false, error: result?.error ?? "The provider rejected the message." }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true, id: result.providerId ?? null, to });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: "Failed to reach UltraMsg.", detail: String(error) }, { status: 502 });
+    return NextResponse.json({ ok: false, error: "Failed to reach the messaging service.", detail: String(error) }, { status: 502 });
   }
 }
