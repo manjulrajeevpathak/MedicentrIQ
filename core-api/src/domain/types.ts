@@ -220,21 +220,6 @@ export type TenantChannelConfig = {
   updatedAt: string;
 };
 
-/** Per-tenant appointment-notification rule. `offsetHours` applies only to the
- *  reminder events (how many hours before the appointment to send). */
-export type NotificationRule = { enabled: boolean; body: string; offsetHours?: number };
-
-export type AppointmentNotificationConfig = {
-  tenantId: string;
-  booked: NotificationRule;
-  reminder24h: NotificationRule;
-  reminder3h: NotificationRule;
-  cancelled: NotificationRule;
-  rescheduled: NotificationRule;
-  createdAt: string;
-  updatedAt: string;
-};
-
 /** Outbound message audit log (basis for future campaign delivery tracking). */
 export type MessageLog = {
   id: string;
@@ -523,7 +508,6 @@ export type AuditEvent = {
     | "tenant.update"
     | "branch.update"
     | "tenant.settings_update"
-    | "tenant.notifications.update"
     | "message.send"
     | "lead.create"
     | "lead.update"

@@ -20,8 +20,6 @@ import type {
   AccessRequest,
   Appointment,
   AppointmentDisposition,
-  AppointmentNotificationConfig,
-  NotificationRule,
   AppointmentStatus,
   AuditEvent,
   Call,
@@ -95,6 +93,9 @@ import type {
   Workflow,
   WorkflowAnchor,
   WorkflowStage,
+  WorkflowRun,
+  StageRun,
+  StageRunStatus,
   StageAction,
   StageTrigger
 } from "../domain/types.js";
@@ -694,38 +695,30 @@ const personalize = (body: string, name: string): string => {
 };
 
 /**
- * Per-event appointment-notification defaults — used when a tenant has no
- * notificationConfigs row (resolve-with-defaults on read). Tokens supported:
- * {{patientName}} {{doctorName}} {{date}} {{time}} {{branch}} {{confirmLink}}.
+ * Default appointment-lifecycle message bodies — the verbatim bodies the retired
+ * fixed notification path used, now cloned per-tenant by the workflow runtime's
+ * lazy default provisioning so every tenant keeps parity. Tokens supported:
+ * {{patientName}} {{doctorName}} {{date}} {{time}} {{branch}} {{mapLink}} {{confirmLink}}.
  */
-type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled" | "rescheduled";
-
-const NOTIFICATION_DEFAULTS: Record<NotificationEvent, { enabled: boolean; body: string; offsetHours?: number }> = {
+const NOTIFICATION_DEFAULTS = {
   booked: {
-    enabled: true,
     body:
       "Hi {{patientName}}, your appointment with {{doctorName}} is booked for {{date}} at {{time}} at {{branch}}. Tap to confirm: {{confirmLink}}"
   },
   reminder24h: {
-    enabled: true,
-    offsetHours: 24,
     body: "Reminder, {{patientName}}: your appointment with {{doctorName}} is on {{date}} at {{time}}. Confirm: {{confirmLink}}"
   },
   reminder3h: {
-    enabled: true,
-    offsetHours: 3,
     body: "Hi {{patientName}}, your appointment with {{doctorName}} is coming up at {{time}}. See you at {{branch}}."
   },
   cancelled: {
-    enabled: true,
     body: "Hi {{patientName}}, your appointment with {{doctorName}} on {{date}} at {{time}} has been cancelled. Call us to rebook."
   },
   rescheduled: {
-    enabled: true,
     body:
       "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. {{mapLink}}"
   }
-};
+} as const;
 
 const sanitizeLeadSource = (value: unknown, fallback: LeadSource = "import"): LeadSource =>
   typeof value === "string" && (LEAD_SOURCES as string[]).includes(value) ? (value as LeadSource) : fallback;
@@ -1759,75 +1752,7 @@ export class CoreService {
     return this.getTenantChannels(context);
   }
 
-  // ---- Appointment notifications (per-tenant templates) ---------------------
-
-  /**
-   * Resolve the active tenant's appointment-notification config, falling back to
-   * NOTIFICATION_DEFAULTS for any event a stored row does not override. Returns a
-   * fully-populated config even when the tenant has no row (defaults).
-   */
-  getAppointmentNotifications(context: RequestContext): AppointmentNotificationConfig {
-    const stored = this.data.notificationConfigs.find((entry) => entry.tenantId === context.tenantId);
-    const rule = (event: NotificationEvent): NotificationRule => {
-      const base: NotificationRule = {
-        enabled: stored?.[event]?.enabled ?? NOTIFICATION_DEFAULTS[event].enabled,
-        body: stored?.[event]?.body ?? NOTIFICATION_DEFAULTS[event].body
-      };
-      // Reminder events carry a configurable "hours before" offset.
-      if (event === "reminder24h" || event === "reminder3h") {
-        base.offsetHours = stored?.[event]?.offsetHours ?? NOTIFICATION_DEFAULTS[event].offsetHours;
-      }
-      return base;
-    };
-    return {
-      tenantId: context.tenantId,
-      booked: rule("booked"),
-      reminder24h: rule("reminder24h"),
-      reminder3h: rule("reminder3h"),
-      cancelled: rule("cancelled"),
-      rescheduled: rule("rescheduled"),
-      createdAt: stored?.createdAt ?? nowIso(),
-      updatedAt: stored?.updatedAt ?? nowIso()
-    };
-  }
-
-  /** Upsert a partial of the tenant's notification templates (any of the 4 events). */
-  async updateAppointmentNotifications(context: RequestContext, input: Record<string, unknown>) {
-    const now = nowIso();
-    let stored = this.data.notificationConfigs.find((entry) => entry.tenantId === context.tenantId);
-    if (!stored) {
-      // Seed the row from the resolved defaults so partial edits keep the rest intact.
-      const resolved = this.getAppointmentNotifications(context);
-      stored = { ...resolved, createdAt: now, updatedAt: now };
-      this.data.notificationConfigs.push(stored);
-    }
-    const events: NotificationEvent[] = ["booked", "reminder24h", "reminder3h", "cancelled", "rescheduled"];
-    for (const event of events) {
-      const patch = input[event];
-      if (patch && typeof patch === "object") {
-        const p = patch as Record<string, unknown>;
-        if (typeof p.enabled === "boolean") {
-          stored[event].enabled = p.enabled;
-        }
-        if (typeof p.body === "string" && p.body.trim()) {
-          stored[event].body = p.body;
-        }
-        // Editable "hours before" for the reminder events (clamped 1h–30 days).
-        if ((event === "reminder24h" || event === "reminder3h") && typeof p.offsetHours === "number" && Number.isFinite(p.offsetHours)) {
-          stored[event].offsetHours = Math.min(Math.max(Math.round(p.offsetHours), 1), 24 * 30);
-        }
-      }
-    }
-    stored.updatedAt = now;
-    await this.persistence.saveCollection("notificationConfigs", this.data.notificationConfigs);
-    await this.audit(context, "tenant.notifications.update", "notification_config", context.tenantId, undefined, {
-      booked: stored.booked.enabled,
-      reminder24h: stored.reminder24h.enabled,
-      reminder3h: stored.reminder3h.enabled,
-      cancelled: stored.cancelled.enabled
-    });
-    return this.getAppointmentNotifications(context);
-  }
+  // ---- Mobile-link confirm session (shared by workflow message stages) -------
 
   /** Mint a 72h confirm/reschedule mobile-link session for the patient (PWA deep-link). */
   private async mintConfirmSession(context: RequestContext, patientId: string): Promise<MobileLinkSession> {
@@ -1937,49 +1862,13 @@ export class CoreService {
     return out;
   }
 
-  /**
-   * Best-effort: send a configured appointment notification to the patient over
-   * WhatsApp (transactional). Resolves the tenant rule for `event`; mints a confirm
-   * session when the body references {{confirmLink}}. NEVER throws — returns false on
-   * any failure (disabled rule, no phone, unconfigured channel, provider error) so
-   * the appointment operation always succeeds.
-   */
-  private async notifyAppointment(
-    context: RequestContext,
-    appointment: Appointment,
-    event: NotificationEvent
-  ): Promise<boolean> {
-    try {
-      const config = this.getAppointmentNotifications(context);
-      const rule = config[event];
-      if (!rule.enabled) {
-        return false;
-      }
-      const patient = this.ensureKnownPatient(context, appointment.patientId);
-      if (!patient.primaryPhone) {
-        return false;
-      }
-      const tokens = this.appointmentTokens(context, appointment, patient);
-      if (/\{\{\s*confirmLink\s*\}\}/i.test(rule.body)) {
-        const session = await this.mintConfirmSession(context, patient.id);
-        tokens.confirmLink = `${process.env.PATIENT_WEB_URL || "http://localhost:3201"}/?token=${session.token}`;
-      }
-      const body = this.renderTemplate(rule.body, tokens);
-      await this.sendMessage(context, { to: patient.primaryPhone, type: "transactional", body });
-      return true;
-    } catch {
-      // Notifications are best-effort; never surface to the caller.
-      return false;
-    }
-  }
-
-  /** Minimal system RequestContext for a tenant (used by the reminder scan). */
+  /** Minimal system RequestContext for a tenant (used by the workflow scheduler). */
   private systemContext(tenantId: string): RequestContext {
     return {
       actorType: "service",
       tenantId,
       actorId: "system",
-      displayName: "Reminder Service",
+      displayName: "Workflow Scheduler",
       roles: [],
       branchIds: [],
       permissions: ["appointments:create"],
@@ -1988,71 +1877,429 @@ export class CoreService {
     };
   }
 
+  // ---- Communication Workflows: runtime (enroll / fire / signal / schedule) --
+
   /**
-   * Scan every tenant's scheduled/confirmed appointments and fire the 24h / 3h
-   * reminders that are due and not yet sent. NOTE: scheduledAt is wall-clock encoded
-   * as UTC, so reminders fire relative to that encoding — acceptable for now.
+   * The default appointment-lifecycle templates + workflow, cloned per-tenant by
+   * `ensureDefaultAppointmentWorkflow` so a tenant that never configured a workflow
+   * still gets the same five messages the old fixed notification path produced.
+   * Bodies are the verbatim NOTIFICATION_DEFAULTS — behavior is preserved.
    */
-  async runAppointmentReminders(): Promise<{ sent: number; byEvent: Record<string, number> }> {
-    const byEvent: Record<string, number> = { reminder24h: 0, reminder3h: 0 };
-    let sent = 0;
+  private defaultAppointmentTemplateSpecs(): Array<{
+    suffix: string;
+    name: string;
+    body: string;
+  }> {
+    return [
+      { suffix: "booking", name: "Booking confirmation", body: NOTIFICATION_DEFAULTS.booked.body },
+      { suffix: "early_reminder", name: "Early reminder", body: NOTIFICATION_DEFAULTS.reminder24h.body },
+      { suffix: "final_reminder", name: "Final reminder", body: NOTIFICATION_DEFAULTS.reminder3h.body },
+      { suffix: "cancellation", name: "Cancellation notice", body: NOTIFICATION_DEFAULTS.cancelled.body },
+      { suffix: "reschedule", name: "Reschedule confirmation", body: NOTIFICATION_DEFAULTS.rescheduled.body }
+    ];
+  }
+
+  /**
+   * Lazy default provisioning: if the tenant has NO active appointment-anchored
+   * workflow, clone the default five templates + the "Appointment lifecycle"
+   * workflow for THIS tenant (tenant-scoped ids). Idempotent — a no-op once an
+   * active appointment workflow exists. Guarantees every tenant has parity with
+   * the retired per-tenant notification defaults.
+   */
+  async ensureDefaultAppointmentWorkflow(context: RequestContext): Promise<void> {
+    const hasActive = this.data.workflows.some(
+      (workflow) =>
+        workflow.tenantId === context.tenantId && workflow.anchor === "appointment" && workflow.status === "active"
+    );
+    if (hasActive) {
+      return;
+    }
+    const tenantId = context.tenantId;
+    const timestamp = nowIso();
+    const specs = this.defaultAppointmentTemplateSpecs();
+    const idFor = (suffix: string) => `template_${tenantId}_${suffix}`;
+    let mutatedTemplates = false;
+    for (const spec of specs) {
+      const id = idFor(spec.suffix);
+      if (this.data.templates.some((entry) => entry.id === id && entry.tenantId === tenantId)) {
+        continue;
+      }
+      this.data.templates.push({
+        id,
+        tenantId,
+        name: spec.name,
+        channel: "whatsapp",
+        kind: "text",
+        body: spec.body,
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+      mutatedTemplates = true;
+    }
+    if (mutatedTemplates) {
+      await this.persistence.saveCollection("templates", this.data.templates);
+    }
+    const workflow: Workflow = {
+      id: `workflow_${tenantId}_appointment`,
+      tenantId,
+      name: "Appointment lifecycle",
+      description: "End-to-end appointment messaging: booking, reminders, cancellation, and reschedule.",
+      anchor: "appointment",
+      status: "active",
+      stages: [
+        {
+          key: "booked",
+          name: "Booking confirmation",
+          action: "message",
+          templateId: idFor("booking"),
+          trigger: { type: "on_enroll" },
+          enabled: true
+        },
+        {
+          key: "reminder_24h",
+          name: "Early reminder",
+          action: "message",
+          templateId: idFor("early_reminder"),
+          trigger: { type: "relative", anchorEvent: "appointment_start", offsetHours: -24 },
+          enabled: true
+        },
+        {
+          key: "reminder_3h",
+          name: "Final reminder",
+          action: "message",
+          templateId: idFor("final_reminder"),
+          trigger: { type: "relative", anchorEvent: "appointment_start", offsetHours: -3 },
+          enabled: true
+        },
+        {
+          key: "cancelled",
+          name: "Cancellation notice",
+          action: "message",
+          templateId: idFor("cancellation"),
+          trigger: { type: "on_event", event: "cancelled" },
+          enabled: true
+        },
+        {
+          key: "rescheduled",
+          name: "Reschedule confirmation",
+          action: "message",
+          templateId: idFor("reschedule"),
+          trigger: { type: "on_event", event: "rescheduled" },
+          enabled: true
+        }
+      ],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.data.workflows.push(workflow);
+    await this.persistence.saveCollection("workflows", this.data.workflows);
+  }
+
+  /**
+   * Enroll an appointment into every active appointment-anchored workflow of its
+   * tenant: ensure default provisioning, create a WorkflowRun per workflow (one
+   * pending StageRun per stage), then fire all `on_enroll` stages immediately.
+   * Best-effort — never throws to the caller (booking must always succeed).
+   */
+  async enrollAppointmentWorkflows(context: RequestContext, appointment: Appointment, patient: Patient): Promise<void> {
+    try {
+      await this.ensureDefaultAppointmentWorkflow(context);
+      const workflows = this.data.workflows.filter(
+        (workflow) =>
+          workflow.tenantId === context.tenantId && workflow.anchor === "appointment" && workflow.status === "active"
+      );
+      const timestamp = nowIso();
+      const newRuns: WorkflowRun[] = [];
+      for (const workflow of workflows) {
+        const run: WorkflowRun = {
+          id: createId("wfrun"),
+          tenantId: context.tenantId,
+          workflowId: workflow.id,
+          patientId: patient.id,
+          anchorType: "appointment",
+          anchorId: appointment.id,
+          status: "active",
+          stageRuns: workflow.stages.map((stage) => ({ stageKey: stage.key, status: "pending" as StageRunStatus })),
+          startedAt: timestamp,
+          updatedAt: timestamp
+        };
+        this.data.workflowRuns.push(run);
+        newRuns.push(run);
+      }
+      if (newRuns.length > 0) {
+        await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
+      }
+      // Fire on_enroll stages immediately (e.g. booking confirmation).
+      for (const run of newRuns) {
+        const workflow = workflows.find((entry) => entry.id === run.workflowId);
+        if (!workflow) {
+          continue;
+        }
+        for (const stage of workflow.stages) {
+          if (stage.enabled && stage.trigger.type === "on_enroll") {
+            await this.fireStage(context, run, stage, appointment, patient);
+          }
+        }
+      }
+      if (newRuns.length > 0) {
+        await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
+      }
+    } catch {
+      // Workflow enrollment is best-effort; never surface to the caller.
+    }
+  }
+
+  /** The StageRun row for a stage within a run (created at enrollment). */
+  private stageRunFor(run: WorkflowRun, stageKey: string): StageRun | undefined {
+    return run.stageRuns.find((entry) => entry.stageKey === stageKey);
+  }
+
+  /**
+   * Fire a single stage of a run against its appointment. Best-effort + idempotent:
+   * only fires a StageRun that is still "pending"; one failure is recorded on the
+   * StageRun (status "failed") without aborting siblings or the caller. Marks the
+   * StageRun's terminal status + attribution (messageId / callId / sessionToken).
+   */
+  private async fireStage(
+    context: RequestContext,
+    run: WorkflowRun,
+    stage: WorkflowStage,
+    appointment: Appointment,
+    patient: Patient
+  ): Promise<void> {
+    const stageRun = this.stageRunFor(run, stage.key);
+    if (!stageRun || stageRun.status !== "pending") {
+      return; // idempotency: never re-fire a non-pending stage.
+    }
+    try {
+      if (stage.action === "message" || stage.action === "form") {
+        const template = stage.templateId
+          ? this.data.templates.find((entry) => entry.id === stage.templateId && entry.tenantId === context.tenantId)
+          : undefined;
+        if (!template || template.status !== "active" || template.kind !== "text" || !template.body) {
+          stageRun.status = "skipped";
+          stageRun.outcome = "no usable template body";
+        } else if (!patient.primaryPhone) {
+          stageRun.status = "skipped";
+          stageRun.outcome = "patient has no phone";
+        } else {
+          const tokens = this.appointmentTokens(context, appointment, patient);
+          let sessionToken: string | undefined;
+          // Message confirm link: mint a confirm session exactly like the old path.
+          if (/\{\{\s*confirmLink\s*\}\}/i.test(template.body)) {
+            const session = await this.mintConfirmSession(context, patient.id);
+            sessionToken = session.token;
+            tokens.confirmLink = `${process.env.PATIENT_WEB_URL || "http://localhost:3201"}/?token=${session.token}`;
+          }
+          // Form stage: mint a session whose link the patient taps to open the form
+          // (full PWA form rendering is a later phase) and append it to the body.
+          let body = this.renderTemplate(template.body, tokens);
+          if (stage.action === "form") {
+            const session = await this.mintConfirmSession(context, patient.id);
+            sessionToken = session.token;
+            const link = `${process.env.PATIENT_WEB_URL || "http://localhost:3201"}/?token=${session.token}`;
+            body = `${body} ${link}`.trim();
+          }
+          const send = await this.sendMessage(context, { to: patient.primaryPhone, type: "transactional", body });
+          // Attribute the message log to the template that produced it.
+          const log = this.data.messages.find((entry) => entry.id === send.messageId);
+          if (log) {
+            log.templateId = template.id;
+            await this.persistence.saveCollection("messages", this.data.messages);
+          }
+          stageRun.status = "sent";
+          stageRun.firedAt = nowIso();
+          stageRun.messageId = send.messageId;
+          if (sessionToken) {
+            stageRun.sessionToken = sessionToken;
+          }
+        }
+      } else if (stage.action === "call") {
+        if (!patient.primaryPhone) {
+          stageRun.status = "skipped";
+          stageRun.outcome = "patient has no phone";
+        } else {
+          const call = await this.createCall(context, {
+            to: patient.primaryPhone,
+            direction: "outbound",
+            patientId: patient.id,
+            notes: stage.name
+          });
+          stageRun.status = "sent";
+          stageRun.firedAt = nowIso();
+          stageRun.callId = call.id;
+        }
+      } else {
+        // task: create a staff follow-up titled from the stage.
+        await this.createFollowUp(context, {
+          patientId: patient.id,
+          title: stage.name,
+          dueAt: appointment.scheduledAt
+        });
+        stageRun.status = "done";
+        stageRun.firedAt = nowIso();
+      }
+    } catch (error) {
+      stageRun.status = "failed";
+      stageRun.error = error instanceof Error ? error.message : "stage failed";
+    }
+    run.updatedAt = nowIso();
+  }
+
+  /**
+   * Signal an event (e.g. "cancelled","rescheduled") onto every active run anchored
+   * to this appointment: fire each enabled `on_event` stage whose event matches and
+   * whose StageRun is still pending. Best-effort — never throws to the caller.
+   */
+  async signalWorkflowEvent(context: RequestContext, appointment: Appointment, event: string): Promise<void> {
+    try {
+      const patient = this.data.patients.find(
+        (entry) => entry.id === appointment.patientId && entry.tenantId === context.tenantId
+      );
+      if (!patient) {
+        return;
+      }
+      const runs = this.data.workflowRuns.filter(
+        (run) =>
+          run.tenantId === context.tenantId &&
+          run.anchorType === "appointment" &&
+          run.anchorId === appointment.id &&
+          run.status === "active"
+      );
+      let fired = false;
+      for (const run of runs) {
+        const workflow = this.data.workflows.find(
+          (entry) => entry.id === run.workflowId && entry.tenantId === context.tenantId
+        );
+        if (!workflow) {
+          continue;
+        }
+        for (const stage of workflow.stages) {
+          if (
+            stage.enabled &&
+            stage.trigger.type === "on_event" &&
+            stage.trigger.event === event &&
+            this.stageRunFor(run, stage.key)?.status === "pending"
+          ) {
+            await this.fireStage(context, run, stage, appointment, patient);
+            fired = true;
+          }
+        }
+      }
+      if (fired) {
+        await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
+      }
+    } catch {
+      // Signalling is best-effort; never surface to the caller.
+    }
+  }
+
+  /**
+   * Mark every active run anchored to this appointment as `status` (e.g. "cancelled"
+   * or "completed") so its remaining time-based reminders stop firing. Best-effort.
+   */
+  private async closeAppointmentRuns(
+    context: RequestContext,
+    appointmentId: string,
+    status: "cancelled" | "completed"
+  ): Promise<void> {
     let mutated = false;
+    const timestamp = nowIso();
+    for (const run of this.data.workflowRuns) {
+      if (
+        run.tenantId === context.tenantId &&
+        run.anchorType === "appointment" &&
+        run.anchorId === appointmentId &&
+        run.status === "active"
+      ) {
+        run.status = status;
+        run.completedAt = timestamp;
+        run.updatedAt = timestamp;
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
+    }
+  }
+
+  /**
+   * Time-based workflow scheduler (replaces runAppointmentReminders). Scans every
+   * active appointment-anchored run; for each enabled `relative` stage with a still
+   * "pending" StageRun, computes dueAt = appointment.scheduledAt + offsetHours and
+   * fires when due (and not absurdly past). MIRRORS the old now/dueAt wall-clock-as-
+   * UTC handling: scheduledAt encodes wall-clock as UTC, offsets are relative to it.
+   */
+  async runWorkflowScheduler(): Promise<{ fired: number; byStage: Record<string, number> }> {
+    const byStage: Record<string, number> = {};
+    let fired = 0;
     const now = Date.now();
     const H = 60 * 60_000;
-    // Per-tenant config (with the configurable reminder offsets), cached for this scan.
-    const configByTenant = new Map<string, AppointmentNotificationConfig>();
-    const cfgFor = (tenantId: string): AppointmentNotificationConfig => {
-      let c = configByTenant.get(tenantId);
-      if (!c) {
-        c = this.getAppointmentNotifications(this.systemContext(tenantId));
-        configByTenant.set(tenantId, c);
-      }
-      return c;
-    };
+    // Don't fire a reminder whose due time is absurdly in the past (e.g. a run that
+    // sat idle through a long downtime). Mirror the old window: only fire within the
+    // far-reminder horizon (24h grace) of the due time.
+    const GRACE_MS = 24 * H;
 
-    for (const appointment of this.data.appointments) {
-      if (appointment.status !== "scheduled" && appointment.status !== "confirmed") {
+    // Snapshot the run list (fireStage doesn't add runs, but stay defensive).
+    const runs = this.data.workflowRuns.filter((run) => run.anchorType === "appointment" && run.status === "active");
+    for (const run of runs) {
+      const appointment = this.data.appointments.find(
+        (entry) => entry.id === run.anchorId && entry.tenantId === run.tenantId
+      );
+      if (!appointment) {
         continue;
       }
-      const at = new Date(appointment.scheduledAt).getTime();
-      if (Number.isNaN(at)) {
+      // Stop reminders once the appointment is cancelled/completed/no-show.
+      if (appointment.status === "cancelled" || appointment.status === "completed" || appointment.status === "no_show") {
+        await this.closeAppointmentRuns(
+          this.systemContext(run.tenantId),
+          appointment.id,
+          appointment.status === "cancelled" ? "cancelled" : "completed"
+        );
         continue;
       }
-      const msUntil = at - now;
-      const already = appointment.remindersSent ?? [];
-      const context = this.systemContext(appointment.tenantId);
-      const cfg = cfgFor(appointment.tenantId);
-      // "Far" (e.g. 24h) fires between the near offset and the far offset; "near"
-      // (e.g. 3h) fires inside the near window. Both offsets are tenant-configurable.
-      const farH = cfg.reminder24h.offsetHours ?? 24;
-      const nearH = Math.min(cfg.reminder3h.offsetHours ?? 3, farH);
-
-      let event: NotificationEvent | undefined;
-      if (cfg.reminder24h.enabled && msUntil > nearH * H && msUntil <= farH * H && !already.includes("reminder24h")) {
-        event = "reminder24h";
-      } else if (cfg.reminder3h.enabled && msUntil > 0 && msUntil <= nearH * H && !already.includes("reminder3h")) {
-        event = "reminder3h";
-      }
-      if (!event) {
+      const startMs = new Date(appointment.scheduledAt).getTime();
+      if (Number.isNaN(startMs)) {
         continue;
       }
-
-      const ok = await this.notifyAppointment(context, appointment, event);
-      // Mark as attempted regardless of provider outcome to avoid re-spamming on
-      // every 10-minute tick (a failed send is logged in the messages collection).
-      appointment.remindersSent = [...already, event];
-      appointment.updatedAt = nowIso();
-      mutated = true;
-      if (ok) {
-        sent += 1;
-        byEvent[event] += 1;
+      const workflow = this.data.workflows.find(
+        (entry) => entry.id === run.workflowId && entry.tenantId === run.tenantId
+      );
+      if (!workflow) {
+        continue;
+      }
+      const context = this.systemContext(run.tenantId);
+      const patient = this.data.patients.find(
+        (entry) => entry.id === run.patientId && entry.tenantId === run.tenantId
+      );
+      if (!patient) {
+        continue;
+      }
+      for (const stage of workflow.stages) {
+        if (!stage.enabled || stage.trigger.type !== "relative") {
+          continue;
+        }
+        const stageRun = this.stageRunFor(run, stage.key);
+        if (!stageRun || stageRun.status !== "pending") {
+          continue;
+        }
+        const dueMs = startMs + stage.trigger.offsetHours * H;
+        // Due window: now has reached dueAt, and dueAt is not absurdly past.
+        if (now >= dueMs && now - dueMs <= GRACE_MS) {
+          await this.fireStage(context, run, stage, appointment, patient);
+          // Re-read: fireStage mutates the StageRun (TS can't see it through the call).
+          if (this.stageRunFor(run, stage.key)?.status === "sent") {
+            fired += 1;
+            byStage[stage.key] = (byStage[stage.key] ?? 0) + 1;
+          }
+        }
       }
     }
-
-    if (mutated) {
-      await this.persistence.saveCollection("appointments", this.data.appointments);
+    if (fired > 0) {
+      await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
     }
-    return { sent, byEvent };
+    return { fired, byStage };
   }
 
   /**
@@ -2111,9 +2358,10 @@ export class CoreService {
     return { ok: result.ok, channel, type, messageId: log.id, providerId: result.ok ? result.providerId : undefined, error: result.ok ? undefined : result.error };
   }
 
-  listMessages(context: RequestContext, limit = 25) {
+  listMessages(context: RequestContext, limit = 25, filters: { templateId?: string } = {}) {
     return this.data.messages
       .filter((entry) => entry.tenantId === context.tenantId)
+      .filter((entry) => (filters.templateId ? entry.templateId === filters.templateId : true))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, limit);
   }
@@ -4076,12 +4324,10 @@ export class CoreService {
       durationMinutes: doctor.slotMinutes,
       reason: input.reason
     });
-    // Best-effort patient confirmation (WhatsApp + PWA confirm link). Never fails the booking.
-    try {
-      await this.notifyAppointment(context, created, "booked");
-    } catch {
-      /* notifications are best-effort */
-    }
+    // Enroll the appointment into the tenant's active appointment workflows (lazy
+    // default provisioning guarantees parity with the retired notification path).
+    // Best-effort — never fails the booking.
+    await this.enrollAppointmentWorkflows(context, created, patient);
     return this.decorateAppointment(context, created);
   }
 
@@ -4274,13 +4520,14 @@ export class CoreService {
         nextStep: appointment.disposition?.nextStep
       });
     }
-    // Best-effort cancellation notice. Never fails the status update.
+    // Best-effort cancellation notice via the workflow runtime. Never fails the
+    // status update. Cancelling/completing also stops the appointment's time-based
+    // reminders by closing its active runs.
     if (input.status === "cancelled") {
-      try {
-        await this.notifyAppointment(context, appointment, "cancelled");
-      } catch {
-        /* notifications are best-effort */
-      }
+      await this.signalWorkflowEvent(context, appointment, "cancelled");
+      await this.closeAppointmentRuns(context, appointment.id, "cancelled");
+    } else if (input.status === "completed" || input.status === "no_show") {
+      await this.closeAppointmentRuns(context, appointment.id, "completed");
     }
     return this.decorateAppointment(context, appointment);
   }
@@ -4333,13 +4580,57 @@ export class CoreService {
       status: "rescheduled",
       scheduledAt: normalizedStart
     });
-    // Best-effort: re-send the confirmation with the new time + a fresh confirm link.
-    try {
-      await this.notifyAppointment(context, appointment, "booked");
-    } catch {
-      /* notifications are best-effort */
-    }
+    // New slot → re-arm the time-based reminder stages, then fire the "rescheduled"
+    // event (best-effort, via the workflow runtime).
+    await this.rearmAppointmentReminders(context, appointment.id);
+    await this.signalWorkflowEvent(context, appointment, "rescheduled");
     return this.decorateAppointment(context, appointment);
+  }
+
+  /**
+   * After a reschedule, reset the not-yet-fired time-based (relative) StageRuns of
+   * this appointment's active runs back to "pending" so they re-fire for the new
+   * slot — mirroring the old `remindersSent = []` reset. Already-fired reminders are
+   * NOT reset (no duplicate sends). Best-effort.
+   */
+  private async rearmAppointmentReminders(context: RequestContext, appointmentId: string): Promise<void> {
+    let mutated = false;
+    for (const run of this.data.workflowRuns) {
+      if (
+        run.tenantId !== context.tenantId ||
+        run.anchorType !== "appointment" ||
+        run.anchorId !== appointmentId ||
+        run.status !== "active"
+      ) {
+        continue;
+      }
+      const workflow = this.data.workflows.find(
+        (entry) => entry.id === run.workflowId && entry.tenantId === context.tenantId
+      );
+      if (!workflow) {
+        continue;
+      }
+      for (const stage of workflow.stages) {
+        if (stage.trigger.type !== "relative") {
+          continue;
+        }
+        const stageRun = this.stageRunFor(run, stage.key);
+        // Re-arm a reminder that previously fired/failed/skipped so it can run for the
+        // new time. Leave still-pending ones as-is.
+        if (stageRun && stageRun.status !== "pending") {
+          stageRun.status = "pending";
+          stageRun.firedAt = undefined;
+          stageRun.messageId = undefined;
+          stageRun.error = undefined;
+          stageRun.outcome = undefined;
+          run.updatedAt = nowIso();
+          mutated = true;
+        }
+      }
+    }
+    if (mutated) {
+      await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
+    }
   }
 
   /**
@@ -4433,13 +4724,11 @@ export class CoreService {
       status: "rescheduled",
       via: "patient_link"
     });
-    // Best-effort: confirm the new time. NOT "booked" — no fresh confirm link, since
-    // the patient already chose the slot.
-    try {
-      await this.notifyAppointment(context, appointment, "rescheduled");
-    } catch {
-      /* notifications are best-effort */
-    }
+    // New slot → re-arm reminders, then fire the "rescheduled" event. The seeded
+    // reschedule template carries NO confirm link (the patient already chose the
+    // slot), so no fresh confirm session is minted here.
+    await this.rearmAppointmentReminders(context, appointment.id);
+    await this.signalWorkflowEvent(context, appointment, "rescheduled");
     return this.decorateAppointment(context, appointment);
   }
 
@@ -6539,6 +6828,29 @@ export class CoreService {
   }
 
   // ---- Communication Workflows: workflows (CRUD, config-only) --------------
+
+  /**
+   * Test-only: force an appointment's scheduledAt so the scheduler's `relative`
+   * stage due-time can be exercised deterministically (no schedule re-validation).
+   */
+  async setAppointmentScheduledAtForTest(appointmentId: string, scheduledAt: string): Promise<void> {
+    const appointment = this.data.appointments.find((entry) => entry.id === appointmentId);
+    if (appointment) {
+      appointment.scheduledAt = scheduledAt;
+      appointment.updatedAt = nowIso();
+      await this.persistence.saveCollection("appointments", this.data.appointments);
+    }
+  }
+
+  /**
+   * Workflow runs anchored to an appointment (newest first). Internal/test read of
+   * the runtime's run state — no UI surface yet (Templates stats come later).
+   */
+  listAppointmentWorkflowRunsForTest(appointmentId: string): WorkflowRun[] {
+    return this.data.workflowRuns
+      .filter((run) => run.anchorType === "appointment" && run.anchorId === appointmentId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
 
   /** Tenant-scoped workflows. */
   listWorkflows(context: RequestContext) {

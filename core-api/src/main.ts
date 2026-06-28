@@ -10,18 +10,18 @@ server.listen(port, host, () => {
   console.log(`core-api listening on http://${host}:${port}`);
 });
 
-// Time-based appointment reminders: scan all tenants and fire due 24h/3h reminders.
-// Guarded so a failure logs and never crashes the process. Runs ~15s after boot,
-// then every 10 minutes.
-const runReminders = async () => {
+// Time-based communication-workflow scheduler: scan all tenants' active runs and
+// fire due `relative` stages (e.g. 24h/3h reminders). Guarded so a failure logs and
+// never crashes the process. Runs ~15s after boot, then every 10 minutes.
+const runScheduler = async () => {
   try {
-    const tally = await service.runAppointmentReminders();
-    if (tally.sent > 0) {
-      console.log(`[reminders] sent=${tally.sent}`, tally.byEvent);
+    const tally = await service.runWorkflowScheduler();
+    if (tally.fired > 0) {
+      console.log(`[workflows] fired=${tally.fired}`, tally.byStage);
     }
   } catch (error) {
-    console.error("[reminders] run failed", error);
+    console.error("[workflows] scheduler run failed", error);
   }
 };
-setTimeout(runReminders, 15_000);
-setInterval(runReminders, 10 * 60_000);
+setTimeout(runScheduler, 15_000);
+setInterval(runScheduler, 10 * 60_000);
