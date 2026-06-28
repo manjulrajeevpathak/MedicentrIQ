@@ -3445,7 +3445,13 @@ export class CoreService {
         slots.push({ start, end: isoFromDateAndMinutes(dateISO, minute + slotMinutes) });
       }
     }
-    return slots;
+    // Windows may be entered out of order or overlap — return a clean, ascending,
+    // de-duplicated list so the booking UI shows each time once, in order.
+    const byStart = new Map<string, { start: string; end: string }>();
+    for (const slot of slots) {
+      if (!byStart.has(slot.start)) byStart.set(slot.start, slot);
+    }
+    return [...byStart.values()].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
   }
 
   /**

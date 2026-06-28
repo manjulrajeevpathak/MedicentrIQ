@@ -52,11 +52,28 @@ const statusTone: Record<AppointmentStatus, "good" | "neutral" | "high" | "brand
   no_show: "high"
 };
 
+// Slot/appointment times are the doctor's wall-clock hours encoded as UTC
+// (e.g. a 09:00 window → ...T09:00:00Z). Read them back in UTC so they display
+// as entered (09:00), not shifted into the viewer's timezone (which turned
+// 09:00 into 14:30 in IST and pushed evening slots past midnight).
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  let h = d.getUTCHours();
+  const m = d.getUTCMinutes();
+  const ampm = h < 12 ? "AM" : "PM";
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, "0")} ${ampm}`;
 }
+
+/** Bucket a wall-clock slot into Morning / Afternoon / Evening for a readable picker. */
+function slotPeriod(iso: string): "Morning" | "Afternoon" | "Evening" {
+  const h = new Date(iso).getUTCHours();
+  if (h < 12) return "Morning";
+  if (h < 17) return "Afternoon";
+  return "Evening";
+}
+const SLOT_PERIODS = ["Morning", "Afternoon", "Evening"] as const;
 
 export function AccessWorkspace({
   doctors,
@@ -290,22 +307,35 @@ function BookingTab({
               description="No open slots — set this doctor's schedule on the Doctors screen."
             />
           ) : (
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-              {slots.map((slot) => (
-                <button
-                  key={slot.start}
-                  type="button"
-                  onClick={() => setSelectedSlot(slot.start)}
-                  className={cn(
-                    "rounded-lg border px-2 py-2 text-center text-xs font-medium transition",
-                    slot.start === selectedSlot
-                      ? "border-brand-400 bg-brand-50 text-brand-700 ring-2 ring-brand-100"
-                      : "border-line-strong bg-surface text-ink-soft hover:border-line-strong hover:bg-surface-muted"
-                  )}
-                >
-                  {formatTime(slot.start)}
-                </button>
-              ))}
+            <div className="space-y-4">
+              {SLOT_PERIODS.map((period) => {
+                const inPeriod = slots.filter((s) => slotPeriod(s.start) === period);
+                if (inPeriod.length === 0) return null;
+                return (
+                  <div key={period}>
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                      {period} · {inPeriod.length} {inPeriod.length === 1 ? "slot" : "slots"}
+                    </p>
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {inPeriod.map((slot) => (
+                        <button
+                          key={slot.start}
+                          type="button"
+                          onClick={() => setSelectedSlot(slot.start)}
+                          className={cn(
+                            "rounded-lg border px-2 py-2 text-center text-xs font-medium transition",
+                            slot.start === selectedSlot
+                              ? "border-brand-400 bg-brand-50 text-brand-700 ring-2 ring-brand-100"
+                              : "border-line-strong bg-surface text-ink-soft hover:border-line-strong hover:bg-surface-muted"
+                          )}
+                        >
+                          {formatTime(slot.start)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

@@ -46,6 +46,7 @@ type Props = {
 export function DoctorsWorkspace({ doctors, branches }: Props) {
   const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editProfileId, setEditProfileId] = useState<string | null>(null);
 
   const branchName = useMemo(() => {
     const map = new Map(branches.map((b) => [b.id, b.displayName]));
@@ -114,7 +115,20 @@ export function DoctorsWorkspace({ doctors, branches }: Props) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setEditingId(editingId === doctor.id ? null : doctor.id)}
+                      onClick={() => {
+                        setEditProfileId(editProfileId === doctor.id ? null : doctor.id);
+                        setEditingId(null);
+                      }}
+                    >
+                      {editProfileId === doctor.id ? "Close" : "Edit"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEditingId(editingId === doctor.id ? null : doctor.id);
+                        setEditProfileId(null);
+                      }}
                     >
                       {editingId === doctor.id ? "Close" : "Set schedule"}
                     </Button>
@@ -138,6 +152,16 @@ export function DoctorsWorkspace({ doctors, branches }: Props) {
                     </Button>
                   </div>
                 </div>
+
+                {editProfileId === doctor.id ? (
+                  <EditDoctorForm
+                    doctor={doctor}
+                    branches={branches}
+                    specialtyOptions={specialtyOptions}
+                    onToast={toast}
+                    onSaved={() => setEditProfileId(null)}
+                  />
+                ) : null}
 
                 {editingId === doctor.id ? (
                   <ScheduleEditor doctor={doctor} onToast={toast} onSaved={() => setEditingId(null)} />
@@ -273,6 +297,109 @@ function AddDoctorForm({
         </div>
       </form>
     </Panel>
+  );
+}
+
+function EditDoctorForm({
+  doctor,
+  branches,
+  specialtyOptions,
+  onToast,
+  onSaved
+}: {
+  doctor: Doctor;
+  branches: BranchOption[];
+  specialtyOptions: string[];
+  onToast: (m: string, t?: "success" | "error" | "info") => void;
+  onSaved: () => void;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    const fd = new FormData(e.currentTarget);
+    const displayName = String(fd.get("displayName") ?? "").trim();
+    const specialty = String(fd.get("specialty") ?? "").trim();
+    const phone = String(fd.get("phone") ?? "").trim();
+    const branchIds = fd.getAll("branchIds").map((b) => String(b));
+    if (!displayName) {
+      setError("Name is required.");
+      return;
+    }
+    startTransition(async () => {
+      const result = await updateDoctorAction(doctor.id, {
+        displayName,
+        specialty: specialty || undefined,
+        phone: phone || undefined,
+        branchIds
+      });
+      if (!result.ok) {
+        setError(result.error ?? "Could not update the doctor.");
+        return;
+      }
+      onToast("Doctor updated.", "success");
+      onSaved();
+    });
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="mt-3 space-y-3.5 rounded-xl border border-line bg-surface-muted p-3">
+      <p className="text-xs font-semibold text-ink">Edit doctor</p>
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <Field label="Name" htmlFor={`ed-name-${doctor.id}`}>
+          <Input id={`ed-name-${doctor.id}`} name="displayName" defaultValue={doctor.displayName} disabled={pending} required />
+        </Field>
+        <Field label="Specialty" htmlFor={`ed-spec-${doctor.id}`}>
+          {/* reuses the datalist rendered by the Add-doctor form above */}
+          <Input
+            id={`ed-spec-${doctor.id}`}
+            name="specialty"
+            list="dr-specialty-options"
+            defaultValue={doctor.specialty ?? ""}
+            autoComplete="off"
+            disabled={pending}
+          />
+        </Field>
+        <Field label="Phone" htmlFor={`ed-phone-${doctor.id}`}>
+          <Input id={`ed-phone-${doctor.id}`} name="phone" defaultValue={doctor.phone ?? ""} placeholder="+91…" disabled={pending} />
+        </Field>
+      </div>
+      <fieldset disabled={pending} className="space-y-1.5">
+        <legend className="block text-xs font-medium text-ink-soft">Branches</legend>
+        {branches.length === 0 ? (
+          <p className="text-[11px] text-ink-muted">No branches available for this tenant.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {branches.map((branch) => (
+              <label
+                key={branch.id}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-xs text-ink-soft transition has-[:checked]:border-brand-400 has-[:checked]:bg-brand-50 has-[:checked]:text-brand-700 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+              >
+                <input
+                  type="checkbox"
+                  name="branchIds"
+                  value={branch.id}
+                  defaultChecked={doctor.branchIds.includes(branch.id)}
+                  className="size-3.5 accent-brand-600"
+                />
+                {branch.displayName}
+              </label>
+            ))}
+          </div>
+        )}
+      </fieldset>
+      {error ? <p className="text-xs font-medium text-[var(--color-critical)]">{error}</p> : null}
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onSaved} disabled={pending}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={pending}>
+          {pending ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+    </form>
   );
 }
 
