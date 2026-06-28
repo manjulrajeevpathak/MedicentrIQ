@@ -4,6 +4,8 @@ import { useMemo, useState, useTransition } from "react";
 import {
   CalendarClock,
   CalendarDays,
+  Phone,
+  Search,
   Send,
   Stethoscope,
   UserRound,
@@ -154,6 +156,20 @@ function BookingTab({
   }, [doctors]);
 
   const selectedDoctor = doctors.find((d) => d.id === doctorId);
+
+  // Merge open slots with this doctor+date's booked appointments so taken times
+  // are shown as blocked (not silently dropped). scheduledAt uses the same
+  // UTC-encoded wall-clock as slot.start, so they line up exactly.
+  const allSlots = useMemo(() => {
+    if (slots === null) return null;
+    const map = new Map<string, { start: string; taken: boolean }>();
+    for (const s of slots) map.set(s.start, { start: s.start, taken: false });
+    for (const a of appointments) {
+      if (a.status === "cancelled") continue;
+      map.set(a.scheduledAt, { start: a.scheduledAt, taken: true });
+    }
+    return [...map.values()].sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : 0));
+  }, [slots, appointments]);
 
   function refresh(nextDoctorId: string, nextDate: string) {
     setError(null);
@@ -335,7 +351,7 @@ function BookingTab({
               title="Select a date"
               description="Choose a doctor and date to load slots."
             />
-          ) : slots.length === 0 ? (
+          ) : !allSlots || allSlots.length === 0 ? (
             <EmptyState
               icon={<CalendarClock className="size-5" />}
               title="No slots"
@@ -344,29 +360,42 @@ function BookingTab({
           ) : (
             <div className="space-y-4">
               {SLOT_PERIODS.map((period) => {
-                const inPeriod = slots.filter((s) => slotPeriod(s.start) === period);
+                const inPeriod = allSlots.filter((s) => slotPeriod(s.start) === period);
                 if (inPeriod.length === 0) return null;
+                const openCount = inPeriod.filter((s) => !s.taken).length;
+                const bookedCount = inPeriod.length - openCount;
                 return (
                   <div key={period}>
                     <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-                      {period} · {inPeriod.length} {inPeriod.length === 1 ? "slot" : "slots"}
+                      {period} · {openCount} open{bookedCount > 0 ? ` · ${bookedCount} booked` : ""}
                     </p>
                     <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                      {inPeriod.map((slot) => (
-                        <button
-                          key={slot.start}
-                          type="button"
-                          onClick={() => setSelectedSlot(slot.start)}
-                          className={cn(
-                            "rounded-lg border px-2 py-2 text-center text-xs font-medium transition",
-                            slot.start === selectedSlot
-                              ? "border-brand-400 bg-brand-50 text-brand-700 ring-2 ring-brand-100"
-                              : "border-line-strong bg-surface text-ink-soft hover:border-line-strong hover:bg-surface-muted"
-                          )}
-                        >
-                          {formatTime(slot.start)}
-                        </button>
-                      ))}
+                      {inPeriod.map((slot) =>
+                        slot.taken ? (
+                          <div
+                            key={slot.start}
+                            title="Booked"
+                            aria-disabled="true"
+                            className="flex cursor-not-allowed items-center justify-center gap-1 rounded-lg border border-dashed border-line bg-fill px-2 py-2 text-center text-xs font-medium text-ink-faint line-through"
+                          >
+                            {formatTime(slot.start)}
+                          </div>
+                        ) : (
+                          <button
+                            key={slot.start}
+                            type="button"
+                            onClick={() => setSelectedSlot(slot.start)}
+                            className={cn(
+                              "rounded-lg border px-2 py-2 text-center text-xs font-medium transition",
+                              slot.start === selectedSlot
+                                ? "border-brand-400 bg-brand-50 text-brand-700 ring-2 ring-brand-100"
+                                : "border-line-strong bg-surface text-ink-soft hover:border-line-strong hover:bg-surface-muted"
+                            )}
+                          >
+                            {formatTime(slot.start)}
+                          </button>
+                        )
+                      )}
                     </div>
                   </div>
                 );
@@ -378,27 +407,36 @@ function BookingTab({
         {/* Phone-first patient capture + reason */}
         <div className="mt-4 space-y-3.5">
           <Field label="Patient phone" htmlFor="bk-phone">
-            <div className="flex gap-2">
-              <Input
-                id="bk-phone"
-                type="tel"
-                placeholder="+91…"
-                value={phone}
-                onChange={(e) => {
-                  setPhone(e.target.value);
-                  setLookup(null);
-                  setPatientId("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    doLookup();
-                  }
-                }}
-                autoComplete="off"
-              />
-              <Button variant="outline" onClick={doLookup} disabled={lookingUp || !phone.trim()}>
-                {lookingUp ? "Looking…" : "Look up"}
+            <div className="flex items-stretch gap-2">
+              <div className="relative flex-1">
+                <Phone className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-faint" />
+                <Input
+                  id="bk-phone"
+                  type="tel"
+                  placeholder="+91…"
+                  value={phone}
+                  className="pl-9"
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    setLookup(null);
+                    setPatientId("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      doLookup();
+                    }
+                  }}
+                  autoComplete="off"
+                />
+              </div>
+              <Button
+                variant="outline"
+                onClick={doLookup}
+                disabled={lookingUp || !phone.trim()}
+                className="shrink-0 whitespace-nowrap"
+              >
+                <Search className="size-3.5" /> {lookingUp ? "Looking…" : "Look up"}
               </Button>
             </div>
           </Field>
