@@ -222,14 +222,17 @@ function maskPhone(phone?: string): string {
   return `+91 ******${digits.slice(-4)}`;
 }
 
+// Appointment times are the doctor's wall-clock hours encoded as UTC
+// (e.g. a 13:45 slot → ...T13:45:00Z). Format in UTC so the patient sees the time
+// as booked (1:45 pm), not shifted into the device's timezone (which turned it into 7:15 pm).
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long" }).format(date);
+  return new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(date);
 }
 
 function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Time pending";
-  return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(date);
 }

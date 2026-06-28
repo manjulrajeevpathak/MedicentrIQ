@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "./constants";
-import type { ApiResult, Branch, ChannelStatus, UsersPayload } from "./users-types";
+import type { ApiResult, AppointmentNotifications, Branch, ChannelStatus, UsersPayload } from "./users-types";
 
 /**
  * Server-only helpers for the org-admin User Management surface. Reads the
@@ -11,7 +11,19 @@ import type { ApiResult, Branch, ChannelStatus, UsersPayload } from "./users-typ
 
 const API_BASE = (process.env.NEXT_PUBLIC_CORE_API_URL ?? "http://localhost:4100").replace(/\/$/, "");
 
-export type { ApiResult, Branch, ChannelStatus, ManagedUser, MfaPolicy, Seats, StaffRole, UsersPayload } from "./users-types";
+export type {
+  ApiResult,
+  AppointmentNotifications,
+  Branch,
+  ChannelStatus,
+  ManagedUser,
+  MfaPolicy,
+  NotificationEvent,
+  NotificationRule,
+  Seats,
+  StaffRole,
+  UsersPayload
+} from "./users-types";
 
 async function sessionToken(): Promise<string | undefined> {
   const store = await cookies();
@@ -64,4 +76,8 @@ export async function fetchBranches(): Promise<Branch[]> {
 
 export async function fetchChannels(): Promise<ApiResult<ChannelStatus>> {
   return coreApi<ChannelStatus>("/tenant/channels");
+}
+
+export async function fetchAppointmentNotifications(): Promise<ApiResult<AppointmentNotifications>> {
+  return coreApi<AppointmentNotifications>("/tenant/notifications");
 }

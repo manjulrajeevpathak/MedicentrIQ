@@ -44,6 +44,17 @@ export type ChannelStatus = {
   telephony: { configured: boolean; enabled: boolean; provider: string | null; callerId: string | null; apiKeyTail: string | null };
 };
 
+export type NotificationRule = { enabled: boolean; body: string };
+
+export type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled";
+
+export type AppointmentNotifications = {
+  booked: NotificationRule;
+  reminder24h: NotificationRule;
+  reminder3h: NotificationRule;
+  cancelled: NotificationRule;
+};
+
 export const STAFF_ROLES: { value: StaffRole; label: string }[] = [
   { value: "front_desk", label: "Front desk" },
   { value: "call_center", label: "Call center" },
