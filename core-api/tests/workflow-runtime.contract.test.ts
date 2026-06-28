@@ -203,7 +203,7 @@ describe("communication workflow runtime contract", () => {
     assert.ok(fired.length >= 2, "booking + at least one reminder stage are sent");
   });
 
-  it("a tenant with no active appointment workflow still gets notifications (lazy provisioning)", async () => {
+  it("an un-configured tenant is auto-provisioned the default workflow on read, and it fires", async () => {
     // Archive the demo tenant's seeded appointment workflow so NO active appointment
     // workflow exists — exactly the position a never-configured tenant is in.
     const list = (await (await authed("/workflows")).json()) as { data: Array<{ id: string; anchor: string; status: string }> };
@@ -212,12 +212,15 @@ describe("communication workflow runtime contract", () => {
         await authed(`/workflows/${wf.id}`, { method: "DELETE" });
       }
     }
-    const afterArchive = (await (await authed("/workflows")).json()) as { data: Array<{ anchor: string; status: string }> };
-    assert.ok(
-      !afterArchive.data.some((w) => w.anchor === "appointment" && w.status === "active"),
-      "no active appointment workflow remains before booking"
-    );
 
+    // Listing the comms config re-provisions a tenant-scoped default workflow on the
+    // spot, so a fresh tenant never lands on an empty page.
+    const reprovisioned = (await (await authed("/workflows")).json()) as { data: Array<{ id: string; anchor: string; status: string }> };
+    const lazy = reprovisioned.data.find((w) => w.anchor === "appointment" && w.status === "active");
+    assert.ok(lazy, "an active appointment workflow was lazily provisioned on read");
+    assert.ok(lazy!.id.includes("org_demo_healthcare"), "the provisioned workflow is tenant-scoped");
+
+    // And it actually fires: booking still logs a booking message.
     const before = (await messages()).length;
     const slot = await openSlot();
     const res = await authed("/appointments", {
@@ -231,18 +234,12 @@ describe("communication workflow runtime contract", () => {
     });
     assert.equal(res.status, 200);
 
-    // Lazy provisioning created a tenant-scoped workflow and still fired the booking.
-    const provisioned = (await (await authed("/workflows")).json()) as { data: Array<{ id: string; anchor: string; status: string }> };
-    const lazy = provisioned.data.find((w) => w.anchor === "appointment" && w.status === "active");
-    assert.ok(lazy, "an active appointment workflow was lazily provisioned");
-    assert.ok(lazy!.id.includes("org_demo_healthcare"), "the provisioned workflow is tenant-scoped");
-
     const after = await messages();
-    assert.ok(after.length > before, "a booking message was still logged for the un-configured tenant");
+    assert.ok(after.length > before, "a booking message was logged for the (re)provisioned tenant");
     const bookedRow = after.find(
       (m) => m.type === "transactional" && typeof m.body === "string" && m.body.includes("is booked for")
     );
-    assert.ok(bookedRow, "the lazily-provisioned workflow fired the booking message");
+    assert.ok(bookedRow, "the provisioned workflow fired the booking message");
   });
 
   it("patient reschedule logs a reschedule message with NO confirm link", async () => {

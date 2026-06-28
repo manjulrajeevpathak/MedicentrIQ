@@ -4572,8 +4572,6 @@ export class CoreService {
     appointment.durationMinutes = doctor.slotMinutes;
     appointment.status = "rescheduled";
     appointment.rescheduledBy = "staff";
-    // New time → let the time-based reminders fire again for the new slot.
-    appointment.remindersSent = [];
     appointment.updatedAt = nowIso();
     await this.persistence.saveCollection("appointments", this.data.appointments);
     await this.audit(context, "appointment.update", "appointment", appointment.id, appointment.patientId, {
@@ -4590,8 +4588,7 @@ export class CoreService {
   /**
    * After a reschedule, reset the not-yet-fired time-based (relative) StageRuns of
    * this appointment's active runs back to "pending" so they re-fire for the new
-   * slot — mirroring the old `remindersSent = []` reset. Already-fired reminders are
-   * NOT reset (no duplicate sends). Best-effort.
+   * slot. Already-fired reminders are NOT reset (no duplicate sends). Best-effort.
    */
   private async rearmAppointmentReminders(context: RequestContext, appointmentId: string): Promise<void> {
     let mutated = false;
@@ -4716,8 +4713,6 @@ export class CoreService {
     appointment.durationMinutes = doctor.slotMinutes;
     appointment.status = "rescheduled";
     appointment.rescheduledBy = "patient";
-    // New time → let the time-based reminders fire again for the new slot.
-    appointment.remindersSent = [];
     appointment.updatedAt = nowIso();
     await this.persistence.saveCollection("appointments", this.data.appointments);
     await this.audit(context, "appointment.update", "appointment", appointment.id, appointment.patientId, {
@@ -6715,7 +6710,11 @@ export class CoreService {
   }
 
   /** Tenant-scoped templates (active + archived), each with a workflow usage count. */
-  listTemplates(context: RequestContext) {
+  async listTemplates(context: RequestContext) {
+    // Provision the default appointment templates + workflow the first time a
+    // tenant opens the comms config, so every tenant sees the starter set (the
+    // demo tenant gets it via seed; others lazily, idempotently).
+    await this.ensureDefaultAppointmentWorkflow(context);
     return this.data.templates
       .filter((template) => template.tenantId === context.tenantId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -6853,7 +6852,10 @@ export class CoreService {
   }
 
   /** Tenant-scoped workflows. */
-  listWorkflows(context: RequestContext) {
+  async listWorkflows(context: RequestContext) {
+    // Same lazy provisioning as listTemplates — a fresh tenant lands on a populated
+    // "Appointment lifecycle" workflow instead of an empty page.
+    await this.ensureDefaultAppointmentWorkflow(context);
     return this.data.workflows
       .filter((workflow) => workflow.tenantId === context.tenantId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));

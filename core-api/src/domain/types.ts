@@ -732,8 +732,6 @@ export type Appointment = {
   /** Captured when the visit reaches "completed" — the clinical outcome + next step. */
   disposition?: AppointmentDisposition;
   noShowRisk?: Priority;
-  /** Which time-based reminders have already been sent (e.g. ["reminder24h"]). */
-  remindersSent?: string[];
   /** Set when the appointment was moved to a new slot — who initiated the move. */
   rescheduledBy?: "staff" | "patient";
   createdAt: string;
