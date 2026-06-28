@@ -225,6 +225,85 @@ describe("appointment notifications contract", () => {
     assert.ok(!String(row?.body).includes("{{mapLink}}"), "the {{mapLink}} token was substituted");
   });
 
+  it("patient-initiated reschedule (mobile-link): GET slots + POST reschedule with a 'rescheduled' notification (no confirm link)", async () => {
+    // Re-enable a default 'booked' template so booking mints a confirm session whose
+    // token rides in the message body — we reuse that session token as the PWA link.
+    await authed("/tenant/notifications", {
+      method: "PATCH",
+      body: JSON.stringify({
+        booked: {
+          enabled: true,
+          body: "Booked with {{doctorName}} on {{date}} at {{time}}. Confirm: {{confirmLink}}"
+        },
+        rescheduled: {
+          enabled: true,
+          body: "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. {{mapLink}}"
+        }
+      })
+    });
+
+    // Book against the first open Monday slot (phone-first patient → fresh patient).
+    const date = nextMonday();
+    const firstSlot = await openSlot();
+    const booked = await authed("/appointments", {
+      method: "POST",
+      body: JSON.stringify({
+        patient: { name: "Reschedule Tester", phone: "+919811112222" },
+        doctorId,
+        scheduledAt: firstSlot,
+        reason: "Patient reschedule test"
+      })
+    });
+    assert.equal(booked.status, 200);
+
+    // Recover the confirm-session token minted by the 'booked' notification.
+    const afterBook = (await (await authed("/messages?limit=200")).json()) as {
+      data: Array<{ type: string; body?: string }>;
+    };
+    const confirmRow = afterBook.data.find(
+      (m) => m.type === "transactional" && typeof m.body === "string" && m.body.includes("token=mls_")
+    );
+    assert.ok(confirmRow, "booking logged a confirm-link message carrying an mls_ token");
+    const sessionToken = /token=(mls_[a-z0-9]+)/i.exec(String(confirmRow?.body))![1];
+
+    // The session's patient must own this appointment — look it up via the session.
+    const lookup = (await (await fetch(`${baseUrl}/mobile-link-sessions/${sessionToken}`)).json()) as {
+      data: { appointments: Array<{ id: string }> };
+    };
+    const appointmentId = lookup.data.appointments[0].id;
+
+    // GET the token-authed open slots for that appointment's doctor/date → non-empty.
+    const slotsRes = await authed(`/mobile-link-sessions/${sessionToken}/appointments/${appointmentId}/slots?date=${date}`);
+    assert.equal(slotsRes.status, 200);
+    const slotsBody = (await slotsRes.json()) as { data: Array<{ start: string }> };
+    assert.ok(slotsBody.data.length > 0, "patient-link slots are non-empty");
+    // Pick a different open slot than the current booking.
+    const target = slotsBody.data.find((s) => s.start !== firstSlot);
+    assert.ok(target, "a second open slot exists to move to");
+
+    const before = await messageCount();
+    const moved = await authed(`/mobile-link-sessions/${sessionToken}/appointments/${appointmentId}/reschedule`, {
+      method: "POST",
+      body: JSON.stringify({ scheduledAt: target!.start })
+    });
+    assert.equal(moved.status, 200);
+    const movedBody = (await moved.json()) as { data: { status: string; rescheduledBy?: string; scheduledAt: string } };
+    assert.equal(movedBody.data.status, "rescheduled");
+    assert.equal(movedBody.data.rescheduledBy, "patient");
+    assert.equal(movedBody.data.scheduledAt, target!.start);
+
+    // A 'rescheduled' transactional message was logged — and it carries NO confirm link.
+    const afterMove = (await (await authed("/messages?limit=200")).json()) as {
+      data: Array<{ type: string; body?: string }>;
+    };
+    assert.ok(afterMove.data.length > before, "a message-log row was written for the reschedule");
+    const reschedRow = afterMove.data.find(
+      (m) => m.type === "transactional" && typeof m.body === "string" && m.body.includes("is rescheduled to")
+    );
+    assert.ok(reschedRow, "a 'rescheduled' transactional message was logged");
+    assert.ok(!String(reschedRow?.body).includes("token=mls_"), "the rescheduled message carries NO confirm link");
+  });
+
   it("runAppointmentReminders returns a tally without throwing", async () => {
     const tally = await service.runAppointmentReminders();
     assert.equal(typeof tally.sent, "number");

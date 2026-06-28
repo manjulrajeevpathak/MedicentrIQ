@@ -1,26 +1,20 @@
-import type { PatientLinkState } from "./types";
+import type { AppointmentSlot, PatientLinkState } from "./types";
 
 /**
- * Demo session — Rohit Sharma (son, authorized caregiver) acting for
- * Anita Sharma, post-op cataract patient. Continues the same household
- * narrative used across the staff console demo data.
+ * Demo session — Anita Sharma, ophthalmology review. Renders the focused
+ * appointment surface when NEXT_PUBLIC_CORE_API_URL is unset (or unreachable).
  */
 export function mockPatientLink(token: string): PatientLinkState {
   const expiresAt = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+  // A fixed UTC wall-clock so the demo time renders consistently.
+  const scheduledAt = "2026-07-04T11:20:00Z";
   return {
     source: "mock",
     linkStatus: "active",
     secureLink: {
       tokenPreview: token.length > 8 ? `${token.slice(0, 4)}…${token.slice(-4)}` : token,
       expiresAt,
-      allowedActions: [
-        "confirm_appointment",
-        "reschedule_request",
-        "upload_document_metadata",
-        "confirm_follow_up",
-        "update_consent",
-        "opt_out"
-      ],
+      allowedActions: ["confirm_appointment", "reschedule_request", "upload_document_metadata"],
       securityLabel: "Verified secure link"
     },
     provider: {
@@ -31,82 +25,30 @@ export function mockPatientLink(token: string): PatientLinkState {
     patient: {
       id: "P-77421",
       displayName: "Anita Sharma",
-      ageLabel: "62 years",
-      preferredLanguage: "Hindi",
       maskedPhone: "+91 ******0442"
-    },
-    caregiver: {
-      displayName: "Rohit Sharma",
-      relationship: "son",
-      actingForPatient: true,
-      consentStatus: "granted",
-      permissions: ["book", "reschedule", "receive_reminders", "upload_documents"]
     },
     appointment: {
       id: "APT-5520",
-      status: "pending_confirmation",
-      displayDate: "Saturday, 14 June",
+      status: "scheduled",
+      scheduledAt,
+      displayDate: "Saturday, 4 July",
       displayTime: "11:20 AM",
       doctorName: "Dr. Kavita Menon",
       department: "Ophthalmology · post-op review",
-      location: "Indiranagar Eye Centre, 100 Ft Road",
-      statusCopy: "Please confirm this slot, or ask for a different time."
-    },
-    checklist: [
-      {
-        id: "check-drops",
-        title: "Continue prescribed eye drops",
-        note: "4 times daily until the review. Do not rub the eye.",
-        completed: true,
-        required: true
-      },
-      {
-        id: "check-reports",
-        title: "Carry the discharge summary",
-        note: "Bring the surgery discharge note and any prior prescriptions.",
-        completed: false,
-        required: true
-      },
-      {
-        id: "check-arrival",
-        title: "Arrive 15 minutes early",
-        note: "The front desk will verify details before the consult.",
-        completed: false,
-        required: false
-      }
-    ],
-    documents: [
-      {
-        id: "doc-receipt",
-        title: "Payment receipt",
-        note: "Photo or PDF of the surgery payment receipt.",
-        status: "pending"
-      },
-      {
-        id: "doc-prescription",
-        title: "Current prescription",
-        note: "Photo of the eye-drop prescription is enough.",
-        status: "pending"
-      }
-    ],
-    followUp: {
-      id: "FQ-481",
-      title: "Day 2 recovery check",
-      status: "pending",
-      dueLabel: "Due today",
-      instructions: "Is the eye comfortable today? Any pain, watering, or blurred vision?",
-      nextSteps: [
-        "Tell us how the recovery feels today.",
-        "If anything feels wrong, our nurse will call you within 15 minutes.",
-        "Your Saturday review completes the recovery plan."
-      ]
-    },
-    consent: {
-      whatsApp: true,
-      calls: true,
-      documentSharing: true,
-      optedOut: false
+      branchName: "Indiranagar Eye Centre",
+      address: "100 Ft Road, Indiranagar, Bengaluru 560038",
+      mapUrl: "https://maps.google.com/?q=Indiranagar+Eye+Centre+Bengaluru"
     },
     greeting: { vernacular: "नमस्ते", language: "Hindi" }
   };
+}
+
+/** Demo slot grid for the slot picker when running without a live API. */
+export function mockAppointmentSlots(dateISO: string): AppointmentSlot[] {
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
+  const times = ["09:30", "10:00", "10:30", "11:00", "11:45", "12:15", "15:00", "15:30", "16:00"];
+  return times.map((hhmm) => ({
+    start: `${base}T${hhmm}:00Z`,
+    end: `${base}T${hhmm}:00Z`
+  }));
 }

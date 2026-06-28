@@ -53,6 +53,7 @@ export type Appointment = {
   status: AppointmentStatus;
   reason?: string;
   doctorName?: string;
+  rescheduledBy?: "staff" | "patient";
 };
 
 export type PatientOption = {

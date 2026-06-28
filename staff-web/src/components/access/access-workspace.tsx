@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Send,
   Stethoscope,
+  UserCheck,
   UserRound,
   X
 } from "lucide-react";
@@ -538,6 +539,11 @@ function BookingTab({
                         </p>
                         {appointment.reason ? (
                           <p className="mt-1 text-xs text-ink-soft">{appointment.reason}</p>
+                        ) : null}
+                        {appointment.rescheduledBy === "patient" ? (
+                          <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
+                            <UserCheck className="size-3" /> Rescheduled by patient
+                          </span>
                         ) : null}
                       </div>
                       <Badge tone={statusTone[appointment.status]} dot>

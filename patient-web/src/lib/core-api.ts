@@ -1,10 +1,12 @@
-import { mockPatientLink } from "./mock";
-import type { PatientLinkState, SubmitActionPayload, SubmitResult } from "./types";
+import { mockAppointmentSlots, mockPatientLink } from "./mock";
+import type { AppointmentSlot, PatientLinkState, SubmitResult, UploadedReport } from "./types";
 
 /* ---------------------------------------------------------------------------
-   core-api client — same governed mobile-link-session endpoints as v1.
-   Demo-first: without NEXT_PUBLIC_CORE_API_URL the rich mock session renders
-   and actions resolve optimistically.
+   core-api client — token-authed mobile-link-session endpoints. The token in
+   the path authenticates; there is no bearer.
+
+   Demo-first: without NEXT_PUBLIC_CORE_API_URL the mock session renders and
+   the actions resolve optimistically so the surface never crashes.
    ------------------------------------------------------------------------- */
 
 const coreApiUrl = process.env.NEXT_PUBLIC_CORE_API_URL;
@@ -26,67 +28,88 @@ export async function loadPatientLink(token: string): Promise<PatientLinkState> 
     if (!envelope.data) return inactive(token, "revoked", "This secure link is no longer active.");
     return mapSession(token, envelope.data);
   } catch {
-    // Live API unreachable — degrade to demo session so the journey still renders.
+    // Live API unreachable — degrade to demo session so the surface still renders.
     return { ...mockPatientLink(token), source: "mock" };
   }
 }
 
-export async function submitPatientAction(token: string, payload: SubmitActionPayload): Promise<SubmitResult> {
+/** Patient confirms the current slot. */
+export async function confirmAppointment(token: string, appointmentId: string): Promise<SubmitResult> {
+  return postAction(token, `/appointments/${encodeURIComponent(appointmentId)}/confirm`, { confirmedBy: "patient" });
+}
+
+/**
+ * Open slots for the appointment's doctor on a date. The slots endpoint defaults
+ * to the appointment's own date when `date` is omitted.
+ */
+export async function fetchAppointmentSlots(
+  token: string,
+  appointmentId: string,
+  date?: string
+): Promise<AppointmentSlot[]> {
+  if (!coreApiUrl) return mockAppointmentSlots(date ?? new Date().toISOString().slice(0, 10));
+
+  try {
+    const query = date ? `?date=${encodeURIComponent(date)}` : "";
+    const response = await fetch(
+      `${coreApiUrl}/mobile-link-sessions/${encodeURIComponent(token)}/appointments/${encodeURIComponent(
+        appointmentId
+      )}/slots${query}`,
+      { cache: "no-store", headers: { Accept: "application/json" } }
+    );
+    if (!response.ok) return [];
+    const envelope = (await response.json().catch(() => ({}))) as { data?: AppointmentSlot[] };
+    return Array.isArray(envelope.data) ? envelope.data : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Patient picks a slot → move the appointment. The backend sends its own
+ * "rescheduled" message, so the UI should NOT prompt to confirm afterwards.
+ */
+export async function rescheduleAppointment(
+  token: string,
+  appointmentId: string,
+  scheduledAt: string
+): Promise<SubmitResult> {
+  return postAction(token, `/appointments/${encodeURIComponent(appointmentId)}/reschedule`, { scheduledAt });
+}
+
+/**
+ * Record a diagnostic report against the link. Token-side only metadata is
+ * supported, so we store fileName + documentType; the full S3 byte upload is a
+ * follow-up.
+ */
+export async function uploadReport(
+  token: string,
+  appointmentId: string,
+  report: UploadedReport
+): Promise<SubmitResult> {
+  return postAction(token, `/document-metadata`, {
+    appointmentId,
+    documentType: report.documentType,
+    fileName: report.fileName,
+    notes: "Diagnostic report uploaded from the secure patient link."
+  });
+}
+
+/* ----------------------------- shared POST ------------------------------- */
+
+async function postAction(token: string, path: string, body: Record<string, unknown>): Promise<SubmitResult> {
   if (!coreApiUrl) {
     return { ok: true, source: "mock", message: "Saved (demo mode)." };
   }
-
-  const encoded = encodeURIComponent(token);
-  const request = ((): { path: string; body: Record<string, unknown> } => {
-    switch (payload.type) {
-      case "confirm_appointment":
-        return {
-          path: `/mobile-link-sessions/${encoded}/appointments/${encodeURIComponent(payload.appointmentId)}/confirm`,
-          body: { confirmedBy: "patient", notes: "Confirmed from secure patient mobile link." }
-        };
-      case "request_reschedule":
-        return {
-          path: `/mobile-link-sessions/${encoded}/appointments/${encodeURIComponent(payload.appointmentId)}/reschedule-requests`,
-          body: { reason: payload.reason }
-        };
-      case "update_checklist":
-        return {
-          path: `/mobile-link-sessions/${encoded}/checklist/${encodeURIComponent(payload.itemId)}`,
-          body: { completed: payload.completed }
-        };
-      case "mark_document_uploaded":
-        return {
-          path: `/mobile-link-sessions/${encoded}/document-metadata`,
-          body: {
-            appointmentId: payload.appointmentId,
-            documentType: payload.documentType,
-            fileName: payload.fileName,
-            mimeType: payload.mimeType,
-            sizeBytes: payload.sizeBytes,
-            notes: `Captured against secure link document request ${payload.documentId}.`
-          }
-        };
-      case "confirm_follow_up":
-        return {
-          path: `/mobile-link-sessions/${encoded}/follow-ups/${encodeURIComponent(payload.followUpId)}/confirm`,
-          body: { patientResponse: payload.status }
-        };
-      case "update_consent":
-        return {
-          path: `/mobile-link-sessions/${encoded}/consent`,
-          body: { channel: payload.channel, enabled: payload.enabled }
-        };
-      case "opt_out":
-        return { path: `/mobile-link-sessions/${encoded}/opt-out`, body: { scope: "non_care_messages" } };
-    }
-  })();
-
   try {
-    const response = await fetch(`${coreApiUrl}${request.path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(request.body)
-    });
+    const response = await fetch(
+      `${coreApiUrl}/mobile-link-sessions/${encodeURIComponent(token)}${path}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body)
+      }
+    );
     const envelope = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
     return {
       ok: response.ok,
@@ -100,35 +123,35 @@ export async function submitPatientAction(token: string, payload: SubmitActionPa
 
 /* --------------------------- live-session mapping ------------------------ */
 
+type CoreAppointment = {
+  id: string;
+  status: string;
+  doctorName: string;
+  specialty: string;
+  branchId: string;
+  branchName?: string;
+  address?: string;
+  mapUrl?: string;
+  scheduledAt: string;
+};
+
 type CoreSession = {
   session: { token: string; expiresAt: string; allowedActions: string[] };
-  patient: {
-    id: string;
-    displayName: string;
-    age?: number;
-    primaryPhone?: string;
-    preferredLanguage?: string;
-    consent?: { communications?: string; documentSharing?: string };
-    caregivers?: Array<{ displayName: string; relationship: string; consentStatus?: string; permissions?: string[] }>;
-  };
-  appointments: Array<{
-    id: string;
-    status: string;
-    doctorName: string;
-    specialty: string;
-    branchId: string;
-    scheduledAt: string;
-  }>;
-  followUps: Array<{ id: string; title: string; dueAt: string; status: string; instructions: string; nextSteps?: string[] }>;
-  accessWorkflow?: { state?: string; confirmationCopy?: string };
+  patient: { id: string; displayName: string; primaryPhone?: string };
+  appointments: CoreAppointment[];
+  // Branch contact info may ride alongside the session rather than on the appointment.
+  branch?: { name?: string; address?: string; mapUrl?: string };
+  provider?: { name?: string; supportPhone?: string };
 };
 
 function mapSession(token: string, core: CoreSession): PatientLinkState {
-  const base = mockPatientLink(token); // checklist/doc scaffolding + copy defaults
+  const base = mockPatientLink(token); // copy/branding defaults
   const appointment = core.appointments[0];
-  const followUp = core.followUps[0];
-  const caregiver = core.patient.caregivers?.[0];
-  const status = mapStatus(core.accessWorkflow?.state ?? appointment?.status);
+
+  // Branch address/mapUrl may be on the appointment or on a session-level branch object.
+  const address = appointment?.address ?? core.branch?.address;
+  const mapUrl = appointment?.mapUrl ?? core.branch?.mapUrl;
+  const branchName = appointment?.branchName ?? core.branch?.name ?? appointment?.branchId ?? base.provider.branch;
 
   return {
     ...base,
@@ -138,50 +161,30 @@ function mapSession(token: string, core: CoreSession): PatientLinkState {
       expiresAt: core.session.expiresAt,
       allowedActions: core.session.allowedActions.filter(isAllowedAction)
     },
+    provider: {
+      name: core.provider?.name ?? base.provider.name,
+      branch: branchName,
+      supportPhone: core.provider?.supportPhone ?? base.provider.supportPhone
+    },
     patient: {
       id: core.patient.id,
       displayName: core.patient.displayName,
-      ageLabel: core.patient.age ? `${core.patient.age} years` : "Age not shared",
-      preferredLanguage: core.patient.preferredLanguage ?? "Not set",
       maskedPhone: maskPhone(core.patient.primaryPhone)
     },
-    caregiver: caregiver
-      ? {
-          displayName: caregiver.displayName,
-          relationship: caregiver.relationship,
-          actingForPatient: true,
-          consentStatus: (caregiver.consentStatus as PatientLinkState["caregiver"]["consentStatus"]) ?? "unknown",
-          permissions: caregiver.permissions ?? []
-        }
-      : { ...base.caregiver, displayName: core.patient.displayName, relationship: "Self", actingForPatient: false },
     appointment: appointment
       ? {
           id: appointment.id,
-          status,
+          status: mapStatus(appointment.status),
+          scheduledAt: appointment.scheduledAt,
           displayDate: formatDate(appointment.scheduledAt),
           displayTime: formatTime(appointment.scheduledAt),
           doctorName: appointment.doctorName,
           department: appointment.specialty,
-          location: appointment.branchId,
-          statusCopy: core.accessWorkflow?.confirmationCopy ?? base.appointment.statusCopy
+          branchName,
+          ...(address ? { address } : {}),
+          ...(mapUrl ? { mapUrl } : {})
         }
-      : base.appointment,
-    followUp: followUp
-      ? {
-          id: followUp.id,
-          title: followUp.title,
-          status: followUp.status === "confirmed" || followUp.status === "completed" ? "confirmed" : "pending",
-          dueLabel: `Due ${formatDate(followUp.dueAt)}`,
-          instructions: followUp.instructions,
-          nextSteps: followUp.nextSteps?.length ? followUp.nextSteps : base.followUp.nextSteps
-        }
-      : base.followUp,
-    consent: {
-      whatsApp: core.patient.consent?.communications === "granted",
-      calls: core.patient.consent?.communications === "granted",
-      documentSharing: core.patient.consent?.documentSharing === "granted",
-      optedOut: core.patient.consent?.communications === "revoked"
-    }
+      : base.appointment
   };
 }
 
@@ -195,24 +198,18 @@ function inactive(token: string, linkStatus: "expired" | "revoked", reason: stri
   };
 }
 
-const allowedActions = new Set([
-  "confirm_appointment",
-  "reschedule_request",
-  "upload_document_metadata",
-  "confirm_follow_up",
-  "update_consent",
-  "opt_out"
-]);
+const allowedActions = new Set(["confirm_appointment", "reschedule_request", "upload_document_metadata"]);
 
 function isAllowedAction(value: string): value is PatientLinkState["secureLink"]["allowedActions"][number] {
   return allowedActions.has(value);
 }
 
 function mapStatus(status?: string): PatientLinkState["appointment"]["status"] {
-  if (status === "confirmed") return "confirmed";
-  if (status === "rescheduled" || status === "reschedule_requested") return "reschedule_requested";
-  if (status === "expired" || status === "cancelled") return "expired";
-  return "pending_confirmation";
+  if (status === "confirmed" || status === "checked_in" || status === "in_consult" || status === "completed") {
+    return "confirmed";
+  }
+  if (status === "rescheduled") return "rescheduled";
+  return "scheduled";
 }
 
 function maskPhone(phone?: string): string {
@@ -225,13 +222,13 @@ function maskPhone(phone?: string): string {
 // Appointment times are the doctor's wall-clock hours encoded as UTC
 // (e.g. a 13:45 slot → ...T13:45:00Z). Format in UTC so the patient sees the time
 // as booked (1:45 pm), not shifted into the device's timezone (which turned it into 7:15 pm).
-function formatDate(value: string): string {
+export function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(date);
 }
 
-function formatTime(value: string): string {
+export function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Time pending";
   return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(date);

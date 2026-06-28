@@ -642,7 +642,7 @@ const personalize = (body: string, name: string): string => {
  * notificationConfigs row (resolve-with-defaults on read). Tokens supported:
  * {{patientName}} {{doctorName}} {{date}} {{time}} {{branch}} {{confirmLink}}.
  */
-type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled";
+type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled" | "rescheduled";
 
 const NOTIFICATION_DEFAULTS: Record<NotificationEvent, { enabled: boolean; body: string; offsetHours?: number }> = {
   booked: {
@@ -663,6 +663,11 @@ const NOTIFICATION_DEFAULTS: Record<NotificationEvent, { enabled: boolean; body:
   cancelled: {
     enabled: true,
     body: "Hi {{patientName}}, your appointment with {{doctorName}} on {{date}} at {{time}} has been cancelled. Call us to rebook."
+  },
+  rescheduled: {
+    enabled: true,
+    body:
+      "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. {{mapLink}}"
   }
 };
 
@@ -1724,6 +1729,7 @@ export class CoreService {
       reminder24h: rule("reminder24h"),
       reminder3h: rule("reminder3h"),
       cancelled: rule("cancelled"),
+      rescheduled: rule("rescheduled"),
       createdAt: stored?.createdAt ?? nowIso(),
       updatedAt: stored?.updatedAt ?? nowIso()
     };
@@ -1739,7 +1745,7 @@ export class CoreService {
       stored = { ...resolved, createdAt: now, updatedAt: now };
       this.data.notificationConfigs.push(stored);
     }
-    const events: NotificationEvent[] = ["booked", "reminder24h", "reminder3h", "cancelled"];
+    const events: NotificationEvent[] = ["booked", "reminder24h", "reminder3h", "cancelled", "rescheduled"];
     for (const event of events) {
       const patch = input[event];
       if (patch && typeof patch === "object") {
@@ -1774,7 +1780,7 @@ export class CoreService {
       tenantId: context.tenantId,
       patientId,
       expiresAt: new Date(Date.now() + 72 * 60 * 60_000).toISOString(),
-      allowedActions: ["confirm_appointment", "reschedule_request"],
+      allowedActions: ["confirm_appointment", "reschedule_request", "upload_document_metadata"],
       createdAt: nowIso()
     };
     this.data.sessions.push(session);
@@ -4167,21 +4173,8 @@ export class CoreService {
     }
     // Validate the target slot: it must be in the schedule and not held by ANOTHER
     // non-cancelled appointment (getDoctorSlots already drops taken slots; this
-    // appointment's own current slot is excluded by the id check below).
-    const slots = this.getDoctorSlots(context, doctorId, dateISO, branchId);
-    if (!slots.some((slot) => slot.start === normalizedStart)) {
-      const taken = this.data.appointments.some(
-        (entry) =>
-          entry.tenantId === context.tenantId &&
-          entry.id !== appointment.id &&
-          entry.doctorId === doctor.id &&
-          entry.status !== "cancelled" &&
-          entry.scheduledAt === normalizedStart
-      );
-      throw taken
-        ? new ApiError(409, "That slot is already booked")
-        : new ApiError(400, "Requested time is outside the doctor's available schedule");
-    }
+    // appointment's own current slot is excluded by the id check).
+    this.validateRescheduleSlot(context, doctor, dateISO, branchId, normalizedStart, appointment.id);
     appointment.doctorId = doctor.id;
     appointment.doctorName = doctor.displayName;
     appointment.specialty = doctor.specialty ?? appointment.specialty;
@@ -4189,6 +4182,7 @@ export class CoreService {
     appointment.scheduledAt = normalizedStart;
     appointment.durationMinutes = doctor.slotMinutes;
     appointment.status = "rescheduled";
+    appointment.rescheduledBy = "staff";
     // New time → let the time-based reminders fire again for the new slot.
     appointment.remindersSent = [];
     appointment.updatedAt = nowIso();
@@ -4202,6 +4196,133 @@ export class CoreService {
       await this.notifyAppointment(context, appointment, "booked");
     } catch {
       /* notifications are best-effort */
+    }
+    return appointment;
+  }
+
+  /**
+   * Validate that `normalizedStart` is an open slot for `doctor` on `dateISO`/`branchId`.
+   * Throws 409 when the slot is held by another non-cancelled appointment, or 400 when
+   * it falls outside the doctor's schedule. `excludeAppointmentId` lets a reschedule
+   * keep the appointment's own current slot from counting as "taken".
+   */
+  private validateRescheduleSlot(
+    context: RequestContext,
+    doctor: Doctor,
+    dateISO: string,
+    branchId: string,
+    normalizedStart: string,
+    excludeAppointmentId?: string
+  ): void {
+    const slots = this.getDoctorSlots(context, doctor.id, dateISO, branchId);
+    if (slots.some((slot) => slot.start === normalizedStart)) {
+      return;
+    }
+    const taken = this.data.appointments.some(
+      (entry) =>
+        entry.tenantId === context.tenantId &&
+        entry.id !== excludeAppointmentId &&
+        entry.doctorId === doctor.id &&
+        entry.status !== "cancelled" &&
+        entry.scheduledAt === normalizedStart
+    );
+    throw taken
+      ? new ApiError(409, "That slot is already booked")
+      : new ApiError(400, "Requested time is outside the doctor's available schedule");
+  }
+
+  /**
+   * Patient-facing (mobile-link PWA): list the open slots for this appointment's
+   * doctor on a given date so the patient can pick a new time. Authenticates via the
+   * session token in the path; defaults to the appointment's own date when none given.
+   */
+  patientLinkAppointmentSlots(context: RequestContext, token: string, appointmentId: string, dateISO?: string) {
+    const appointment = this.ensurePatientLinkAppointment(context, token, appointmentId, "reschedule_request");
+    if (!appointment.doctorId) {
+      throw new ApiError(400, "Appointment has no doctor to reschedule");
+    }
+    const date = typeof dateISO === "string" && dateISO.trim() ? dateISO.trim() : appointment.scheduledAt.slice(0, 10);
+    return this.getDoctorSlots(context, appointment.doctorId, date, appointment.branchId);
+  }
+
+  /**
+   * Patient-facing (mobile-link PWA): move this appointment to a slot the patient
+   * picked. Validates the slot exactly like the staff reschedule, marks the move as
+   * patient-initiated, and fires the "rescheduled" notification (no confirm link —
+   * the patient already chose the slot).
+   */
+  async patientRescheduleAppointment(
+    context: RequestContext,
+    token: string,
+    appointmentId: string,
+    input: { scheduledAt?: string }
+  ) {
+    const appointment = this.ensurePatientLinkAppointment(context, token, appointmentId, "reschedule_request");
+    const doctorId = appointment.doctorId;
+    if (!doctorId) {
+      throw new ApiError(400, "Appointment has no doctor to reschedule");
+    }
+    const doctor = this.ensureVisibleDoctor(context, doctorId);
+    if (doctor.status !== "active") {
+      throw new ApiError(400, "Doctor is not accepting appointments");
+    }
+    const scheduledAt = ensureString(input.scheduledAt, "scheduledAt");
+    const parsed = new Date(scheduledAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new ApiError(400, "scheduledAt must be a valid ISO timestamp");
+    }
+    const normalizedStart = parsed.toISOString();
+    const dateISO = normalizedStart.slice(0, 10);
+    const branchId = doctor.branchIds.includes(appointment.branchId) ? appointment.branchId : doctor.branchIds[0];
+    if (!branchId || !doctor.branchIds.includes(branchId)) {
+      throw new ApiError(400, "Doctor does not work at the requested branch");
+    }
+    this.validateRescheduleSlot(context, doctor, dateISO, branchId, normalizedStart, appointment.id);
+    appointment.branchId = branchId;
+    appointment.scheduledAt = normalizedStart;
+    appointment.durationMinutes = doctor.slotMinutes;
+    appointment.status = "rescheduled";
+    appointment.rescheduledBy = "patient";
+    // New time → let the time-based reminders fire again for the new slot.
+    appointment.remindersSent = [];
+    appointment.updatedAt = nowIso();
+    await this.persistence.saveCollection("appointments", this.data.appointments);
+    await this.audit(context, "appointment.update", "appointment", appointment.id, appointment.patientId, {
+      status: "rescheduled",
+      via: "patient_link"
+    });
+    // Best-effort: confirm the new time. NOT "booked" — no fresh confirm link, since
+    // the patient already chose the slot.
+    try {
+      await this.notifyAppointment(context, appointment, "rescheduled");
+    } catch {
+      /* notifications are best-effort */
+    }
+    return appointment;
+  }
+
+  /**
+   * Resolve a mobile-link session by token, assert it allows `action`, and return the
+   * appointment after asserting it belongs to the session's patient + tenant (403).
+   */
+  private ensurePatientLinkAppointment(
+    context: RequestContext,
+    token: string,
+    appointmentId: string,
+    action: MobileLinkSession["allowedActions"][number]
+  ): Appointment {
+    const session = this.ensureActionAllowed(token, action);
+    if (session.tenantId !== context.tenantId) {
+      throw new ApiError(403, "Mobile link session is outside this tenant");
+    }
+    const appointment = this.data.appointments.find(
+      (entry) => entry.id === appointmentId && entry.tenantId === context.tenantId
+    );
+    if (!appointment) {
+      throw new ApiError(404, `Appointment not found: ${appointmentId}`);
+    }
+    if (appointment.patientId !== session.patientId) {
+      throw new ApiError(403, "Appointment does not belong to this mobile link session");
     }
     return appointment;
   }
@@ -4286,9 +4407,26 @@ export class CoreService {
       session,
       patient,
       household: patient.household ? this.householdView(context, patient.household) : undefined,
-      appointments: this.data.appointments.filter(
-        (entry) => entry.tenantId === context.tenantId && entry.patientId === patient.id && entry.status === "scheduled"
-      ),
+      appointments: this.data.appointments
+        .filter(
+          (entry) =>
+            entry.tenantId === context.tenantId &&
+            entry.patientId === patient.id &&
+            ["scheduled", "confirmed", "rescheduled", "checked_in", "in_consult"].includes(entry.status)
+        )
+        .map((entry) => {
+          // Enrich with branch contact info so the PWA can show the address + a
+          // Directions link ({{address}}/{{mapLink}} equivalents).
+          const branch = this.data.branches.find(
+            (b) => b.id === entry.branchId && b.tenantId === context.tenantId
+          );
+          return {
+            ...entry,
+            branchName: branch?.displayName,
+            address: branch?.address,
+            mapUrl: branch?.mapUrl
+          };
+        }),
       followUps: this.data.followUps.filter(
         (entry) => entry.tenantId === context.tenantId && entry.patientId === patient.id && entry.status === "due"
       )

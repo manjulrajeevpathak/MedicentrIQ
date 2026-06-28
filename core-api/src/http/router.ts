@@ -308,6 +308,12 @@ const createRoutes = (service: CoreService): Route[] => [
   route("POST", "/mobile-link-sessions/:token/appointments/:appointmentId/reschedule-requests", "mobile_links:use", ({ auth, params, body }) =>
     service.requestAppointmentReschedule(auth, params.token, params.appointmentId, toRecord(body))
   ),
+  route("GET", "/mobile-link-sessions/:token/appointments/:appointmentId/slots", "mobile_links:use", ({ auth, params, query }) =>
+    service.patientLinkAppointmentSlots(auth, params.token, params.appointmentId, query.get("date") ?? undefined)
+  ),
+  route("POST", "/mobile-link-sessions/:token/appointments/:appointmentId/reschedule", "mobile_links:use", ({ auth, params, body }) =>
+    service.patientRescheduleAppointment(auth, params.token, params.appointmentId, toRecord(body))
+  ),
   route("POST", "/mobile-link-sessions/:token/checklist/:itemId", "mobile_links:use", ({ auth, params, body }) =>
     service.updateMobileChecklist(auth, params.token, params.itemId, toRecord(body))
   ),

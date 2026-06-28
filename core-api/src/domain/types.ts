@@ -230,6 +230,7 @@ export type AppointmentNotificationConfig = {
   reminder24h: NotificationRule;
   reminder3h: NotificationRule;
   cancelled: NotificationRule;
+  rescheduled: NotificationRule;
   createdAt: string;
   updatedAt: string;
 };
@@ -660,6 +661,8 @@ export type Appointment = {
   noShowRisk?: Priority;
   /** Which time-based reminders have already been sent (e.g. ["reminder24h"]). */
   remindersSent?: string[];
+  /** Set when the appointment was moved to a new slot — who initiated the move. */
+  rescheduledBy?: "staff" | "patient";
   createdAt: string;
   updatedAt: string;
 };
