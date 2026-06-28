@@ -20,7 +20,6 @@ import { EmptyState } from "@/components/ui/empty";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import {
-  APPOINTMENT_ACTIONS,
   APPOINTMENT_STATUS_LABELS,
   type Appointment,
   type AppointmentStatus,
@@ -34,10 +33,12 @@ import {
   loadAppointmentsAction,
   loadSlotsAction,
   lookupPatientByPhoneAction,
+  rescheduleAppointmentAction,
   sendConfirmationsAction,
   setAppointmentStatusAction,
   type IntakeLookup
 } from "@/app/(app)/appointments/actions";
+import { Modal } from "@/components/ui/modal";
 
 type Props = {
   doctors: Doctor[];
@@ -145,6 +146,7 @@ function BookingTab({
   const [loadingSlots, startLoadSlots] = useTransition();
   const [booking, startBooking] = useTransition();
   const [busyAppointmentId, setBusyAppointmentId] = useState<string | null>(null);
+  const [rescheduleFor, setRescheduleFor] = useState<Appointment | null>(null);
   const [, startStatus] = useTransition();
   const [sending, startSending] = useTransition();
 
@@ -521,6 +523,9 @@ function BookingTab({
                 // Cancelled / no-show can be re-opened back to Scheduled. Completed is final.
                 const reopenable = ["cancelled", "no_show"].includes(appointment.status);
                 const done = appointment.status === "completed";
+                // No-show is only offered once the appointment day has passed (give the
+                // patient the whole day to walk in to OPD first).
+                const dayPassed = appointment.scheduledAt.slice(0, 10) < today;
                 return (
                   <li key={appointment.id} className="p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -548,20 +553,21 @@ function BookingTab({
                     ) : done ? null : (
                       <>
                         <div className="mt-2.5 flex flex-wrap gap-1.5">
-                          {APPOINTMENT_ACTIONS.map((action) => (
-                            <Button
-                              key={action.status}
-                              variant={action.status === "cancelled" ? "subtle" : "outline"}
-                              size="sm"
-                              disabled={busy}
-                              onClick={() => changeStatus(appointment, action.status)}
-                            >
-                              {action.label}
+                          <Button variant="outline" size="sm" disabled={busy} onClick={() => setRescheduleFor(appointment)}>
+                            <CalendarClock className="size-3.5" /> Reschedule
+                          </Button>
+                          {dayPassed ? (
+                            <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "no_show")}>
+                              No-show
                             </Button>
-                          ))}
+                          ) : null}
+                          <Button variant="subtle" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "cancelled")}>
+                            Cancel
+                          </Button>
                         </div>
                         <p className="mt-1.5 text-[11px] text-ink-faint">
-                          Check-in & completion update automatically when the patient is seen in OPD.
+                          Completion is automatic when the patient is seen in OPD
+                          {dayPassed ? "." : "; No-show can be marked after the appointment day."}
                         </p>
                       </>
                     )}
@@ -571,6 +577,118 @@ function BookingTab({
           </ul>
         )}
       </Panel>
+
+      {rescheduleFor ? (
+        <RescheduleModal
+          appointment={rescheduleFor}
+          onClose={() => setRescheduleFor(null)}
+          onDone={() => {
+            setRescheduleFor(null);
+            refresh(doctorId, date);
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function RescheduleModal({
+  appointment,
+  onClose,
+  onDone
+}: {
+  appointment: Appointment;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { toast } = useToast();
+  const [date, setDate] = useState(appointment.scheduledAt.slice(0, 10));
+  const [slots, setSlots] = useState<Slot[] | null>(null);
+  const [selected, setSelected] = useState("");
+  const [loading, startLoad] = useTransition();
+  const [saving, startSave] = useTransition();
+
+  useEffect(() => {
+    setSelected("");
+    startLoad(async () => {
+      const r = await loadSlotsAction(appointment.doctorId ?? "", date);
+      setSlots(r.ok ? r.data ?? [] : []);
+    });
+  }, [date, appointment.doctorId]);
+
+  function confirm() {
+    if (!selected) return;
+    startSave(async () => {
+      const result = await rescheduleAppointmentAction(appointment.id, { scheduledAt: selected });
+      if (!result.ok) {
+        toast(result.error ?? "Could not reschedule.", "error");
+        return;
+      }
+      toast("Appointment rescheduled.", "success");
+      onDone();
+    });
+  }
+
+  return (
+    <Modal open onClose={onClose} labelledBy="reschedule-title" className="max-w-lg">
+      <div className="border-b border-line p-5">
+        <h2 id="reschedule-title" className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink">
+          <CalendarClock className="size-4 text-brand-600" /> Reschedule appointment
+        </h2>
+        <p className="mt-1 text-xs text-ink-muted">
+          {appointment.doctorName ?? "Doctor"} · currently {formatTime(appointment.scheduledAt)} on {appointment.scheduledAt.slice(0, 10)}
+        </p>
+      </div>
+      <div className="max-h-[60vh] space-y-4 overflow-y-auto p-5">
+        <Field label="New date" htmlFor="rs-date">
+          <Input id="rs-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        <div>
+          <p className="mb-2 text-xs font-medium text-ink-soft">Available slots</p>
+          {loading ? (
+            <p className="py-4 text-center text-xs text-ink-muted">Loading…</p>
+          ) : !slots || slots.length === 0 ? (
+            <p className="py-4 text-center text-xs text-ink-muted">No open slots on this date.</p>
+          ) : (
+            <div className="space-y-3">
+              {SLOT_PERIODS.map((period) => {
+                const inPeriod = slots.filter((s) => slotPeriod(s.start) === period);
+                if (inPeriod.length === 0) return null;
+                return (
+                  <div key={period}>
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">{period}</p>
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {inPeriod.map((slot) => (
+                        <button
+                          key={slot.start}
+                          type="button"
+                          onClick={() => setSelected(slot.start)}
+                          className={cn(
+                            "rounded-lg border px-2 py-2 text-center text-xs font-medium transition",
+                            slot.start === selected
+                              ? "border-brand-400 bg-brand-50 text-brand-700 ring-2 ring-brand-100"
+                              : "border-line-strong bg-surface text-ink-soft hover:bg-surface-muted"
+                          )}
+                        >
+                          {formatTime(slot.start)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2 border-t border-line p-4">
+        <Button variant="outline" onClick={onClose} disabled={saving}>
+          Cancel
+        </Button>
+        <Button onClick={confirm} disabled={saving || !selected}>
+          {saving ? "Rescheduling…" : "Reschedule"}
+        </Button>
+      </div>
+    </Modal>
   );
 }

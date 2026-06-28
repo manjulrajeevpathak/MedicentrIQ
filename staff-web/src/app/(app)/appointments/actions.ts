@@ -110,6 +110,22 @@ export async function setAppointmentStatusAction(
   return { ok: true, data: result.data, message: "Appointment updated." };
 }
 
+export async function rescheduleAppointmentAction(
+  id: string,
+  input: { scheduledAt: string; branchId?: string }
+): Promise<ActionState<Appointment>> {
+  if (!input.scheduledAt) return { ok: false, error: "Pick a new slot." };
+  const result = await coreApi<Appointment>(`/appointments/${encodeURIComponent(id)}/reschedule`, {
+    method: "POST",
+    body: { scheduledAt: input.scheduledAt, ...(input.branchId ? { branchId: input.branchId } : {}) }
+  });
+  if (!result.ok) {
+    return { ok: false, error: result.error ?? "Could not reschedule the appointment." };
+  }
+  revalidatePath("/appointments");
+  return { ok: true, data: result.data, message: "Appointment rescheduled." };
+}
+
 export async function sendConfirmationsAction(): Promise<ActionState<{ sent: number; failed: number }>> {
   const result = await coreApi<{ sent: number; failed: number }>("/scheduling/send-confirmations", {
     method: "POST"
