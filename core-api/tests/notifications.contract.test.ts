@@ -149,6 +149,82 @@ describe("appointment notifications contract", () => {
     assert.equal(await messageCount(), before, "no message sent when 'booked' is disabled");
   });
 
+  it("PATCH /tenant/branches/:id sets phone+address+mapUrl and GET reflects them", async () => {
+    const patch = await authed("/tenant/branches/blr-indiranagar", {
+      method: "PATCH",
+      body: JSON.stringify({
+        phone: "+91 80 0000 1111",
+        address: "  42 Test Road, Indiranagar  ",
+        mapUrl: "https://maps.app.goo.gl/contract-test-pin"
+      })
+    });
+    assert.equal(patch.status, 200);
+    const patched = (await patch.json()) as { data: { branch: { address: string; mapUrl: string; phone: string } } };
+    assert.equal(patched.data.branch.phone, "+91 80 0000 1111");
+    assert.equal(patched.data.branch.address, "42 Test Road, Indiranagar", "address is trimmed");
+    assert.equal(patched.data.branch.mapUrl, "https://maps.app.goo.gl/contract-test-pin");
+
+    const list = (await (await authed("/tenant/branches")).json()) as {
+      data: { branches: Array<{ id: string; phone: string; address: string; mapUrl: string }> };
+    };
+    const branch = list.data.branches.find((b) => b.id === "blr-indiranagar");
+    assert.ok(branch, "branch present in GET /tenant/branches");
+    assert.equal(branch!.phone, "+91 80 0000 1111");
+    assert.equal(branch!.address, "42 Test Road, Indiranagar");
+    assert.equal(branch!.mapUrl, "https://maps.app.goo.gl/contract-test-pin");
+
+    // Empty string clears a field.
+    const cleared = (await (
+      await authed("/tenant/branches/blr-indiranagar", { method: "PATCH", body: JSON.stringify({ phone: "" }) })
+    ).json()) as { data: { branch: { phone?: string } } };
+    assert.equal(cleared.data.branch.phone ?? "", "");
+  });
+
+  it("PATCH /tenant/branches/:id 404s for an unknown branch", async () => {
+    const res = await authed("/tenant/branches/blr-nope", {
+      method: "PATCH",
+      body: JSON.stringify({ phone: "x" })
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it("a booked template with {{mapLink}} renders the branch's mapUrl in the message body", async () => {
+    // Point the branch at a known map link and use a template referencing {{mapLink}}.
+    await authed("/tenant/branches/blr-indiranagar", {
+      method: "PATCH",
+      body: JSON.stringify({ mapUrl: "https://maps.app.goo.gl/render-check" })
+    });
+    await authed("/tenant/notifications", {
+      method: "PATCH",
+      body: JSON.stringify({ booked: { enabled: true, body: "Booked at {{branch}}. Directions: {{mapLink}}" } })
+    });
+
+    const before = await messageCount();
+    const slot = await openSlot();
+    // Phone-first patient creation so this booking never collides with the
+    // same-patient/same-day rule exercised by the earlier tests.
+    const res = await authed("/appointments", {
+      method: "POST",
+      body: JSON.stringify({
+        patient: { name: "Map Link Tester", phone: "+919800009000" },
+        doctorId,
+        scheduledAt: slot,
+        reason: "Map link test"
+      })
+    });
+    assert.equal(res.status, 200);
+
+    const list = (await (await authed("/messages?limit=200")).json()) as {
+      data: Array<{ type: string; body?: string }>;
+    };
+    assert.ok(list.data.length > before, "a message-log row was written");
+    const row = list.data.find(
+      (m) => m.type === "transactional" && typeof m.body === "string" && m.body.includes("render-check")
+    );
+    assert.ok(row, "the rendered body contains the branch mapUrl");
+    assert.ok(!String(row?.body).includes("{{mapLink}}"), "the {{mapLink}} token was substituted");
+  });
+
   it("runAppointmentReminders returns a tally without throwing", async () => {
     const tally = await service.runAppointmentReminders();
     assert.equal(typeof tally.sent, "number");

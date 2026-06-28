@@ -93,6 +93,12 @@ const createRoutes = (service: CoreService): Route[] => [
   route("POST", "/users/:userId/reset-password", "users:manage", ({ auth, params }) => service.resetUserPassword(auth, params.userId)),
   route("PATCH", "/tenant/settings", "tenant:settings:manage", ({ auth, body }) => service.updateTenantSettings(auth, toRecord(body))),
 
+  // Per-branch contact + map location (org admin edits; used in appointment messages + PWA).
+  route("GET", "/tenant/branches", "users:read", ({ auth }) => service.listTenantBranches(auth)),
+  route("PATCH", "/tenant/branches/:branchId", "tenant:settings:manage", ({ auth, params, body }) =>
+    service.updateBranchContact(auth, params.branchId, toRecord(body))
+  ),
+
   // Messaging channels (per-tenant WhatsApp): config + send.
   route("GET", "/tenant/channels", "tenant:settings:manage", ({ auth }) => service.getTenantChannels(auth)),
   route("PATCH", "/tenant/channels", "tenant:settings:manage", ({ auth, body }) => service.updateTenantChannels(auth, toRecord(body))),

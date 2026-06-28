@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import {
   coreApi,
   type AppointmentNotifications,
+  type Branch,
   type ManagedUser,
   type MfaPolicy,
   type NotificationEvent
@@ -169,4 +170,32 @@ export async function saveNotificationRuleAction(
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the notification." };
   revalidatePath("/communications/templates");
   return { ok: true, message: "Notification saved." };
+}
+
+// ---- Clinic locations (per-branch contact + map) --------------------------
+
+export type BranchContactActionState = { ok: boolean; error?: string; message?: string; branch?: Branch };
+
+/**
+ * Org-admin edit of a branch's patient-facing contact info. Empty strings clear
+ * the field (core-api trims + clears). Revalidates the admin route.
+ */
+export async function saveBranchContactAction(
+  branchId: string,
+  input: { phone?: string; address?: string; mapUrl?: string }
+): Promise<BranchContactActionState> {
+  if (!branchId) return { ok: false, error: "Missing branch." };
+
+  const result = await coreApi<{ branch: Branch }>(`/tenant/branches/${encodeURIComponent(branchId)}`, {
+    method: "PATCH",
+    body: {
+      phone: (input.phone ?? "").trim(),
+      address: (input.address ?? "").trim(),
+      mapUrl: (input.mapUrl ?? "").trim()
+    }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not save the location." };
+
+  revalidatePath("/admin");
+  return { ok: true, branch: result.data.branch, message: "Location saved." };
 }

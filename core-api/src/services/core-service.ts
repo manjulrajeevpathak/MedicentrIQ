@@ -1560,6 +1560,58 @@ export class CoreService {
     return { ok: true, mfaPolicy: org.mfaPolicy ?? "optional" };
   }
 
+  /** Tenant-scoped branches, projecting the patient-facing contact + map fields. */
+  listTenantBranches(context: RequestContext) {
+    const branches = this.data.branches
+      .filter((entry) => entry.tenantId === context.tenantId)
+      .map((entry) => ({
+        id: entry.id,
+        displayName: entry.displayName,
+        city: entry.city,
+        phone: entry.phone ?? "",
+        address: entry.address ?? "",
+        mapUrl: entry.mapUrl ?? "",
+        status: entry.status
+      }));
+    return { branches };
+  }
+
+  /**
+   * Org-admin edit of a branch's patient-facing contact info (phone / address /
+   * Google Maps link). Only provided fields change; an empty string clears the
+   * field. Returns the updated branch.
+   */
+  async updateBranchContact(context: RequestContext, branchId: string, input: Record<string, unknown>) {
+    const branch = this.data.branches.find(
+      (entry) => entry.id === branchId && entry.tenantId === context.tenantId
+    );
+    if (!branch) {
+      throw new ApiError(404, "Branch not found.");
+    }
+    const applyField = (key: "phone" | "address" | "mapUrl") => {
+      const raw = input[key];
+      if (raw === undefined) {
+        return;
+      }
+      const trimmed = typeof raw === "string" ? raw.trim() : String(raw ?? "").trim();
+      if (trimmed.length === 0) {
+        delete branch[key];
+      } else {
+        branch[key] = trimmed;
+      }
+    };
+    applyField("phone");
+    applyField("address");
+    applyField("mapUrl");
+    await this.persistence.saveCollection("branches", this.data.branches);
+    await this.audit(context, "branch.update", "branch", branch.id, undefined, {
+      phone: branch.phone ?? "",
+      address: branch.address ?? "",
+      mapUrl: branch.mapUrl ?? ""
+    });
+    return { branch };
+  }
+
   private sanitizeStaffRoles(value: unknown): Role[] {
     const allowed: Role[] = ["front_desk", "call_center", "care_coordinator", "nurse", "doctor", "admin", "org_admin"];
     const list = Array.isArray(value) ? value : [];
@@ -1743,14 +1795,17 @@ export class CoreService {
     const time = Number.isNaN(at.getTime())
       ? ""
       : at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" });
-    const branch =
-      this.data.branches.find((entry) => entry.id === appointment.branchId)?.displayName ?? "";
+    const branchRecord = this.data.branches.find((entry) => entry.id === appointment.branchId);
+    const branch = branchRecord?.displayName ?? "";
     return {
       patientName: firstName(patient.displayName),
       doctorName: appointment.doctorName ?? "your doctor",
       date,
       time,
-      branch
+      branch,
+      address: branchRecord?.address ?? "",
+      mapLink: branchRecord?.mapUrl ?? "",
+      clinicPhone: branchRecord?.phone ?? ""
     };
   }
 

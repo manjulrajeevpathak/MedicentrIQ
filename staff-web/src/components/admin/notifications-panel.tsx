@@ -8,7 +8,17 @@ import { useToast } from "@/components/ui/toast";
 import { saveNotificationRuleAction } from "@/app/(app)/admin/actions";
 import type { AppointmentNotifications, NotificationEvent } from "@/lib/users-types";
 
-const TOKENS = ["{{patientName}}", "{{doctorName}}", "{{date}}", "{{time}}", "{{branch}}", "{{confirmLink}}"];
+const TOKENS = [
+  "{{patientName}}",
+  "{{doctorName}}",
+  "{{date}}",
+  "{{time}}",
+  "{{branch}}",
+  "{{address}}",
+  "{{mapLink}}",
+  "{{clinicPhone}}",
+  "{{confirmLink}}"
+];
 
 type EventMeta = {
   event: NotificationEvent;

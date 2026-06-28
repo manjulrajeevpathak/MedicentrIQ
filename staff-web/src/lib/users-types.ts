@@ -30,10 +30,16 @@ export type UsersPayload = {
 
 export type Branch = {
   id: string;
-  tenantId: string;
+  tenantId?: string;
   displayName: string;
   city?: string;
   status?: string;
+  /** Patient-facing contact phone for this branch. */
+  phone?: string;
+  /** Postal address ({{address}} token). */
+  address?: string;
+  /** Google Maps URL / share link ({{mapLink}} token). */
+  mapUrl?: string;
 };
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error?: string };

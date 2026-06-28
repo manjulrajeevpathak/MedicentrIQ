@@ -2,7 +2,8 @@ import { Lock } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty";
 import { AdminView } from "@/components/admin/admin-view";
-import { fetchBranches, fetchUsers } from "@/lib/users-api";
+import { LocationsPanel } from "@/components/admin/locations-panel";
+import { fetchBranches, fetchTenantBranches, fetchUsers } from "@/lib/users-api";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ export default async function AdminPage() {
     );
   }
 
-  const branches = await fetchBranches();
+  const [branches, locationBranches] = await Promise.all([fetchBranches(), fetchTenantBranches()]);
 
   return (
     <div className="space-y-8">
@@ -42,6 +43,7 @@ export default async function AdminPage() {
         mfaPolicy={usersResult.data.mfaPolicy}
         branches={branches}
       />
+      <LocationsPanel branches={locationBranches} />
     </div>
   );
 }

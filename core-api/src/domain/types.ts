@@ -119,6 +119,12 @@ export type Branch = {
   displayName: string;
   city: string;
   status: "active" | "inactive";
+  /** Public-facing contact phone for this branch (used in appointment messages / PWA). */
+  phone?: string;
+  /** Postal address shown to patients ({{address}} token). */
+  address?: string;
+  /** Google Maps URL / share link ({{mapLink}} token). */
+  mapUrl?: string;
   createdAt: string;
 };
 
@@ -431,6 +437,7 @@ export type AuditEvent = {
     | "service_webhook.intake"
     | "tenant.create"
     | "tenant.update"
+    | "branch.update"
     | "tenant.settings_update"
     | "tenant.notifications.update"
     | "message.send"

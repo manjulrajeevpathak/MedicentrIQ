@@ -74,6 +74,16 @@ export async function fetchBranches(): Promise<Branch[]> {
   return result.data.branches ?? [];
 }
 
+/**
+ * Tenant branches with the patient-facing contact + map fields (phone, address,
+ * mapUrl) — backs the Admin → Clinic locations panel.
+ */
+export async function fetchTenantBranches(): Promise<Branch[]> {
+  const result = await coreApi<{ branches: Branch[] }>("/tenant/branches");
+  if (!result.ok) return [];
+  return result.data.branches ?? [];
+}
+
 export async function fetchChannels(): Promise<ApiResult<ChannelStatus>> {
   return coreApi<ChannelStatus>("/tenant/channels");
 }

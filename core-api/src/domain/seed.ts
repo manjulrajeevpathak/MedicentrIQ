@@ -111,6 +111,9 @@ export const createSeedData = (): SeedData => ({
       displayName: "Indiranagar Eye Centre",
       city: "Bengaluru",
       status: "active",
+      phone: "+91 80 4112 3456",
+      address: "100 Feet Road, Indiranagar, Bengaluru 560038",
+      mapUrl: "https://maps.app.goo.gl/indiranagar-eye-centre",
       createdAt: daysFromNow(-120)
     },
     {
@@ -119,6 +122,9 @@ export const createSeedData = (): SeedData => ({
       displayName: "Whitefield Diabetes Centre",
       city: "Bengaluru",
       status: "active",
+      phone: "+91 80 4998 7654",
+      address: "ITPL Main Road, Whitefield, Bengaluru 560066",
+      mapUrl: "https://maps.app.goo.gl/whitefield-diabetes-centre",
       createdAt: daysFromNow(-120)
     }
   ],
