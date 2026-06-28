@@ -44,21 +44,42 @@ export async function loadAppointmentsAction(
   return { ok: true, data: result.data };
 }
 
+/** Phone-first patient lookup for booking: existing patient (prefill) / lead / none. */
+export type IntakeLookup = {
+  match: "patient" | "lead" | "none";
+  patient?: { id: string; displayName: string; age?: number; gender?: string; primaryPhone?: string; branchId?: string };
+  lead?: { id: string; name: string; phone: string; email?: string; source?: string };
+  recentVisits?: unknown[];
+};
+
+export async function lookupPatientByPhoneAction(phone: string): Promise<ActionState<IntakeLookup>> {
+  const trimmed = phone.trim();
+  if (!trimmed) return { ok: false, error: "Enter a phone number." };
+  const result = await coreApi<IntakeLookup>(`/intake/lookup?phone=${encodeURIComponent(trimmed)}`);
+  if (!result.ok) return { ok: false, error: result.error ?? "Lookup failed." };
+  return { ok: true, data: result.data };
+}
+
 export async function bookAppointmentAction(input: {
-  patientId: string;
+  patientId?: string;
+  patient?: { name: string; phone?: string };
   doctorId: string;
   branchId: string;
   scheduledAt: string;
   reason?: string;
 }): Promise<ActionState<Appointment>> {
-  if (!input.patientId) return { ok: false, error: "Pick a patient." };
+  if (!input.patientId && !input.patient?.name?.trim()) {
+    return { ok: false, error: "Look up a patient by phone, or enter a name." };
+  }
   if (!input.doctorId) return { ok: false, error: "Pick a doctor." };
   if (!input.scheduledAt) return { ok: false, error: "Pick a slot." };
 
   const result = await coreApi<Appointment>("/appointments", {
     method: "POST",
     body: {
-      patientId: input.patientId,
+      ...(input.patientId
+        ? { patientId: input.patientId }
+        : { patient: { name: input.patient!.name.trim(), ...(input.patient!.phone ? { phone: input.patient!.phone } : {}) } }),
       doctorId: input.doctorId,
       branchId: input.branchId,
       scheduledAt: input.scheduledAt,

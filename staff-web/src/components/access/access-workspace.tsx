@@ -30,8 +30,10 @@ import {
   bookAppointmentAction,
   loadAppointmentsAction,
   loadSlotsAction,
+  lookupPatientByPhoneAction,
   sendConfirmationsAction,
-  setAppointmentStatusAction
+  setAppointmentStatusAction,
+  type IntakeLookup
 } from "@/app/(app)/access/actions";
 
 type Props = {
@@ -127,8 +129,12 @@ function BookingTab({
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>(initialAppointments);
   const [selectedSlot, setSelectedSlot] = useState<string>("");
+  // Phone-first patient capture: look up by phone → existing patient (prefill) or new.
   const [patientId, setPatientId] = useState("");
-  const [patientQuery, setPatientQuery] = useState("");
+  const [phone, setPhone] = useState("");
+  const [newName, setNewName] = useState("");
+  const [lookup, setLookup] = useState<IntakeLookup | null>(null);
+  const [lookingUp, startLookup] = useTransition();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loadingSlots, startLoadSlots] = useTransition();
@@ -146,12 +152,6 @@ function BookingTab({
     const map = new Map(doctors.map((d) => [d.id, d.displayName]));
     return (id: string) => map.get(id) ?? id;
   }, [doctors]);
-
-  const filteredPatients = useMemo(() => {
-    const q = patientQuery.trim().toLowerCase();
-    const list = q ? patients.filter((p) => p.displayName.toLowerCase().includes(q)) : patients;
-    return list.slice(0, 8);
-  }, [patients, patientQuery]);
 
   const selectedDoctor = doctors.find((d) => d.id === doctorId);
 
@@ -186,20 +186,56 @@ function BookingTab({
     refresh(doctorId, d);
   }
 
-  function book() {
+  function resetPatient() {
+    setPhone("");
+    setNewName("");
+    setPatientId("");
+    setLookup(null);
+  }
+
+  function doLookup() {
     setError(null);
-    if (!patientId) {
-      setError("Choose a patient.");
+    const trimmed = phone.trim();
+    if (!trimmed) {
+      setError("Enter a phone number to look up.");
       return;
     }
+    startLookup(async () => {
+      const result = await lookupPatientByPhoneAction(trimmed);
+      if (!result.ok || !result.data) {
+        setError(result.error ?? "Lookup failed.");
+        return;
+      }
+      const data = result.data;
+      setLookup(data);
+      if (data.match === "patient" && data.patient) {
+        setPatientId(data.patient.id);
+        setNewName(data.patient.displayName);
+      } else if (data.match === "lead" && data.lead) {
+        setPatientId("");
+        setNewName(data.lead.name);
+      } else {
+        setPatientId("");
+        setNewName("");
+      }
+    });
+  }
+
+  function book() {
+    setError(null);
     if (!selectedSlot) {
       setError("Choose an available slot.");
+      return;
+    }
+    if (!patientId && !newName.trim()) {
+      setError("Look up a patient by phone, or enter a name.");
       return;
     }
     const branchId = selectedDoctor?.branchIds[0] ?? branches[0]?.id ?? "";
     startBooking(async () => {
       const result = await bookAppointmentAction({
-        patientId,
+        patientId: patientId || undefined,
+        patient: patientId ? undefined : { name: newName.trim(), phone: phone.trim() || undefined },
         doctorId,
         branchId,
         scheduledAt: selectedSlot,
@@ -212,8 +248,7 @@ function BookingTab({
       toast(result.message ?? "Appointment booked.", "success");
       setReason("");
       setSelectedSlot("");
-      setPatientId("");
-      setPatientQuery("");
+      resetPatient();
       refresh(doctorId, date);
     });
   }
@@ -340,62 +375,69 @@ function BookingTab({
           )}
         </div>
 
-        {/* Patient picker + reason */}
+        {/* Phone-first patient capture + reason */}
         <div className="mt-4 space-y-3.5">
-          <Field label="Patient" htmlFor="bk-patient">
-            <Input
-              id="bk-patient"
-              placeholder="Search patients by name…"
-              value={patientQuery}
-              onChange={(e) => {
-                setPatientQuery(e.target.value);
-                setPatientId("");
-              }}
-              autoComplete="off"
-            />
-            {patientId ? (
-              <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-brand-700">
-                <UserRound className="size-3.5" /> {patientName(patientId)}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPatientId("");
-                    setPatientQuery("");
-                  }}
-                  className="rounded p-0.5 text-ink-faint hover:text-ink-soft"
-                  aria-label="Clear patient"
-                >
-                  <X className="size-3" />
-                </button>
-              </p>
-            ) : patientQuery.trim() ? (
-              <ul className="mt-1.5 max-h-44 overflow-y-auto rounded-lg border border-line">
-                {filteredPatients.length === 0 ? (
-                  <li className="px-3 py-2 text-xs text-ink-muted">No matching patients.</li>
-                ) : (
-                  filteredPatients.map((p) => (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPatientId(p.id);
-                          setPatientQuery(p.displayName);
-                        }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink-soft transition hover:bg-surface-muted"
-                      >
-                        <UserRound className="size-3.5 text-ink-faint" /> {p.displayName}
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-            ) : null}
+          <Field label="Patient phone" htmlFor="bk-phone">
+            <div className="flex gap-2">
+              <Input
+                id="bk-phone"
+                type="tel"
+                placeholder="+91…"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setLookup(null);
+                  setPatientId("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    doLookup();
+                  }
+                }}
+                autoComplete="off"
+              />
+              <Button variant="outline" onClick={doLookup} disabled={lookingUp || !phone.trim()}>
+                {lookingUp ? "Looking…" : "Look up"}
+              </Button>
+            </div>
           </Field>
 
-          <Field label="Reason (optional)" htmlFor="bk-reason">
+          {lookup ? (
+            lookup.match === "patient" && lookup.patient ? (
+              <p className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
+                <UserRound className="size-3.5" /> Existing patient: {lookup.patient.displayName}
+                {lookup.patient.age ? ` · ${lookup.patient.age}y` : ""}
+                {lookup.patient.gender ? ` · ${lookup.patient.gender}` : ""}
+              </p>
+            ) : lookup.match === "lead" && lookup.lead ? (
+              <p className="rounded-lg border border-[var(--color-high)]/30 bg-[var(--color-high-soft)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-high)]">
+                Matched lead: {lookup.lead.name} — a patient will be created on booking.
+              </p>
+            ) : (
+              <p className="rounded-lg border border-line bg-surface-muted px-2.5 py-1.5 text-xs text-ink-muted">
+                No match — booking will register a new patient.
+              </p>
+            )
+          ) : null}
+
+          {/* Existing match → name is locked; otherwise capture the new patient's name. */}
+          {patientId ? null : (
+            <Field label="Patient name" htmlFor="bk-name">
+              <Input
+                id="bk-name"
+                placeholder="Full name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                autoComplete="off"
+              />
+            </Field>
+          )}
+
+          <Field label="Reason / chief complaint (optional)" htmlFor="bk-reason">
             <Input
               id="bk-reason"
-              placeholder="e.g. Follow-up consult"
+              placeholder="e.g. Blurred vision, follow-up consult"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
@@ -411,7 +453,7 @@ function BookingTab({
           ) : null}
 
           <div className="flex justify-end">
-            <Button onClick={book} disabled={booking || !selectedSlot || !patientId}>
+            <Button onClick={book} disabled={booking || !selectedSlot || (!patientId && !newName.trim())}>
               {booking ? "Booking…" : "Book appointment"}
             </Button>
           </div>
