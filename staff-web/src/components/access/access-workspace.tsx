@@ -494,9 +494,10 @@ function BookingTab({
         </div>
       </Panel>
 
-      {/* Today's appointments */}
-      <Panel padded={false} className="flex flex-col">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line p-4">
+      {/* Today's appointments — sticky panel with its own scroll so a long list
+          doesn't stretch the page or the booking column. */}
+      <Panel padded={false} className="flex flex-col overflow-hidden lg:sticky lg:top-6 lg:max-h-[calc(100vh-7rem)]">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line p-4">
           <SectionTitle
             icon={<CalendarDays className="size-4" />}
             title="Appointments"
@@ -514,7 +515,7 @@ function BookingTab({
             description="Booked appointments for this doctor and date will appear here."
           />
         ) : (
-          <ul className="divide-y divide-line">
+          <ul className="flex-1 divide-y divide-line overflow-y-auto">
             {appointments
               .slice()
               .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
