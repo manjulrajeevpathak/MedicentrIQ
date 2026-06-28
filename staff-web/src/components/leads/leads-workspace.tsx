@@ -6,6 +6,8 @@ import {
   ArrowRight,
   Check,
   Copy,
+  Download,
+  FileSpreadsheet,
   FileText,
   Filter,
   Plus,
@@ -16,6 +18,7 @@ import {
   Users,
   X
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Panel, SectionTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -509,91 +512,195 @@ function guessColumn(headers: string[], candidates: string[]): string {
   return "";
 }
 
+type ParsedSheet = { headers: string[]; rows: Array<Record<string, string>> };
+
+/** Build row objects from a sheet-style array-of-arrays (first row = headers). */
+function rowsFromMatrix(matrix: unknown[][]): ParsedSheet {
+  const nonEmpty = matrix.filter((r) => r.some((c) => String(c ?? "").trim().length > 0));
+  if (nonEmpty.length === 0) return { headers: [], rows: [] };
+  const headers = nonEmpty[0].map((c) => String(c ?? "").trim());
+  const rows = nonEmpty.slice(1).map((cells) => {
+    const record: Record<string, string> = {};
+    headers.forEach((h, i) => {
+      record[h] = String(cells[i] ?? "").trim();
+    });
+    return record;
+  });
+  return { headers, rows };
+}
+
+/** Read the first sheet of an .xlsx/.xls workbook into the same shape as parseCsv. */
+function parseWorkbook(data: ArrayBuffer): ParsedSheet {
+  const wb = XLSX.read(data, { type: "array" });
+  const firstSheetName = wb.SheetNames[0];
+  if (!firstSheetName) return { headers: [], rows: [] };
+  const sheet = wb.Sheets[firstSheetName];
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, blankrows: false, defval: "" });
+  return rowsFromMatrix(matrix);
+}
+
+/** Generate + download the templatised leads workbook entirely client-side. */
+function downloadLeadsTemplate() {
+  const aoa = [
+    ["Name", "Phone", "Email", "Source", "Notes"],
+    ["Ramesh Kumar", "+919812345678", "ramesh@example.com", "camp", "Met at eye camp"]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  sheet["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 26 }, { wch: 12 }, { wch: 30 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheet, "Leads");
+  XLSX.writeFile(wb, "healthcareos-leads-template.xlsx");
+}
+
 function ImportTab() {
   const { toast } = useToast();
   const [raw, setRaw] = useState("");
+  const [sheet, setSheet] = useState<ParsedSheet | null>(null);
   const [source, setSource] = useState<string>("import");
   const [nameCol, setNameCol] = useState("");
   const [phoneCol, setPhoneCol] = useState("");
   const [emailCol, setEmailCol] = useState("");
+  const [sourceCol, setSourceCol] = useState("");
   const [result, setResult] = useState<{ created: number; skipped: number } | null>(null);
   const [importing, startImport] = useTransition();
 
-  const parsed = useMemo(() => parseCsv(raw), [raw]);
+  // The CSV textarea drives `sheet` directly; an uploaded .xlsx sets `sheet`
+  // (and clears the textarea, which is CSV-only).
+  const parsed = useMemo<ParsedSheet>(() => sheet ?? { headers: [], rows: [] }, [sheet]);
 
-  function applyParsed(text: string) {
-    setRaw(text);
-    setResult(null);
-    const { headers } = parseCsv(text);
+  function mapColumns(headers: string[]) {
     if (headers.length > 0) {
       setNameCol(guessColumn(headers, ["name"]) || headers[0]);
       setPhoneCol(guessColumn(headers, ["phone", "mobile", "contact"]) || "");
       setEmailCol(guessColumn(headers, ["email", "mail"]) || "");
+      setSourceCol(guessColumn(headers, ["source"]) || "");
+    } else {
+      setNameCol("");
+      setPhoneCol("");
+      setEmailCol("");
+      setSourceCol("");
     }
   }
 
+  function applyCsv(text: string) {
+    setRaw(text);
+    setResult(null);
+    const next = parseCsv(text);
+    setSheet(next.headers.length > 0 ? next : null);
+    mapColumns(next.headers);
+  }
+
   function onFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = () => applyParsed(String(reader.result ?? ""));
-    reader.readAsText(file);
+    setResult(null);
+    const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const next = parseWorkbook(reader.result as ArrayBuffer);
+          if (next.headers.length === 0) {
+            toast("That spreadsheet had no readable rows.", "error");
+            return;
+          }
+          setRaw("");
+          setSheet(next);
+          mapColumns(next.headers);
+        } catch {
+          toast("Could not read that Excel file.", "error");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => applyCsv(String(reader.result ?? ""));
+      reader.readAsText(file);
+    }
   }
 
   function submit() {
     if (parsed.rows.length === 0) {
-      toast("Paste or upload some CSV rows first.", "error");
+      toast("Paste CSV or upload a file first.", "error");
       return;
     }
     if (!nameCol || !phoneCol) {
       toast("Map at least the name and phone columns.", "error");
       return;
     }
+
+    const mapping = { name: nameCol, phone: phoneCol, email: emailCol || undefined };
+
+    // A Source column, when mapped, sets each row's source (falling back to the
+    // selected source for blank cells). The import endpoint takes a single
+    // source per call, so we group rows by their resolved source and import
+    // each group, then sum the results.
+    const groups = new Map<string, Array<Record<string, string>>>();
+    for (const row of parsed.rows) {
+      const rowSource = sourceCol ? (row[sourceCol] ?? "").trim() || source : source;
+      const bucket = groups.get(rowSource) ?? [];
+      bucket.push(row);
+      groups.set(rowSource, bucket);
+    }
+
     startImport(async () => {
-      const res = await importLeadsAction({
-        source,
-        rows: parsed.rows,
-        mapping: { name: nameCol, phone: phoneCol, email: emailCol || undefined }
-      });
-      if (!res.ok || !res.data) {
-        toast(res.error ?? "Could not import.", "error");
-        return;
+      let created = 0;
+      let skipped = 0;
+      for (const [groupSource, rows] of groups) {
+        const res = await importLeadsAction({ source: groupSource, rows, mapping });
+        if (!res.ok || !res.data) {
+          toast(res.error ?? "Could not import.", "error");
+          return;
+        }
+        created += res.data.created;
+        skipped += res.data.skipped;
       }
-      setResult(res.data);
-      toast(res.message ?? "Imported.", "success");
+      setResult({ created, skipped });
+      toast(`Imported ${created} lead${created === 1 ? "" : "s"}.`, "success");
     });
   }
 
   return (
     <Panel>
-      <SectionTitle
-        icon={<Upload className="size-4" />}
-        title="Import leads"
-        subtitle="Paste CSV or upload a .csv file, then map the columns."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <SectionTitle
+          icon={<Upload className="size-4" />}
+          title="Import leads"
+          subtitle="Download the Excel template, fill it, and upload — or paste CSV."
+        />
+        <Button variant="outline" size="sm" onClick={downloadLeadsTemplate}>
+          <Download className="size-3.5" /> Download Excel template
+        </Button>
+      </div>
 
       <div className="mt-4 space-y-4">
         <div>
           <p className="mb-1.5 text-xs font-medium text-ink-soft">CSV data</p>
           <textarea
             value={raw}
-            onChange={(e) => applyParsed(e.target.value)}
+            onChange={(e) => applyCsv(e.target.value)}
             rows={6}
             placeholder={"name,phone,email\nRamesh Kumar,+919812345678,ramesh@example.com"}
             className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 font-mono text-xs text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           />
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onFile(file);
-            }}
-            className="mt-2 text-xs text-ink-soft file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-xs file:font-medium file:text-brand-700 hover:file:bg-brand-100"
-          />
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <input
+              type="file"
+              accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onFile(file);
+                e.target.value = "";
+              }}
+              className="text-xs text-ink-soft file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-xs file:font-medium file:text-brand-700 hover:file:bg-brand-100"
+            />
+            <span className="inline-flex items-center gap-1 text-[11px] text-ink-muted">
+              <FileSpreadsheet className="size-3.5" /> .csv, .xlsx or .xls
+            </span>
+          </div>
         </div>
 
         {parsed.headers.length > 0 ? (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
               <Field label="Source" htmlFor="imp-source">
                 <select id="imp-source" value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
                   {LEAD_SOURCES.map((s) => (
@@ -620,6 +727,14 @@ function ImportTab() {
               <Field label="Email column" htmlFor="imp-email">
                 <select id="imp-email" value={emailCol} onChange={(e) => setEmailCol(e.target.value)} className={selectClass}>
                   <option value="">—</option>
+                  {parsed.headers.map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Source column" htmlFor="imp-source-col">
+                <select id="imp-source-col" value={sourceCol} onChange={(e) => setSourceCol(e.target.value)} className={selectClass}>
+                  <option value="">— (use selected)</option>
                   {parsed.headers.map((h) => (
                     <option key={h} value={h}>{h}</option>
                   ))}

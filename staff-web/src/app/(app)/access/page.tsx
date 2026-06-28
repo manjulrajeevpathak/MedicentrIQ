@@ -36,7 +36,6 @@ export default async function AccessPage() {
   const doctors = doctorsResult.ok ? doctorsResult.data : [];
   const patients = patientsResult.ok ? patientsResult.data : [];
   const branches = me.branches;
-  const canManageDoctors = me.permissions.includes("doctors:manage");
 
   // Seed the day's appointments for the first active doctor (the default
   // selection on the client). The client refetches when the selection changes.
@@ -54,7 +53,6 @@ export default async function AccessPage() {
       today={today}
       initialDoctorId={firstDoctor?.id ?? ""}
       initialAppointments={initialAppointments}
-      canManageDoctors={canManageDoctors}
     />
   );
 }

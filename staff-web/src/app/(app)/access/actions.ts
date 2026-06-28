@@ -3,13 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { coreApi } from "@/lib/users-api";
 import { fetchAppointments, fetchDoctorSlots } from "@/lib/scheduling-api";
-import type {
-  Appointment,
-  AppointmentStatus,
-  Doctor,
-  Slot,
-  WeeklyHours
-} from "@/lib/scheduling-types";
+import type { Appointment, AppointmentStatus, Slot } from "@/lib/scheduling-types";
 
 /**
  * Appointments / scheduling server actions. Each reads the session bearer (via
@@ -108,69 +102,4 @@ export async function sendConfirmationsAction(): Promise<ActionState<{ sent: num
     data: result.data,
     message: `Sent ${result.data.sent}, failed ${result.data.failed}.`
   };
-}
-
-// ---- Doctors management ----------------------------------------------------
-
-export async function createDoctorAction(input: {
-  displayName: string;
-  specialty?: string;
-  branchIds: string[];
-  slotMinutes?: number;
-  phone?: string;
-}): Promise<ActionState<Doctor>> {
-  if (!input.displayName.trim()) return { ok: false, error: "Enter a doctor name." };
-
-  const result = await coreApi<Doctor>("/doctors", {
-    method: "POST",
-    body: {
-      displayName: input.displayName.trim(),
-      ...(input.specialty ? { specialty: input.specialty } : {}),
-      branchIds: input.branchIds,
-      ...(input.slotMinutes ? { slotMinutes: input.slotMinutes } : {}),
-      ...(input.phone ? { phone: input.phone } : {})
-    }
-  });
-  if (!result.ok) {
-    return { ok: false, error: result.error ?? "Could not add the doctor." };
-  }
-  revalidatePath("/access");
-  return { ok: true, data: result.data, message: "Doctor added." };
-}
-
-export async function updateDoctorAction(
-  id: string,
-  patch: {
-    displayName?: string;
-    specialty?: string;
-    phone?: string;
-    branchIds?: string[];
-    status?: Doctor["status"];
-  }
-): Promise<ActionState<Doctor>> {
-  const result = await coreApi<Doctor>(`/doctors/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: { ...patch }
-  });
-  if (!result.ok) {
-    return { ok: false, error: result.error ?? "Could not update the doctor." };
-  }
-  revalidatePath("/access");
-  return { ok: true, data: result.data, message: "Doctor updated." };
-}
-
-export async function setDoctorScheduleAction(
-  id: string,
-  slotMinutes: number,
-  weeklyHours: WeeklyHours
-): Promise<ActionState<Doctor>> {
-  const result = await coreApi<Doctor>(`/doctors/${encodeURIComponent(id)}/schedule`, {
-    method: "PUT",
-    body: { slotMinutes, weeklyHours }
-  });
-  if (!result.ok) {
-    return { ok: false, error: result.error ?? "Could not save the schedule." };
-  }
-  revalidatePath("/access");
-  return { ok: true, data: result.data, message: "Schedule saved." };
 }

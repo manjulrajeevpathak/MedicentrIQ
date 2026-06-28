@@ -10,6 +10,7 @@ import {
   Settings2,
   ShieldCheck,
   Sprout,
+  Stethoscope,
   Users
 } from "lucide-react";
 import type { PermissionKey } from "./types";
@@ -23,6 +24,7 @@ export type ModuleKey =
   | "inbox"
   | "patients"
   | "access"
+  | "doctors"
   | "journeys"
   | "continuity"
   | "leads"
@@ -60,6 +62,7 @@ export const navGroups: NavGroup[] = [
     label: "Care",
     items: [
       { href: "/patients", label: "Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view" },
+      { href: "/doctors", label: "Doctors", icon: Stethoscope, description: "Doctors, specialties and weekly schedules", module: "access", requires: "appointment:write" },
       { href: "/journeys", label: "Journeys", icon: Route, description: "Specialty journey & protocol packs", module: "journeys", requires: "journey:manage" },
       { href: "/continuity", label: "Continuity", icon: Activity, description: "Follow-up journeys and patients at risk of falling out of care", module: "continuity", requires: "followup:manage", badgeKey: "continuity" }
     ]
