@@ -307,6 +307,28 @@ function ScheduleEditor({
       [day]: (prev[day] ?? []).map((w, i) => (i === idx ? { ...w, ...patch } : w))
     }));
   }
+  /** Copy one day's windows onto a set of target days (deep copy). */
+  function copyWindowsTo(sourceDay: WeekdayIndex, targets: number[]) {
+    setHours((prev) => {
+      const src = (prev[sourceDay] ?? []).map((w) => ({ ...w }));
+      const next = { ...prev };
+      for (const d of targets) {
+        if (d === sourceDay) continue;
+        next[d as WeekdayIndex] = src.map((w) => ({ ...w }));
+      }
+      return next;
+    });
+  }
+  /** Pull another day's windows into this (closed) day. */
+  function copyWindowsFrom(targetDay: WeekdayIndex, sourceDay: WeekdayIndex) {
+    setHours((prev) => ({ ...prev, [targetDay]: (prev[sourceDay] ?? []).map((w) => ({ ...w })) }));
+  }
+  /** "Copy to…" preset → target day indices (Sun=0 … Sat=6). */
+  function applyCopyTo(sourceDay: WeekdayIndex, preset: string) {
+    const targets = preset === "weekdays" ? [1, 2, 3, 4, 5] : preset === "weekend" ? [0, 6] : [0, 1, 2, 3, 4, 5, 6];
+    copyWindowsTo(sourceDay, targets);
+    onToast("Hours copied.", "success");
+  }
 
   function save() {
     // Drop empty days so we send a clean weeklyHours map.
@@ -325,6 +347,8 @@ function ScheduleEditor({
       onSaved();
     });
   }
+
+  const daysWithWindows = WEEKDAYS.filter((d) => (hours[d.index] ?? []).length > 0);
 
   return (
     <div className="mt-3 rounded-xl border border-line bg-surface-muted p-3">
@@ -382,13 +406,55 @@ function ScheduleEditor({
                     </div>
                   ))
                 )}
-                <button
-                  type="button"
-                  onClick={() => addWindow(index)}
-                  className="inline-flex w-fit items-center gap-1 text-[11px] font-medium text-brand-600 hover:underline"
-                >
-                  <Plus className="size-3" /> Add window
-                </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => addWindow(index)}
+                    className="inline-flex w-fit items-center gap-1 text-[11px] font-medium text-brand-600 hover:underline"
+                  >
+                    <Plus className="size-3" /> Add window
+                  </button>
+                  {windows.length > 0 ? (
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) applyCopyTo(index, e.target.value);
+                        e.target.value = "";
+                      }}
+                      aria-label={`Copy ${label} hours to other days`}
+                      className="h-7 rounded-lg border border-line-strong bg-surface px-2 text-[11px] text-ink-soft focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+                    >
+                      <option value="" disabled>
+                        Copy to…
+                      </option>
+                      <option value="weekdays">All weekdays (Mon–Fri)</option>
+                      <option value="weekend">Weekend (Sat–Sun)</option>
+                      <option value="all">All days</option>
+                    </select>
+                  ) : daysWithWindows.length > 0 ? (
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value !== "") {
+                          copyWindowsFrom(index, Number(e.target.value) as WeekdayIndex);
+                          onToast("Hours copied.", "success");
+                        }
+                        e.target.value = "";
+                      }}
+                      aria-label={`Copy hours from another day into ${label}`}
+                      className="h-7 rounded-lg border border-line-strong bg-surface px-2 text-[11px] text-ink-soft focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+                    >
+                      <option value="" disabled>
+                        Copy from…
+                      </option>
+                      {daysWithWindows.map((d) => (
+                        <option key={d.index} value={d.index}>
+                          {d.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                </div>
               </div>
             </div>
           );
