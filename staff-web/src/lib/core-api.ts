@@ -28,7 +28,7 @@ export async function getDashboardData(userId?: string, sessionToken?: string): 
       fetch(`${normalizedBaseUrl}${DASHBOARD_PATH}`, {
         cache: "no-store",
         headers,
-        signal: AbortSignal.timeout(1500)
+        signal: AbortSignal.timeout(5000)
       }),
       fetchAuditEvents(normalizedBaseUrl, headers)
     ]);
@@ -175,7 +175,7 @@ async function fetchAuditEvents(baseUrl: string, headers: HeadersInit): Promise<
     const response = await fetch(`${baseUrl}${AUDIT_EVENTS_PATH}`, {
       cache: "no-store",
       headers,
-      signal: AbortSignal.timeout(1500)
+      signal: AbortSignal.timeout(5000)
     });
     if (!response.ok) return mockAuditEvents;
 
