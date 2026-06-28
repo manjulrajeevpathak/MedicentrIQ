@@ -44,7 +44,7 @@ export type ChannelStatus = {
   telephony: { configured: boolean; enabled: boolean; provider: string | null; callerId: string | null; apiKeyTail: string | null };
 };
 
-export type NotificationRule = { enabled: boolean; body: string };
+export type NotificationRule = { enabled: boolean; body: string; offsetHours?: number };
 
 export type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled";
 

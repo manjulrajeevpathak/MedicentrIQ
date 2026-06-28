@@ -214,8 +214,9 @@ export type TenantChannelConfig = {
   updatedAt: string;
 };
 
-/** Per-tenant appointment-notification templates (one row per tenant). */
-export type NotificationRule = { enabled: boolean; body: string };
+/** Per-tenant appointment-notification rule. `offsetHours` applies only to the
+ *  reminder events (how many hours before the appointment to send). */
+export type NotificationRule = { enabled: boolean; body: string; offsetHours?: number };
 
 export type AppointmentNotificationConfig = {
   tenantId: string;

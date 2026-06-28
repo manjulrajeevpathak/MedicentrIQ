@@ -21,6 +21,7 @@ import type {
   Appointment,
   AppointmentDisposition,
   AppointmentNotificationConfig,
+  NotificationRule,
   AppointmentStatus,
   AuditEvent,
   Call,
@@ -643,7 +644,7 @@ const personalize = (body: string, name: string): string => {
  */
 type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled";
 
-const NOTIFICATION_DEFAULTS: Record<NotificationEvent, { enabled: boolean; body: string }> = {
+const NOTIFICATION_DEFAULTS: Record<NotificationEvent, { enabled: boolean; body: string; offsetHours?: number }> = {
   booked: {
     enabled: true,
     body:
@@ -651,11 +652,13 @@ const NOTIFICATION_DEFAULTS: Record<NotificationEvent, { enabled: boolean; body:
   },
   reminder24h: {
     enabled: true,
-    body: "Reminder, {{patientName}}: your appointment with {{doctorName}} is tomorrow, {{date}} at {{time}}. Confirm: {{confirmLink}}"
+    offsetHours: 24,
+    body: "Reminder, {{patientName}}: your appointment with {{doctorName}} is on {{date}} at {{time}}. Confirm: {{confirmLink}}"
   },
   reminder3h: {
     enabled: true,
-    body: "Hi {{patientName}}, your appointment with {{doctorName}} is today at {{time}}. See you at {{branch}}."
+    offsetHours: 3,
+    body: "Hi {{patientName}}, your appointment with {{doctorName}} is coming up at {{time}}. See you at {{branch}}."
   },
   cancelled: {
     enabled: true,
@@ -1652,10 +1655,17 @@ export class CoreService {
    */
   getAppointmentNotifications(context: RequestContext): AppointmentNotificationConfig {
     const stored = this.data.notificationConfigs.find((entry) => entry.tenantId === context.tenantId);
-    const rule = (event: NotificationEvent): { enabled: boolean; body: string } => ({
-      enabled: stored?.[event]?.enabled ?? NOTIFICATION_DEFAULTS[event].enabled,
-      body: stored?.[event]?.body ?? NOTIFICATION_DEFAULTS[event].body
-    });
+    const rule = (event: NotificationEvent): NotificationRule => {
+      const base: NotificationRule = {
+        enabled: stored?.[event]?.enabled ?? NOTIFICATION_DEFAULTS[event].enabled,
+        body: stored?.[event]?.body ?? NOTIFICATION_DEFAULTS[event].body
+      };
+      // Reminder events carry a configurable "hours before" offset.
+      if (event === "reminder24h" || event === "reminder3h") {
+        base.offsetHours = stored?.[event]?.offsetHours ?? NOTIFICATION_DEFAULTS[event].offsetHours;
+      }
+      return base;
+    };
     return {
       tenantId: context.tenantId,
       booked: rule("booked"),
@@ -1687,6 +1697,10 @@ export class CoreService {
         }
         if (typeof p.body === "string" && p.body.trim()) {
           stored[event].body = p.body;
+        }
+        // Editable "hours before" for the reminder events (clamped 1h–30 days).
+        if ((event === "reminder24h" || event === "reminder3h") && typeof p.offsetHours === "number" && Number.isFinite(p.offsetHours)) {
+          stored[event].offsetHours = Math.min(Math.max(Math.round(p.offsetHours), 1), 24 * 30);
         }
       }
     }
@@ -1811,6 +1825,16 @@ export class CoreService {
     let mutated = false;
     const now = Date.now();
     const H = 60 * 60_000;
+    // Per-tenant config (with the configurable reminder offsets), cached for this scan.
+    const configByTenant = new Map<string, AppointmentNotificationConfig>();
+    const cfgFor = (tenantId: string): AppointmentNotificationConfig => {
+      let c = configByTenant.get(tenantId);
+      if (!c) {
+        c = this.getAppointmentNotifications(this.systemContext(tenantId));
+        configByTenant.set(tenantId, c);
+      }
+      return c;
+    };
 
     for (const appointment of this.data.appointments) {
       if (appointment.status !== "scheduled" && appointment.status !== "confirmed") {
@@ -1823,11 +1847,16 @@ export class CoreService {
       const msUntil = at - now;
       const already = appointment.remindersSent ?? [];
       const context = this.systemContext(appointment.tenantId);
+      const cfg = cfgFor(appointment.tenantId);
+      // "Far" (e.g. 24h) fires between the near offset and the far offset; "near"
+      // (e.g. 3h) fires inside the near window. Both offsets are tenant-configurable.
+      const farH = cfg.reminder24h.offsetHours ?? 24;
+      const nearH = Math.min(cfg.reminder3h.offsetHours ?? 3, farH);
 
       let event: NotificationEvent | undefined;
-      if (msUntil > 3 * H && msUntil <= 24 * H && !already.includes("reminder24h")) {
+      if (cfg.reminder24h.enabled && msUntil > nearH * H && msUntil <= farH * H && !already.includes("reminder24h")) {
         event = "reminder24h";
-      } else if (msUntil > 0 && msUntil <= 3 * H && !already.includes("reminder3h")) {
+      } else if (cfg.reminder3h.enabled && msUntil > 0 && msUntil <= nearH * H && !already.includes("reminder3h")) {
         event = "reminder3h";
       }
       if (!event) {

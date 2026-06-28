@@ -13,15 +13,45 @@ const TOKENS = ["{{patientName}}", "{{doctorName}}", "{{date}}", "{{time}}", "{{
 type EventMeta = {
   event: NotificationEvent;
   label: string;
+  /** Plain-English description of WHEN this fires (the automation trigger). */
+  when: string;
   icon: React.ReactNode;
   needsConfirmLink: boolean;
+  /** Reminders fire N hours before the appointment — N is editable. */
+  isReminder?: boolean;
 };
 
 const EVENTS: EventMeta[] = [
-  { event: "booked", label: "Booked", icon: <CalendarCheck className="size-4 text-brand-600" />, needsConfirmLink: true },
-  { event: "reminder24h", label: "24-hour reminder", icon: <Clock className="size-4 text-brand-600" />, needsConfirmLink: true },
-  { event: "reminder3h", label: "3-hour reminder", icon: <Clock className="size-4 text-brand-600" />, needsConfirmLink: true },
-  { event: "cancelled", label: "Cancelled", icon: <XCircle className="size-4 text-brand-600" />, needsConfirmLink: false }
+  {
+    event: "booked",
+    label: "On booking",
+    when: "Sent immediately when an appointment is booked.",
+    icon: <CalendarCheck className="size-4 text-brand-600" />,
+    needsConfirmLink: true
+  },
+  {
+    event: "reminder24h",
+    label: "Early reminder",
+    when: "Sent this many hours before the appointment.",
+    icon: <Clock className="size-4 text-brand-600" />,
+    needsConfirmLink: true,
+    isReminder: true
+  },
+  {
+    event: "reminder3h",
+    label: "Final reminder",
+    when: "Sent this many hours before the appointment.",
+    icon: <Clock className="size-4 text-brand-600" />,
+    needsConfirmLink: true,
+    isReminder: true
+  },
+  {
+    event: "cancelled",
+    label: "On cancellation",
+    when: "Sent immediately when an appointment is cancelled.",
+    icon: <XCircle className="size-4 text-brand-600" />,
+    needsConfirmLink: false
+  }
 ];
 
 const textareaCls =
@@ -32,11 +62,12 @@ function RuleCard({
   rule
 }: {
   meta: EventMeta;
-  rule: { enabled: boolean; body: string };
+  rule: { enabled: boolean; body: string; offsetHours?: number };
 }) {
   const { toast } = useToast();
   const [enabled, setEnabled] = useState(rule.enabled);
   const [body, setBody] = useState(rule.body);
+  const [offsetHours, setOffsetHours] = useState<number>(rule.offsetHours ?? (meta.event === "reminder24h" ? 24 : 3));
   const [pending, startTransition] = useTransition();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -59,7 +90,11 @@ function RuleCard({
 
   function save() {
     startTransition(async () => {
-      const result = await saveNotificationRuleAction(meta.event, { enabled, body });
+      const result = await saveNotificationRuleAction(meta.event, {
+        enabled,
+        body,
+        ...(meta.isReminder ? { offsetHours } : {})
+      });
       if (result.ok) toast(result.message ?? "Notification saved.", "success");
       else toast(result.error ?? "Could not save the notification.", "error");
     });
@@ -67,7 +102,7 @@ function RuleCard({
 
   return (
     <Panel>
-      <div className="mb-3 flex items-center justify-between gap-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           {meta.icon}
           <span className="text-sm font-semibold text-ink">{meta.label}</span>
@@ -82,6 +117,24 @@ function RuleCard({
           {enabled ? "On" : "Off"}
         </label>
       </div>
+
+      {/* WHEN it fires — the automation trigger */}
+      {meta.isReminder ? (
+        <div className="mb-2.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
+          <span>Send</span>
+          <input
+            type="number"
+            min={1}
+            max={720}
+            value={offsetHours}
+            onChange={(e) => setOffsetHours(Math.max(1, Math.min(720, Number(e.target.value) || 1)))}
+            className="h-7 w-16 rounded-md border border-line bg-surface px-2 text-center text-sm text-ink outline-none focus:border-brand-400"
+          />
+          <span>hours before the appointment.</span>
+        </div>
+      ) : (
+        <p className="mb-2.5 text-xs text-ink-muted">{meta.when}</p>
+      )}
 
       <textarea
         ref={textareaRef}
@@ -127,7 +180,8 @@ export function NotificationsPanel({ notifications }: { notifications: Appointme
           <Bell className="size-4 text-brand-600" /> Appointment notifications
         </h2>
         <p className="text-xs text-ink-muted">
-          Auto-sent over WhatsApp when an appointment is booked, cancelled, or due.
+          Automations: each rule is a trigger (when it fires) and the WhatsApp message it sends. Toggle any off, edit the
+          wording, or change how many hours before the reminders go out.
         </p>
         <p className="mt-1 text-[11px] text-ink-faint">
           Messages send via this hospital&rsquo;s configured WhatsApp channel (Admin &rarr; Integrations). Real delivery
