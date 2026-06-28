@@ -88,7 +88,15 @@ import type {
   VisitType,
   VisitVitals,
   WorkbenchTask,
-  WorkbenchTaskView
+  WorkbenchTaskView,
+  CommTemplate,
+  TemplateChannel,
+  TemplateKind,
+  Workflow,
+  WorkflowAnchor,
+  WorkflowStage,
+  StageAction,
+  StageTrigger
 } from "../domain/types.js";
 import {
   MODULE_CATALOG,
@@ -476,6 +484,23 @@ type UpsertCampaignInput = {
   status?: unknown;
 };
 
+type UpsertTemplateInput = {
+  name?: unknown;
+  channel?: unknown;
+  kind?: unknown;
+  body?: unknown;
+  formId?: unknown;
+  status?: unknown;
+};
+
+type UpsertWorkflowInput = {
+  name?: unknown;
+  description?: unknown;
+  anchor?: unknown;
+  status?: unknown;
+  stages?: unknown;
+};
+
 type CreateVisitInput = {
   // existing patient OR new-patient fields:
   patientId?: string;
@@ -619,6 +644,37 @@ const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email
 
 const CAMPAIGN_AUTOMATED_ON: CampaignAutomatedOn[] = ["new_lead", "appointment_missed", "opd_done"];
 const CAMPAIGN_STATUSES: CampaignStatus[] = ["draft", "sending", "sent", "scheduled"];
+
+const TEMPLATE_CHANNELS = new Set<TemplateChannel>(["whatsapp", "call_script"]);
+const TEMPLATE_KINDS = new Set<TemplateKind>(["text", "form"]);
+const WORKFLOW_ANCHORS = new Set<WorkflowAnchor>(["appointment", "visit", "manual"]);
+const STAGE_ACTIONS = new Set<StageAction>(["message", "call", "form", "task"]);
+/** Stage actions that must reference an existing active template. */
+const TEMPLATE_BACKED_ACTIONS = new Set<StageAction>(["message", "call", "form"]);
+
+/** Coerce arbitrary input into a validated StageTrigger, or throw. */
+const sanitizeStageTrigger = (value: unknown, stageKey: string): StageTrigger => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(400, `Stage "${stageKey}" is missing a valid trigger`);
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type === "on_enroll") {
+    return { type: "on_enroll" };
+  }
+  if (candidate.type === "on_event") {
+    const event = ensureString(candidate.event, `stage "${stageKey}" trigger.event`);
+    return { type: "on_event", event };
+  }
+  if (candidate.type === "relative") {
+    const anchorEvent = ensureString(candidate.anchorEvent, `stage "${stageKey}" trigger.anchorEvent`);
+    const offsetHours = typeof candidate.offsetHours === "number" ? candidate.offsetHours : Number(candidate.offsetHours);
+    if (!Number.isFinite(offsetHours)) {
+      throw new ApiError(400, `Stage "${stageKey}" relative trigger needs a numeric offsetHours`);
+    }
+    return { type: "relative", anchorEvent, offsetHours };
+  }
+  throw new ApiError(400, `Stage "${stageKey}" has an unknown trigger type`);
+};
 
 /** Coerce an arbitrary value into a clean string[] (trimmed, non-empty), or undefined. */
 const sanitizeStringArray = (value: unknown): string[] | undefined => {
@@ -6358,6 +6414,256 @@ export class CoreService {
       failed
     });
     return { sent, failed, audienceSize: recipients.length };
+  }
+
+  // ---- Communication Workflows: templates (CRUD, config-only) --------------
+
+  /** How many workflow stages across the tenant reference this template. */
+  private templateUsageCount(tenantId: string, templateId: string): number {
+    return this.data.workflows
+      .filter((workflow) => workflow.tenantId === tenantId)
+      .reduce((total, workflow) => total + workflow.stages.filter((stage) => stage.templateId === templateId).length, 0);
+  }
+
+  /** Tenant-scoped templates (active + archived), each with a workflow usage count. */
+  listTemplates(context: RequestContext) {
+    return this.data.templates
+      .filter((template) => template.tenantId === context.tenantId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((template) => ({ ...template, usageCount: this.templateUsageCount(context.tenantId, template.id) }));
+  }
+
+  getTemplate(context: RequestContext, templateId: string) {
+    const template = this.ensureTemplate(context, templateId);
+    return { ...template, usageCount: this.templateUsageCount(context.tenantId, template.id) };
+  }
+
+  private ensureTemplate(context: RequestContext, templateId: string): CommTemplate {
+    const template = this.data.templates.find(
+      (entry) => entry.id === templateId && entry.tenantId === context.tenantId
+    );
+    if (!template) {
+      throw new ApiError(404, `Template not found: ${templateId}`);
+    }
+    return template;
+  }
+
+  /** Validate channel/kind and the body/formId constraints for a template payload. */
+  private resolveTemplateChannelKind(input: UpsertTemplateInput, current?: CommTemplate) {
+    const channel: TemplateChannel = TEMPLATE_CHANNELS.has(input.channel as TemplateChannel)
+      ? (input.channel as TemplateChannel)
+      : current?.channel ?? "whatsapp";
+    const kind: TemplateKind = TEMPLATE_KINDS.has(input.kind as TemplateKind)
+      ? (input.kind as TemplateKind)
+      : current?.kind ?? "text";
+    return { channel, kind };
+  }
+
+  async createTemplate(context: RequestContext, input: UpsertTemplateInput) {
+    const name = ensureString(input.name, "name");
+    const { channel, kind } = this.resolveTemplateChannelKind(input);
+    const timestamp = nowIso();
+    const template: CommTemplate = {
+      id: createId("template"),
+      tenantId: context.tenantId,
+      name,
+      channel,
+      kind,
+      status: input.status === "archived" ? "archived" : "active",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    if (kind === "text") {
+      template.body = ensureString(input.body, "body");
+    } else {
+      const formId = ensureString(input.formId, "formId");
+      this.ensureFormExists(context.tenantId, formId);
+      template.formId = formId;
+    }
+    this.data.templates.push(template);
+    await this.persistence.saveCollection("templates", this.data.templates);
+    await this.audit(context, "template.create", "template", template.id, undefined, { kind, channel });
+    return { ...template, usageCount: 0 };
+  }
+
+  async updateTemplate(context: RequestContext, templateId: string, input: UpsertTemplateInput) {
+    const template = this.ensureTemplate(context, templateId);
+    if (typeof input.name === "string" && input.name.trim()) {
+      template.name = input.name.trim();
+    }
+    const { channel, kind } = this.resolveTemplateChannelKind(input, template);
+    template.channel = channel;
+    template.kind = kind;
+    if (kind === "text") {
+      // Body is required for text templates: take the new one or keep an existing body.
+      if (input.body !== undefined) {
+        template.body = ensureString(input.body, "body");
+      } else if (!template.body) {
+        throw new ApiError(400, "Missing required field: body");
+      }
+      template.formId = undefined;
+    } else {
+      const formId =
+        input.formId !== undefined ? ensureString(input.formId, "formId") : template.formId;
+      if (!formId) {
+        throw new ApiError(400, "Missing required field: formId");
+      }
+      this.ensureFormExists(context.tenantId, formId);
+      template.formId = formId;
+      template.body = undefined;
+    }
+    if (input.status === "active" || input.status === "archived") {
+      template.status = input.status;
+    }
+    template.updatedAt = nowIso();
+    await this.persistence.saveCollection("templates", this.data.templates);
+    await this.audit(context, "template.update", "template", template.id, undefined, { status: template.status });
+    return { ...template, usageCount: this.templateUsageCount(context.tenantId, template.id) };
+  }
+
+  /** Soft-archive a template (keeps workflow references intact for attribution). */
+  async deleteTemplate(context: RequestContext, templateId: string) {
+    const template = this.ensureTemplate(context, templateId);
+    template.status = "archived";
+    template.updatedAt = nowIso();
+    await this.persistence.saveCollection("templates", this.data.templates);
+    await this.audit(context, "template.delete", "template", template.id, undefined, { soft: true });
+    return { ...template, usageCount: this.templateUsageCount(context.tenantId, template.id) };
+  }
+
+  private ensureFormExists(tenantId: string, formId: string) {
+    const exists = this.data.forms.some((form) => form.id === formId && form.tenantId === tenantId);
+    if (!exists) {
+      throw new ApiError(400, `Form not found: ${formId}`);
+    }
+  }
+
+  // ---- Communication Workflows: workflows (CRUD, config-only) --------------
+
+  /** Tenant-scoped workflows. */
+  listWorkflows(context: RequestContext) {
+    return this.data.workflows
+      .filter((workflow) => workflow.tenantId === context.tenantId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  getWorkflow(context: RequestContext, workflowId: string) {
+    return this.ensureWorkflow(context, workflowId);
+  }
+
+  private ensureWorkflow(context: RequestContext, workflowId: string): Workflow {
+    const workflow = this.data.workflows.find(
+      (entry) => entry.id === workflowId && entry.tenantId === context.tenantId
+    );
+    if (!workflow) {
+      throw new ApiError(404, `Workflow not found: ${workflowId}`);
+    }
+    return workflow;
+  }
+
+  /** Validate + normalize a list of workflow stages (unique keys, valid action/trigger, template refs). */
+  private sanitizeWorkflowStages(tenantId: string, value: unknown): WorkflowStage[] {
+    if (!Array.isArray(value)) {
+      throw new ApiError(400, "stages must be an array");
+    }
+    const stages: WorkflowStage[] = [];
+    const seenKeys = new Set<string>();
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new ApiError(400, "Each stage must be an object");
+      }
+      const candidate = entry as Record<string, unknown>;
+      const key = ensureString(candidate.key, "stage key");
+      if (seenKeys.has(key)) {
+        throw new ApiError(400, `Duplicate stage key: ${key}`);
+      }
+      seenKeys.add(key);
+      const name = ensureString(candidate.name, `stage "${key}" name`);
+      if (!STAGE_ACTIONS.has(candidate.action as StageAction)) {
+        throw new ApiError(400, `Stage "${key}" has an invalid action`);
+      }
+      const action = candidate.action as StageAction;
+      const trigger = sanitizeStageTrigger(candidate.trigger, key);
+      const stage: WorkflowStage = {
+        key,
+        name,
+        action,
+        trigger,
+        enabled: candidate.enabled !== false
+      };
+      if (TEMPLATE_BACKED_ACTIONS.has(action)) {
+        const templateId = ensureString(candidate.templateId, `stage "${key}" templateId`);
+        const template = this.data.templates.find(
+          (entry2) => entry2.id === templateId && entry2.tenantId === tenantId
+        );
+        if (!template || template.status !== "active") {
+          throw new ApiError(400, `Stage "${key}" references a missing or inactive template: ${templateId}`);
+        }
+        stage.templateId = templateId;
+      }
+      if (action === "task" && typeof candidate.ownerRole === "string" && candidate.ownerRole.trim()) {
+        stage.ownerRole = candidate.ownerRole.trim();
+      }
+      stages.push(stage);
+    }
+    return stages;
+  }
+
+  async createWorkflow(context: RequestContext, input: UpsertWorkflowInput) {
+    const name = ensureString(input.name, "name");
+    if (!WORKFLOW_ANCHORS.has(input.anchor as WorkflowAnchor)) {
+      throw new ApiError(400, "Missing or invalid field: anchor");
+    }
+    const anchor = input.anchor as WorkflowAnchor;
+    const stages = this.sanitizeWorkflowStages(context.tenantId, input.stages ?? []);
+    const timestamp = nowIso();
+    const workflow: Workflow = {
+      id: createId("workflow"),
+      tenantId: context.tenantId,
+      name,
+      description:
+        typeof input.description === "string" && input.description.trim() ? input.description.trim() : undefined,
+      anchor,
+      status: input.status === "active" || input.status === "archived" ? input.status : "draft",
+      stages,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.data.workflows.push(workflow);
+    await this.persistence.saveCollection("workflows", this.data.workflows);
+    await this.audit(context, "workflow.create", "workflow", workflow.id, undefined, { anchor, stages: stages.length });
+    return workflow;
+  }
+
+  async updateWorkflow(context: RequestContext, workflowId: string, input: UpsertWorkflowInput) {
+    const workflow = this.ensureWorkflow(context, workflowId);
+    if (typeof input.name === "string" && input.name.trim()) {
+      workflow.name = input.name.trim();
+    }
+    if (input.description !== undefined) {
+      workflow.description =
+        typeof input.description === "string" && input.description.trim() ? input.description.trim() : undefined;
+    }
+    if (input.status === "draft" || input.status === "active" || input.status === "archived") {
+      workflow.status = input.status;
+    }
+    if (input.stages !== undefined) {
+      workflow.stages = this.sanitizeWorkflowStages(context.tenantId, input.stages);
+    }
+    workflow.updatedAt = nowIso();
+    await this.persistence.saveCollection("workflows", this.data.workflows);
+    await this.audit(context, "workflow.update", "workflow", workflow.id, undefined, { status: workflow.status });
+    return workflow;
+  }
+
+  /** Soft-archive a workflow. */
+  async deleteWorkflow(context: RequestContext, workflowId: string) {
+    const workflow = this.ensureWorkflow(context, workflowId);
+    workflow.status = "archived";
+    workflow.updatedAt = nowIso();
+    await this.persistence.saveCollection("workflows", this.data.workflows);
+    await this.audit(context, "workflow.delete", "workflow", workflow.id, undefined, { soft: true });
+    return workflow;
   }
 
   private async audit(

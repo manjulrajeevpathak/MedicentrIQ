@@ -40,6 +40,9 @@ const collections: CollectionName[] = [
   "forms",
   "campaigns",
   "visits",
+  "templates",
+  "workflows",
+  "workflowRuns",
   "auditEvents"
 ];
 

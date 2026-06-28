@@ -430,6 +430,23 @@ const createRoutes = (service: CoreService): Route[] => [
     service.sendCampaign(auth, params.campaignId), "campaigns"
   ),
 
+  // Communication Workflows — config/data layer (org admin). Gated like /tenant/notifications.
+  route("GET", "/templates", "tenant:settings:manage", ({ auth }) => service.listTemplates(auth)),
+  route("POST", "/templates", "tenant:settings:manage", ({ auth, body }) => service.createTemplate(auth, toRecord(body))),
+  route("GET", "/templates/:id", "tenant:settings:manage", ({ auth, params }) => service.getTemplate(auth, params.id)),
+  route("PATCH", "/templates/:id", "tenant:settings:manage", ({ auth, params, body }) =>
+    service.updateTemplate(auth, params.id, toRecord(body))
+  ),
+  route("DELETE", "/templates/:id", "tenant:settings:manage", ({ auth, params }) => service.deleteTemplate(auth, params.id)),
+
+  route("GET", "/workflows", "tenant:settings:manage", ({ auth }) => service.listWorkflows(auth)),
+  route("POST", "/workflows", "tenant:settings:manage", ({ auth, body }) => service.createWorkflow(auth, toRecord(body))),
+  route("GET", "/workflows/:id", "tenant:settings:manage", ({ auth, params }) => service.getWorkflow(auth, params.id)),
+  route("PATCH", "/workflows/:id", "tenant:settings:manage", ({ auth, params, body }) =>
+    service.updateWorkflow(auth, params.id, toRecord(body))
+  ),
+  route("DELETE", "/workflows/:id", "tenant:settings:manage", ({ auth, params }) => service.deleteWorkflow(auth, params.id)),
+
   // Telephony call log (seam: provider dialing + AI-voice are future). No module
   // gate — always-available like messaging, governed by permission only.
   route("GET", "/calls", "calls:read", ({ auth, query }) =>

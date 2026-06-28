@@ -7,6 +7,7 @@ import type {
   Call,
   Campaign,
   ClinicalRecord,
+  CommTemplate,
   Doctor,
   DocumentMetadata,
   FollowUp,
@@ -30,7 +31,9 @@ import type {
   ServiceApiKey,
   User,
   Visit,
-  WorkbenchTask
+  WorkbenchTask,
+  Workflow,
+  WorkflowRun
 } from "./types.js";
 import { hashPassword } from "../auth/passwords.js";
 
@@ -90,6 +93,9 @@ export type SeedData = {
   forms: LeadForm[];
   campaigns: Campaign[];
   visits: Visit[];
+  templates: CommTemplate[];
+  workflows: Workflow[];
+  workflowRuns: WorkflowRun[];
   auditEvents: AuditEvent[];
 };
 
@@ -894,6 +900,122 @@ export const createSeedData = (): SeedData => ({
       updatedAt: daysFromNow(-7)
     }
   ],
+  templates: [
+    {
+      id: "template_demo_booking",
+      tenantId: DEMO_TENANT_ID,
+      name: "Booking confirmation",
+      channel: "whatsapp",
+      kind: "text",
+      body:
+        "Hi {{patientName}}, your appointment with {{doctorName}} is booked for {{date}} at {{time}} at {{branch}}. Tap to confirm: {{confirmLink}}",
+      status: "active",
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-30)
+    },
+    {
+      id: "template_demo_early_reminder",
+      tenantId: DEMO_TENANT_ID,
+      name: "Early reminder",
+      channel: "whatsapp",
+      kind: "text",
+      body:
+        "Reminder, {{patientName}}: your appointment with {{doctorName}} is on {{date}} at {{time}}. Confirm: {{confirmLink}}",
+      status: "active",
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-30)
+    },
+    {
+      id: "template_demo_final_reminder",
+      tenantId: DEMO_TENANT_ID,
+      name: "Final reminder",
+      channel: "whatsapp",
+      kind: "text",
+      body: "Hi {{patientName}}, your appointment with {{doctorName}} is coming up at {{time}}. See you at {{branch}}.",
+      status: "active",
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-30)
+    },
+    {
+      id: "template_demo_cancellation",
+      tenantId: DEMO_TENANT_ID,
+      name: "Cancellation notice",
+      channel: "whatsapp",
+      kind: "text",
+      body:
+        "Hi {{patientName}}, your appointment with {{doctorName}} on {{date}} at {{time}} has been cancelled. Call us to rebook.",
+      status: "active",
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-30)
+    },
+    {
+      id: "template_demo_reschedule",
+      tenantId: DEMO_TENANT_ID,
+      name: "Reschedule confirmation",
+      channel: "whatsapp",
+      kind: "text",
+      body:
+        "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. {{mapLink}}",
+      status: "active",
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-30)
+    }
+  ],
+  workflows: [
+    {
+      id: "workflow_demo_appointment",
+      tenantId: DEMO_TENANT_ID,
+      name: "Appointment lifecycle",
+      description: "End-to-end appointment messaging: booking, reminders, cancellation, and reschedule.",
+      anchor: "appointment",
+      status: "active",
+      stages: [
+        {
+          key: "booked",
+          name: "Booking confirmation",
+          action: "message",
+          templateId: "template_demo_booking",
+          trigger: { type: "on_enroll" },
+          enabled: true
+        },
+        {
+          key: "reminder_24h",
+          name: "Early reminder",
+          action: "message",
+          templateId: "template_demo_early_reminder",
+          trigger: { type: "relative", anchorEvent: "appointment_start", offsetHours: -24 },
+          enabled: true
+        },
+        {
+          key: "reminder_3h",
+          name: "Final reminder",
+          action: "message",
+          templateId: "template_demo_final_reminder",
+          trigger: { type: "relative", anchorEvent: "appointment_start", offsetHours: -3 },
+          enabled: true
+        },
+        {
+          key: "cancelled",
+          name: "Cancellation notice",
+          action: "message",
+          templateId: "template_demo_cancellation",
+          trigger: { type: "on_event", event: "cancelled" },
+          enabled: true
+        },
+        {
+          key: "rescheduled",
+          name: "Reschedule confirmation",
+          action: "message",
+          templateId: "template_demo_reschedule",
+          trigger: { type: "on_event", event: "rescheduled" },
+          enabled: true
+        }
+      ],
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-5)
+    }
+  ],
+  workflowRuns: [],
   auditEvents: []
 });
 
@@ -949,6 +1071,9 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     forms: data.forms?.length ? withTenant(data.forms) : seed.forms,
     campaigns: data.campaigns?.length ? withTenant(data.campaigns) : seed.campaigns,
     visits: data.visits?.length ? withTenant(data.visits) : seed.visits,
+    templates: data.templates?.length ? withTenant(data.templates) : seed.templates,
+    workflows: data.workflows?.length ? withTenant(data.workflows) : seed.workflows,
+    workflowRuns: withTenant(data.workflowRuns ?? []),
     auditEvents: withTenant(data.auditEvents ?? [])
   };
 };

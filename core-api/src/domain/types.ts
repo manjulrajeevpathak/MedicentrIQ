@@ -245,9 +245,92 @@ export type MessageLog = {
   status: "sent" | "failed";
   body?: string;
   campaign?: string;
+  /** Communication-workflow template this message was rendered from (delivery attribution). */
+  templateId?: string;
   providerId?: string;
   error?: string;
   createdAt: string;
+};
+
+// ---- Communication Workflows (config / data layer) ------------------------
+
+export type TemplateChannel = "whatsapp" | "call_script";
+export type TemplateKind = "text" | "form";
+
+/** A reusable message/call-script body (or a form reference) used by workflow stages. */
+export type CommTemplate = {
+  id: string;
+  tenantId: string;
+  name: string;
+  channel: TemplateChannel;
+  kind: TemplateKind;
+  /** kind="text": message body with {{tokens}}. */
+  body?: string;
+  /** kind="form": references a LeadForm (forms collection). */
+  formId?: string;
+  status: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkflowAnchor = "appointment" | "visit" | "manual";
+export type StageAction = "message" | "call" | "form" | "task";
+export type StageTrigger =
+  | { type: "on_enroll" } // fire immediately when a run starts
+  | { type: "on_event"; event: string } // e.g. "cancelled","rescheduled","checked_in","visit_completed"
+  | { type: "relative"; anchorEvent: string; offsetHours: number }; // anchorEvent e.g. "appointment_start","enrollment","visit_end"; offsetHours negative = before
+
+export type WorkflowStage = {
+  key: string;
+  name: string;
+  action: StageAction;
+  /** required for message/call/form. */
+  templateId?: string;
+  trigger: StageTrigger;
+  enabled: boolean;
+  /** for action="task". */
+  ownerRole?: string;
+};
+
+export type Workflow = {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string;
+  anchor: WorkflowAnchor;
+  status: "draft" | "active" | "archived";
+  stages: WorkflowStage[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StageRunStatus = "pending" | "scheduled" | "sent" | "done" | "skipped" | "failed";
+
+export type StageRun = {
+  stageKey: string;
+  status: StageRunStatus;
+  dueAt?: string;
+  firedAt?: string;
+  messageId?: string;
+  callId?: string;
+  sessionToken?: string;
+  formResponse?: Record<string, string>;
+  outcome?: string;
+  error?: string;
+};
+
+export type WorkflowRun = {
+  id: string;
+  tenantId: string;
+  workflowId: string;
+  patientId: string;
+  anchorType?: "appointment" | "visit";
+  anchorId?: string;
+  status: "active" | "completed" | "cancelled";
+  stageRuns: StageRun[];
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
 };
 
 // ---- Telephony (per-tenant call log) --------------------------------------
@@ -451,6 +534,12 @@ export type AuditEvent = {
     | "campaign.create"
     | "campaign.update"
     | "campaign.send"
+    | "template.create"
+    | "template.update"
+    | "template.delete"
+    | "workflow.create"
+    | "workflow.update"
+    | "workflow.delete"
     | "call.create"
     | "call.update"
     | "visit.register"
