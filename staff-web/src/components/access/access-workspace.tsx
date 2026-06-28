@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   CalendarClock,
   CalendarDays,
+  Loader2,
   Phone,
   RotateCcw,
-  Search,
   Send,
   Stethoscope,
   UserRound,
@@ -212,33 +212,35 @@ function BookingTab({
     setLookup(null);
   }
 
-  function doLookup() {
-    setError(null);
-    const trimmed = phone.trim();
-    if (!trimmed) {
-      setError("Enter a phone number to look up.");
-      return;
-    }
-    startLookup(async () => {
-      const result = await lookupPatientByPhoneAction(trimmed);
-      if (!result.ok || !result.data) {
-        setError(result.error ?? "Lookup failed.");
-        return;
-      }
-      const data = result.data;
-      setLookup(data);
-      if (data.match === "patient" && data.patient) {
-        setPatientId(data.patient.id);
-        setNewName(data.patient.displayName);
-      } else if (data.match === "lead" && data.lead) {
-        setPatientId("");
-        setNewName(data.lead.name);
-      } else {
-        setPatientId("");
-        setNewName("");
-      }
-    });
-  }
+  // Auto-search: once a full phone number is typed, look the patient up
+  // (debounced) — no manual button, so ops just types and sees the match.
+  useEffect(() => {
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 10) return;
+    const handle = setTimeout(() => {
+      startLookup(async () => {
+        const result = await lookupPatientByPhoneAction(phone.trim());
+        if (!result.ok || !result.data) {
+          setLookup(null);
+          return;
+        }
+        const data = result.data;
+        setLookup(data);
+        if (data.match === "patient" && data.patient) {
+          // existing patient → booking uses patientId; name field stays hidden
+          setPatientId(data.patient.id);
+        } else if (data.match === "lead" && data.lead) {
+          setPatientId("");
+          setNewName(data.lead.name);
+        } else {
+          // no match → keep any name already typed for the new patient
+          setPatientId("");
+        }
+      });
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phone]);
 
   function book() {
     setError(null);
@@ -409,38 +411,27 @@ function BookingTab({
 
         {/* Phone-first patient capture + reason */}
         <div className="mt-4 space-y-3.5">
-          <Field label="Patient phone" htmlFor="bk-phone">
-            <div className="flex items-stretch gap-2">
-              <div className="relative flex-1">
-                <Phone className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-faint" />
-                <Input
-                  id="bk-phone"
-                  type="tel"
-                  placeholder="+91…"
-                  value={phone}
-                  className="pl-9"
-                  onChange={(e) => {
-                    setPhone(e.target.value);
-                    setLookup(null);
-                    setPatientId("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      doLookup();
-                    }
-                  }}
-                  autoComplete="off"
-                />
-              </div>
-              <Button
-                variant="outline"
-                onClick={doLookup}
-                disabled={lookingUp || !phone.trim()}
-                className="shrink-0 whitespace-nowrap"
-              >
-                <Search className="size-3.5" /> {lookingUp ? "Looking…" : "Look up"}
-              </Button>
+          <Field label="Patient phone" htmlFor="bk-phone" hint="Searches automatically once the full number is entered.">
+            <div className="relative">
+              <Phone className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-faint" />
+              <Input
+                id="bk-phone"
+                type="tel"
+                placeholder="+91…"
+                value={phone}
+                className="pl-9 pr-24"
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setLookup(null);
+                  setPatientId("");
+                }}
+                autoComplete="off"
+              />
+              {lookingUp ? (
+                <span className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1 text-[11px] text-ink-faint">
+                  <Loader2 className="size-3 animate-spin" /> Searching…
+                </span>
+              ) : null}
             </div>
           </Field>
 
