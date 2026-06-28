@@ -286,9 +286,9 @@ function BookingTab({
         return;
       }
       toast(result.message ?? "Appointment updated.", "success");
-      setAppointments((prev) =>
-        prev.map((a) => (a.id === appointment.id ? { ...a, status } : a))
-      );
+      // Reload slots + appointments so a freed slot (cancel / no-show) reappears
+      // as bookable, and statuses stay accurate.
+      refresh(doctorId, date);
     });
   }
 
