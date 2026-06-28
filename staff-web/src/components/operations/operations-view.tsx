@@ -105,6 +105,8 @@ export function OperationsView() {
 
 function AuditRow({ event }: { event: AuditEvent }) {
   const outcomeTone = { allowed: "good", denied: "critical", system: "neutral" } as const;
+  const outcome = event.outcome ?? "system";
+  const actor = event.actor || "System";
   const time = (() => {
     try {
       return new Date(event.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -114,19 +116,19 @@ function AuditRow({ event }: { event: AuditEvent }) {
   })();
   return (
     <li className="flex items-start gap-3 px-5 py-3">
-      <Avatar name={event.actor} size="sm" />
+      <Avatar name={actor} size="sm" />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="text-sm font-semibold text-ink">{event.actor}</span>
+          <span className="text-sm font-semibold text-ink">{actor}</span>
           <code className="rounded bg-fill px-1.5 py-0.5 font-mono text-[11px] text-ink-soft">{event.action}</code>
           <span className="text-[11px] text-ink-faint">→ {event.resource}</span>
         </div>
         <p className="mt-0.5 text-xs text-ink-soft">{event.summary}</p>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
-        <Badge tone={outcomeTone[event.outcome]} className="capitalize">
-          {event.outcome === "allowed" ? <CircleCheck className="size-3" /> : null}
-          {event.outcome}
+        <Badge tone={outcomeTone[outcome]} className="capitalize">
+          {outcome === "allowed" ? <CircleCheck className="size-3" /> : null}
+          {outcome}
         </Badge>
         <span className="inline-flex items-center gap-1 text-[11px] tabular-nums text-ink-faint"><Clock className="size-3" /> {time}</span>
       </div>

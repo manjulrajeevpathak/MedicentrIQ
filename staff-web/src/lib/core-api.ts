@@ -128,6 +128,48 @@ function buildAuthHeaders(activeUser: Pick<DemoUser, "id">, sessionToken?: strin
   };
 }
 
+/** Raw audit event as core-api emits it (different field names than the staff-web view shape). */
+type CoreAuditEvent = {
+  id: string;
+  tenantId: string;
+  actorType?: string;
+  actorId?: string;
+  actorDisplayName?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  details?: Record<string, unknown>;
+  createdAt?: string;
+};
+
+/** Map a core-api audit row onto the view's AuditEvent shape (actor/resource/outcome/summary/at). */
+function mapCoreAuditEvent(raw: CoreAuditEvent): AuditEvent {
+  const isSystem = raw.actorType === "service" || raw.actorType === "system";
+  const resource = [raw.resourceType, raw.resourceId].filter(Boolean).join(":") || raw.resourceType || "—";
+  const readableAction = raw.action.replace(/[._]/g, " ");
+  return {
+    id: raw.id,
+    at: raw.createdAt ?? new Date().toISOString(),
+    actor: raw.actorDisplayName || raw.actorId || "System",
+    actorRole: (isSystem ? "system" : "service") as AuditEvent["actorRole"],
+    action: raw.action,
+    resource,
+    tenantId: raw.tenantId,
+    outcome: isSystem ? "system" : "allowed",
+    summary: raw.resourceType ? `${readableAction} · ${raw.resourceType}` : readableAction
+  };
+}
+
+/** True when an array looks like the raw core-api audit shape (needs mapping) vs the view shape. */
+function isCoreAuditShape(list: unknown[]): boolean {
+  const first = list[0] as Record<string, unknown> | undefined;
+  return Boolean(first && ("actorDisplayName" in first || "createdAt" in first || "resourceType" in first));
+}
+
+function normalizeAuditList(list: unknown[]): AuditEvent[] {
+  return isCoreAuditShape(list) ? (list as CoreAuditEvent[]).map(mapCoreAuditEvent) : (list as AuditEvent[]);
+}
+
 async function fetchAuditEvents(baseUrl: string, headers: HeadersInit): Promise<AuditEvent[]> {
   try {
     const response = await fetch(`${baseUrl}${AUDIT_EVENTS_PATH}`, {
@@ -137,10 +179,10 @@ async function fetchAuditEvents(baseUrl: string, headers: HeadersInit): Promise<
     });
     if (!response.ok) return mockAuditEvents;
 
-    const data = (await response.json()) as AuditEvent[] | { events?: AuditEvent[]; data?: AuditEvent[] };
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data.events)) return data.events;
-    if (Array.isArray(data.data)) return data.data;
+    const data = (await response.json()) as unknown[] | { events?: unknown[]; data?: unknown[] };
+    if (Array.isArray(data)) return normalizeAuditList(data);
+    if (Array.isArray((data as { events?: unknown[] }).events)) return normalizeAuditList((data as { events: unknown[] }).events);
+    if (Array.isArray((data as { data?: unknown[] }).data)) return normalizeAuditList((data as { data: unknown[] }).data);
     return mockAuditEvents;
   } catch {
     return mockAuditEvents;
