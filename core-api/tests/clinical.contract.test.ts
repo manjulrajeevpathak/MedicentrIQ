@@ -126,9 +126,26 @@ describe("clinical, conditions catalog & documents contract", () => {
   });
 
   it("completes an appointment with a disposition", async () => {
-    // Book a fresh appointment for the demo patient against a seeded doctor.
-    const date = nextMonday();
-    const slots = (await (await authed(`/doctors/doctor_demo_kavita/slots?date=${date}`)).json()) as {
+    // Fresh doctor so this booking never collides with the demo patient's seeded
+    // same-day appointments (the same patient+doctor+day dedup would 409 otherwise).
+    const dr = (await (
+      await authed("/doctors", {
+        method: "POST",
+        body: JSON.stringify({ displayName: "Dr. Clinical", specialty: "Ophthalmology", branchIds: ["blr-indiranagar"], slotMinutes: 30 })
+      })
+    ).json()) as { data: { id: string } };
+    const drId = dr.data.id;
+    await authed(`/doctors/${drId}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify({ slotMinutes: 30, weeklyHours: { 1: [{ start: "09:00", end: "11:00" }] } })
+    });
+    // A Monday ~3 weeks out — safely later than the demo patient's seeded
+    // appointments, so the completed visit is unambiguously their latest (→ opd_done).
+    const future = new Date();
+    future.setUTCDate(future.getUTCDate() + 21);
+    while (future.getUTCDay() !== 1) future.setUTCDate(future.getUTCDate() + 1);
+    const date = future.toISOString().slice(0, 10);
+    const slots = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as {
       data: Array<{ start: string }>;
     };
     assert.ok(slots.data.length > 0);
@@ -136,7 +153,7 @@ describe("clinical, conditions catalog & documents contract", () => {
       method: "POST",
       body: JSON.stringify({
         patientId,
-        doctorId: "doctor_demo_kavita",
+        doctorId: drId,
         branchId: "blr-indiranagar",
         scheduledAt: slots.data[0].start,
         reason: "Glaucoma review"

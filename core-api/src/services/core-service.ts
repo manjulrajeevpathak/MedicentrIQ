@@ -3590,7 +3590,13 @@ export class CoreService {
         entry.status !== "no_show"
     );
     if (sameDay) {
-      throw new ApiError(409, "This patient already has an appointment with this doctor that day");
+      const prettyDate = new Date(`${dateISO}T00:00:00.000Z`).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC"
+      });
+      throw new ApiError(409, `This patient already has an appointment with this doctor on ${prettyDate}`);
     }
 
     return this.createAppointment(context, {

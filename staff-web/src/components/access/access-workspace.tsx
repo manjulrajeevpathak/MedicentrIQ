@@ -552,25 +552,19 @@ function BookingTab({
                         <span className="text-[11px] text-ink-faint">Re-opens to Scheduled.</span>
                       </div>
                     ) : done ? null : (
-                      <>
-                        <div className="mt-2.5 flex flex-wrap gap-1.5">
-                          <Button variant="outline" size="sm" disabled={busy} onClick={() => setRescheduleFor(appointment)}>
-                            <CalendarClock className="size-3.5" /> Reschedule
+                      <div className="mt-2.5 flex flex-wrap gap-1.5">
+                        <Button variant="outline" size="sm" disabled={busy} onClick={() => setRescheduleFor(appointment)}>
+                          <CalendarClock className="size-3.5" /> Reschedule
+                        </Button>
+                        {dayPassed ? (
+                          <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "no_show")}>
+                            No-show
                           </Button>
-                          {dayPassed ? (
-                            <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "no_show")}>
-                              No-show
-                            </Button>
-                          ) : null}
-                          <Button variant="subtle" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "cancelled")}>
-                            Cancel
-                          </Button>
-                        </div>
-                        <p className="mt-1.5 text-[11px] text-ink-faint">
-                          Completion is automatic when the patient is seen in OPD
-                          {dayPassed ? "." : "; No-show can be marked after the appointment day."}
-                        </p>
-                      </>
+                        ) : null}
+                        <Button variant="subtle" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "cancelled")}>
+                          Cancel
+                        </Button>
+                      </div>
                     )}
                   </li>
                 );
