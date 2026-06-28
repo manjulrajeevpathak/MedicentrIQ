@@ -99,7 +99,8 @@ export function Sidebar({
               <ul className="space-y-0.5">
                 {group.items.map((item) => {
                   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                  const restricted = item.requires ? !granted.has(item.requires as PermissionKey) : false;
+                  const comingSoon = item.comingSoon ?? false;
+                  const restricted = !comingSoon && item.requires ? !granted.has(item.requires as PermissionKey) : false;
                   const badge = badgeFor(item);
                   const Icon = item.icon;
 
@@ -112,7 +113,16 @@ export function Sidebar({
                         ) : null}
                       </span>
                       <span className={cn("flex-1 truncate", collapsed && "md:hidden")}>{item.label}</span>
-                      {restricted ? (
+                      {comingSoon ? (
+                        <span
+                          className={cn(
+                            "rounded-full bg-fill px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-ink-faint",
+                            collapsed && "md:hidden"
+                          )}
+                        >
+                          Soon
+                        </span>
+                      ) : restricted ? (
                         <Lock className={cn("size-3.5 text-ink-faint", collapsed && "md:hidden")} />
                       ) : badge ? (
                         <span
@@ -133,10 +143,20 @@ export function Sidebar({
                     collapsed && "md:justify-center md:px-0",
                     active
                       ? "bg-brand-50 text-brand-700"
-                      : restricted
+                      : restricted || comingSoon
                         ? "cursor-not-allowed text-ink-faint"
                         : "text-ink-soft hover:bg-surface-muted hover:text-ink"
                   );
+
+                  if (comingSoon) {
+                    return (
+                      <li key={item.href}>
+                        <div className={baseClass} title={`${item.label} — coming soon`} aria-disabled>
+                          {content}
+                        </div>
+                      </li>
+                    );
+                  }
 
                   if (restricted) {
                     return (

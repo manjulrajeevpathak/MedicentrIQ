@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  BedDouble,
   CalendarClock,
   ClipboardPlus,
   IndianRupee,
@@ -47,6 +48,8 @@ export type NavItem = {
   module: ModuleKey;
   requires?: PermissionKey;
   badgeKey?: "inbox" | "access" | "continuity" | "workbench";
+  /** Placeholder for a not-yet-built surface — shown, labelled "Soon", non-clickable. */
+  comingSoon?: boolean;
 };
 
 export type NavGroup = {
@@ -59,15 +62,21 @@ export const navGroups: NavGroup[] = [
     label: "Work",
     items: [
       { href: "/today", label: "Today", icon: LayoutDashboard, description: "Your floor, right now", module: "today", badgeKey: "workbench" },
-      { href: "/inbox", label: "Unified Inbox", icon: Inbox, description: "WhatsApp, call, web and referral conversations", module: "inbox", requires: "inbox:assign", badgeKey: "inbox" },
-      { href: "/appointments", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" },
-      { href: "/opd", label: "OPD", icon: ClipboardPlus, description: "Walk-in intake, queue and consult capture", module: "patients", requires: "patients:create" }
+      { href: "/inbox", label: "Unified Inbox", icon: Inbox, description: "WhatsApp, call, web and referral conversations", module: "inbox", requires: "inbox:assign", badgeKey: "inbox" }
     ]
   },
   {
     label: "Care",
     items: [
-      { href: "/patients", label: "Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view" },
+      { href: "/appointments", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" },
+      { href: "/opd", label: "OPD", icon: ClipboardPlus, description: "Walk-in intake, queue and consult capture", module: "patients", requires: "patients:create" },
+      { href: "/ipd", label: "IPD", icon: BedDouble, description: "In-patient admissions and ward management", module: "patients", comingSoon: true },
+      { href: "/patients", label: "All Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view" }
+    ]
+  },
+  {
+    label: "Treatment",
+    items: [
       { href: "/doctors", label: "Doctors", icon: Stethoscope, description: "Doctors, specialties and weekly schedules", module: "access", requires: "appointment:write" },
       { href: "/journeys", label: "Journeys", icon: Route, description: "Specialty journey & protocol packs", module: "journeys", requires: "journey:manage" },
       { href: "/continuity", label: "Continuity", icon: Activity, description: "Follow-up journeys and patients at risk of falling out of care", module: "continuity", requires: "followup:manage", badgeKey: "continuity" }
@@ -77,8 +86,7 @@ export const navGroups: NavGroup[] = [
     label: "Growth",
     items: [
       { href: "/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
-      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
-      { href: "/billing", label: "Billing", icon: IndianRupee, description: "Invoices and payments — billed vs settled", module: "billing" }
+      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" }
     ]
   },
   {
@@ -90,9 +98,10 @@ export const navGroups: NavGroup[] = [
     ]
   },
   {
-    label: "Control",
+    label: "Operations",
     items: [
       { href: "/operations", label: "Operations", icon: ShieldCheck, description: "Service health and audit", module: "operations" },
+      { href: "/billing", label: "Billing", icon: IndianRupee, description: "Invoices and payments — billed vs settled", module: "billing" },
       { href: "/admin", label: "Admin", icon: Settings2, description: "Tenant, roles and governance", module: "admin", requires: "audit:view" }
     ]
   }
