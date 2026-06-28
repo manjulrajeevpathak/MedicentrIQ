@@ -514,6 +514,8 @@ type CreateVisitInput = {
   chiefComplaint?: string;
   visitType?: string;
   doctorId?: string;
+  /** Explicitly link this walk-in to an existing appointment (chosen at registration). */
+  appointmentId?: string;
   department?: string;
   intakeConditions?: unknown;
   intakeAllergies?: unknown;
@@ -2559,6 +2561,21 @@ export class CoreService {
         .filter((visit) => visit.tenantId === context.tenantId && visit.patientId === patient.id)
         .sort((a, b) => b.registeredAt.localeCompare(a.registeredAt))
         .slice(0, 5);
+      // Today's still-open appointments — so OPD registration can reflect + link them.
+      const today = nowIso().slice(0, 10);
+      const todaysAppointments = this.data.appointments
+        .filter(
+          (a) =>
+            a.tenantId === context.tenantId &&
+            a.patientId === patient.id &&
+            a.scheduledAt.slice(0, 10) === today &&
+            ["scheduled", "confirmed", "rescheduled", "checked_in", "in_consult"].includes(a.status)
+        )
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
+        .map((a) => {
+          const d = this.decorateAppointment(context, a);
+          return { id: d.id, scheduledAt: d.scheduledAt, doctorId: d.doctorId, doctorName: d.doctorName, specialty: d.specialty, status: d.status };
+        });
       return {
         match: "patient" as const,
         patient: {
@@ -2569,6 +2586,7 @@ export class CoreService {
           primaryPhone: patient.primaryPhone,
           branchId: patient.branchId
         },
+        todaysAppointments,
         clinical: {
           conditions: clinical.conditions,
           allergies: clinical.allergies ?? [],
@@ -2676,12 +2694,19 @@ export class CoreService {
     };
     this.data.visits.push(visit);
 
-    // OPD inference: if this patient has a scheduled/confirmed appointment with
-    // this doctor today, link it and mark it checked-in (they walked in). The
-    // appointment then auto-completes when the visit is completed (see updateVisit).
-    if (!visit.appointmentId) {
+    // Link this walk-in to an appointment — an explicit one chosen at registration,
+    // else infer a scheduled/confirmed appointment for this patient + doctor today —
+    // and mark it checked-in (they walked in). The appointment then auto-completes
+    // when the visit is completed (see updateVisit).
+    let linkedAppt: Appointment | undefined;
+    if (typeof input.appointmentId === "string" && input.appointmentId.trim()) {
+      linkedAppt = this.data.appointments.find(
+        (a) => a.id === input.appointmentId!.trim() && a.tenantId === context.tenantId && a.patientId === visit.patientId
+      );
+    }
+    if (!linkedAppt) {
       const dateISO = visit.registeredAt.slice(0, 10);
-      const appt = this.data.appointments.find(
+      linkedAppt = this.data.appointments.find(
         (a) =>
           a.tenantId === context.tenantId &&
           a.patientId === visit.patientId &&
@@ -2689,17 +2714,28 @@ export class CoreService {
           a.scheduledAt.slice(0, 10) === dateISO &&
           (!visit.doctorId || a.doctorId === visit.doctorId)
       );
-      if (appt) {
-        visit.appointmentId = appt.id;
-        appt.status = "checked_in";
-        appt.updatedAt = nowIso();
+    }
+    if (linkedAppt && !["cancelled", "completed", "no_show"].includes(linkedAppt.status)) {
+      visit.appointmentId = linkedAppt.id;
+      // Adopt the appointment's doctor when the walk-in didn't name one.
+      if (!visit.doctorId && linkedAppt.doctorId) {
+        const doc = this.data.doctors.find((d) => d.id === linkedAppt!.doctorId && d.tenantId === context.tenantId);
+        if (doc) {
+          visit.doctorId = doc.id;
+          visit.doctorName = doc.displayName;
+          visit.department = visit.department ?? doc.specialty;
+        }
+      }
+      if (linkedAppt.status !== "checked_in" && linkedAppt.status !== "in_consult") {
+        linkedAppt.status = "checked_in";
+        linkedAppt.updatedAt = nowIso();
         await this.persistence.saveCollection("appointments", this.data.appointments);
-        await this.audit(context, "appointment.update", "appointment", appt.id, appt.patientId, {
+        await this.audit(context, "appointment.update", "appointment", linkedAppt.id, linkedAppt.patientId, {
           status: "checked_in",
           via: "opd"
         });
         // Drive any "Patient checked in" workflow stages.
-        await this.signalWorkflowEvent(context, appt, "checked_in");
+        await this.signalWorkflowEvent(context, linkedAppt, "checked_in");
       }
     }
 

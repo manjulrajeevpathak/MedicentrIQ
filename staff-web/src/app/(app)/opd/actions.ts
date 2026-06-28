@@ -51,6 +51,8 @@ export type RegisterVisitInput = {
   chiefComplaint: string;
   doctorId?: string;
   department?: string;
+  /** Link this walk-in to the patient's existing appointment today. */
+  appointmentId?: string;
   intakeConditions?: IntakeCondition[];
   intakeAllergies?: string[];
   vitals?: Vitals;
@@ -79,6 +81,7 @@ export async function registerVisitAction(input: RegisterVisitInput): Promise<Ac
   }
 
   if (input.doctorId) body.doctorId = input.doctorId;
+  if (input.appointmentId) body.appointmentId = input.appointmentId;
   if (input.department?.trim()) body.department = input.department.trim();
   if (input.intakeConditions?.length) body.intakeConditions = input.intakeConditions;
   if (input.intakeAllergies?.length) body.intakeAllergies = input.intakeAllergies;

@@ -86,6 +86,15 @@ export type IntakeLookupLead = {
   formData?: Record<string, unknown>;
 };
 
+export type IntakeTodayAppointment = {
+  id: string;
+  scheduledAt: string;
+  doctorId?: string;
+  doctorName?: string;
+  specialty?: string;
+  status: string;
+};
+
 export type IntakeLookupResult = {
   match: "patient" | "lead" | "none";
   patient?: IntakeLookupPatient;
@@ -96,6 +105,8 @@ export type IntakeLookupResult = {
   };
   lead?: IntakeLookupLead;
   recentVisits?: Visit[];
+  /** Today's still-open appointments for a matched patient — for OPD linking. */
+  todaysAppointments?: IntakeTodayAppointment[];
 };
 
 // ---- Doctors / catalog -----------------------------------------------------

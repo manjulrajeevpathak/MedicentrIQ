@@ -40,6 +40,7 @@ import {
   type IntakeCondition,
   type IntakeDoctor,
   type IntakeLookupResult,
+  type IntakeTodayAppointment,
   type Visit,
   type VisitStatus,
   type Vitals
@@ -305,6 +306,8 @@ function RegisterModal({
   const [lookup, setLookup] = useState<IntakeLookupResult | null>(null);
   const [matchedPatientId, setMatchedPatientId] = useState<string | null>(null);
   const [recentCount, setRecentCount] = useState(0);
+  const [todaysAppts, setTodaysAppts] = useState<IntakeTodayAppointment[]>([]);
+  const [linkedApptId, setLinkedApptId] = useState<string | null>(null);
   const [lookingUp, startLookup] = useTransition();
 
   // Identity
@@ -329,6 +332,8 @@ function RegisterModal({
     setLookup(null);
     setMatchedPatientId(null);
     setRecentCount(0);
+    setTodaysAppts([]);
+    setLinkedApptId(null);
     setName("");
     setAge("");
     setGender("female");
@@ -364,6 +369,8 @@ function RegisterModal({
       setLookup(data);
       setMatchedPatientId(null);
       setRecentCount(0);
+      setTodaysAppts([]);
+      setLinkedApptId(null);
       if (data.match === "patient" && data.patient) {
         setMatchedPatientId(data.patient.id);
         setName(data.patient.displayName);
@@ -372,6 +379,16 @@ function RegisterModal({
         if (data.clinical?.conditions?.length) setConditions(data.clinical.conditions);
         if (data.clinical?.allergies?.length) setAllergies(data.clinical.allergies);
         setRecentCount(data.recentVisits?.length ?? 0);
+        // Reflect today's appointment(s): default to linking the first, and adopt
+        // its doctor so the walk-in lands in the right queue.
+        const appts = data.todaysAppointments ?? [];
+        setTodaysAppts(appts);
+        if (appts.length > 0) {
+          setLinkedApptId(appts[0].id);
+          if (appts[0].doctorId && doctors.some((d) => d.id === appts[0].doctorId)) {
+            setDoctorId(appts[0].doctorId);
+          }
+        }
       } else if (data.match === "lead" && data.lead) {
         setName(data.lead.name);
       }
@@ -403,6 +420,7 @@ function RegisterModal({
           : { name: name.trim(), age: parsedAge, gender, phone: phone.trim() || undefined }),
         chiefComplaint: cc,
         doctorId: doctorId || undefined,
+        appointmentId: linkedApptId || undefined,
         department: selectedDoctor?.specialty || undefined,
         intakeConditions: conditions,
         intakeAllergies: allergies,
@@ -462,10 +480,46 @@ function RegisterModal({
           {lookup ? (
             <div className="mt-3">
               {lookup.match === "patient" ? (
-                <div className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">
-                  Existing patient: <span className="font-semibold">{lookup.patient?.displayName}</span>
-                  {recentCount > 0 ? <span className="text-brand-600"> · {recentCount} recent visit{recentCount === 1 ? "" : "s"}</span> : null}
-                  <span className="text-brand-600"> · conditions & allergies prefilled</span>
+                <div className="space-y-2">
+                  <div className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">
+                    Existing patient: <span className="font-semibold">{lookup.patient?.displayName}</span>
+                    {recentCount > 0 ? <span className="text-brand-600"> · {recentCount} recent visit{recentCount === 1 ? "" : "s"}</span> : null}
+                    <span className="text-brand-600"> · conditions & allergies prefilled</span>
+                  </div>
+                  {todaysAppts.length > 0 ? (
+                    <div className="rounded-lg border border-[var(--color-good)]/30 bg-[var(--color-good-soft)] px-3 py-2.5">
+                      <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-good)]">
+                        <Clock className="size-3.5" /> Has an appointment today
+                      </p>
+                      <div className="mt-1.5 space-y-1">
+                        {todaysAppts.map((a) => {
+                          const linked = linkedApptId === a.id;
+                          return (
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => setLinkedApptId(linked ? null : a.id)}
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition",
+                                linked
+                                  ? "border-[var(--color-good)]/40 bg-white text-ink"
+                                  : "border-transparent bg-white/50 text-ink-muted hover:bg-white"
+                              )}
+                            >
+                              <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border", linked ? "border-[var(--color-good)] bg-[var(--color-good)] text-white" : "border-line")}>
+                                {linked ? <CheckCircle2 className="size-3" /> : null}
+                              </span>
+                              <span className="font-semibold">{formatTime(a.scheduledAt)}</span>
+                              <span className="text-ink-soft">{a.doctorName ?? "Doctor"}{a.specialty ? ` · ${a.specialty}` : ""}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-ink-muted">
+                        {linkedApptId ? "This walk-in will be linked and the appointment checked in." : "Not linked — registering as a fresh walk-in."}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               ) : lookup.match === "lead" ? (
                 <div className="rounded-lg bg-[var(--color-medium-soft)] px-3 py-2 text-xs text-[var(--color-medium)]">
