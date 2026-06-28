@@ -26,6 +26,14 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
 
+  // Keep the latest onClose without making it an effect dependency. Callers
+  // routinely pass an inline arrow (`onClose={() => setOpen(false)}`), so a new
+  // identity arrives on every parent render. If the focus effect depended on
+  // onClose it would re-run on each keystroke and yank focus back to the modal's
+  // first focusable element (the close button) — making inputs untypable.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement as HTMLElement | null;
@@ -38,7 +46,7 @@ export function Modal({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key === "Tab" && panel) {
@@ -65,7 +73,7 @@ export function Modal({
       document.body.style.overflow = "";
       restoreRef.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

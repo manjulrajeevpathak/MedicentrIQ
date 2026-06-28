@@ -1788,12 +1788,66 @@ export class CoreService {
     return session;
   }
 
+  // ---- Single source of truth: resolve denormalized appointment fields --------
+  //
+  // Appointments store a copy of the doctor's name/specialty and the branch is
+  // referenced by id only. Those stored copies are denormalized at booking time
+  // and go stale when the doctor is renamed or the branch contact changes. The
+  // helpers below resolve the CURRENT values from the live doctor/branch records,
+  // falling back to the stored copy when the source record is missing. Every read
+  // path that surfaces an appointment should go through `decorateAppointment` (or,
+  // for outbound message tokens, `resolveAppointmentDoctor`/`resolveBranch`) so we
+  // have one place that defines "current name/contact".
+
+  /** Live doctor name/specialty for an appointment, falling back to the stored copy. */
+  private resolveAppointmentDoctor(
+    appointment: Pick<Appointment, "doctorId" | "doctorName" | "specialty">
+  ): { doctorName: string; specialty: string } {
+    const doctor = appointment.doctorId
+      ? this.data.doctors.find((entry) => entry.id === appointment.doctorId)
+      : undefined;
+    return {
+      doctorName: doctor?.displayName ?? appointment.doctorName,
+      specialty: doctor?.specialty ?? appointment.specialty
+    };
+  }
+
+  /** Live branch record for a branchId (tenant-scoped). */
+  private resolveBranch(context: RequestContext, branchId: string): Branch | undefined {
+    return this.data.branches.find((entry) => entry.id === branchId && entry.tenantId === context.tenantId);
+  }
+
+  /**
+   * Return an appointment with its denormalized fields corrected to the live
+   * source-of-truth: doctorName/specialty from the doctor record, and the branch's
+   * current name/address/mapUrl/phone resolved from the branch record. Response
+   * shape is a superset of `Appointment` (additive/corrective only — no fields are
+   * removed), so staff-web's `Appointment[]` consumers keep working.
+   */
+  private decorateAppointment(context: RequestContext, appointment: Appointment) {
+    const { doctorName, specialty } = this.resolveAppointmentDoctor(appointment);
+    const branch = this.resolveBranch(context, appointment.branchId);
+    return {
+      ...appointment,
+      doctorName,
+      specialty,
+      branchName: branch?.displayName,
+      address: branch?.address,
+      mapUrl: branch?.mapUrl,
+      phone: branch?.phone
+    };
+  }
+
   /**
    * Build the token map for a notification. NOTE: appointment.scheduledAt encodes
    * the wall-clock time as UTC, so we format date/time from the UTC components
    * (so "09:30Z" renders as 9:30 AM, not a tz-shifted value).
    */
-  private appointmentTokens(appointment: Appointment, patient: Patient): Record<string, string> {
+  private appointmentTokens(
+    context: RequestContext,
+    appointment: Appointment,
+    patient: Patient
+  ): Record<string, string> {
     const at = new Date(appointment.scheduledAt);
     const date = Number.isNaN(at.getTime())
       ? appointment.scheduledAt
@@ -1801,17 +1855,14 @@ export class CoreService {
     const time = Number.isNaN(at.getTime())
       ? ""
       : at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" });
-    const branchRecord = this.data.branches.find((entry) => entry.id === appointment.branchId);
+    const branchRecord = this.resolveBranch(context, appointment.branchId);
     const branch = branchRecord?.displayName ?? "";
-    // Resolve the doctor's CURRENT name from the live record — the name stored on
-    // the appointment is denormalized at booking and goes stale if the doctor is
-    // later renamed.
-    const doctorRecord = appointment.doctorId
-      ? this.data.doctors.find((entry) => entry.id === appointment.doctorId)
-      : undefined;
+    // Resolve the doctor's CURRENT name from the live record (shared with the
+    // appointment decorator) — the stored copy is denormalized and goes stale.
+    const { doctorName } = this.resolveAppointmentDoctor(appointment);
     return {
       patientName: firstName(patient.displayName),
-      doctorName: doctorRecord?.displayName ?? appointment.doctorName ?? "your doctor",
+      doctorName: doctorName || "your doctor",
       date,
       time,
       branch,
@@ -1852,7 +1903,7 @@ export class CoreService {
       if (!patient.primaryPhone) {
         return false;
       }
-      const tokens = this.appointmentTokens(appointment, patient);
+      const tokens = this.appointmentTokens(context, appointment, patient);
       if (/\{\{\s*confirmLink\s*\}\}/i.test(rule.body)) {
         const session = await this.mintConfirmSession(context, patient.id);
         tokens.confirmLink = `${process.env.PATIENT_WEB_URL || "http://localhost:3201"}/?token=${session.token}`;
@@ -3037,15 +3088,19 @@ export class CoreService {
         })),
       ...this.data.appointments
         .filter((entry) => entry.tenantId === context.tenantId && entry.patientId === patientId)
-        .map((entry) => ({
-          id: `timeline_${entry.id}`,
-          patientId,
-          occurredAt: entry.scheduledAt,
-          type: "appointment" as const,
-          title: `${entry.specialty} appointment`,
-          description: `${entry.status} with ${entry.doctorName}: ${entry.reason}`,
-          sourceId: entry.id
-        })),
+        .map((raw) => {
+          // Resolve doctor name/specialty from the live record (stored copy may be stale).
+          const entry = this.decorateAppointment(context, raw);
+          return {
+            id: `timeline_${entry.id}`,
+            patientId,
+            occurredAt: entry.scheduledAt,
+            type: "appointment" as const,
+            title: `${entry.specialty} appointment`,
+            description: `${entry.status} with ${entry.doctorName}: ${entry.reason}`,
+            sourceId: entry.id
+          };
+        }),
       ...this.data.tasks
         .filter((entry) => entry.tenantId === context.tenantId && entry.patientId === patientId)
         .map((entry) => ({
@@ -3565,7 +3620,7 @@ export class CoreService {
     });
     return {
       accessRequest: request,
-      appointment
+      appointment: this.decorateAppointment(context, appointment)
     };
   }
 
@@ -3971,7 +4026,7 @@ export class CoreService {
     } catch {
       /* notifications are best-effort */
     }
-    return created;
+    return this.decorateAppointment(context, created);
   }
 
   /**
@@ -4037,27 +4092,31 @@ export class CoreService {
     context: RequestContext,
     filters: { patientId?: string; status?: string; doctorId?: string; date?: string }
   ) {
-    return this.data.appointments.filter((entry) => {
-      if (entry.tenantId !== context.tenantId) {
-        return false;
-      }
-      if (!this.canAccessBranch(context, entry.branchId)) {
-        return false;
-      }
-      if (filters.patientId && entry.patientId !== filters.patientId) {
-        return false;
-      }
-      if (filters.status && entry.status !== filters.status) {
-        return false;
-      }
-      if (filters.doctorId && entry.doctorId !== filters.doctorId) {
-        return false;
-      }
-      if (filters.date && entry.scheduledAt.slice(0, 10) !== filters.date) {
-        return false;
-      }
-      return true;
-    });
+    return this.data.appointments
+      .filter((entry) => {
+        if (entry.tenantId !== context.tenantId) {
+          return false;
+        }
+        if (!this.canAccessBranch(context, entry.branchId)) {
+          return false;
+        }
+        if (filters.patientId && entry.patientId !== filters.patientId) {
+          return false;
+        }
+        if (filters.status && entry.status !== filters.status) {
+          return false;
+        }
+        if (filters.doctorId && entry.doctorId !== filters.doctorId) {
+          return false;
+        }
+        if (filters.date && entry.scheduledAt.slice(0, 10) !== filters.date) {
+          return false;
+        }
+        return true;
+      })
+      // Resolve doctor name/specialty + branch contact from the live records so the
+      // list never surfaces a stale denormalized copy.
+      .map((entry) => this.decorateAppointment(context, entry));
   }
 
   async createAppointment(context: RequestContext, input: CreateAppointmentInput) {
@@ -4129,7 +4188,7 @@ export class CoreService {
       { appointmentId: appointment.id, patientId: appointment.patientId, trigger: "appointment.confirmed" },
       context
     );
-    return appointment;
+    return this.decorateAppointment(context, appointment);
   }
 
   async updateAppointment(context: RequestContext, appointmentId: string, input: UpdateAppointmentInput) {
@@ -4167,7 +4226,7 @@ export class CoreService {
         /* notifications are best-effort */
       }
     }
-    return appointment;
+    return this.decorateAppointment(context, appointment);
   }
 
   /** Move an appointment to a different open slot (same or different doctor/date). */
@@ -4224,7 +4283,7 @@ export class CoreService {
     } catch {
       /* notifications are best-effort */
     }
-    return appointment;
+    return this.decorateAppointment(context, appointment);
   }
 
   /**
@@ -4325,7 +4384,7 @@ export class CoreService {
     } catch {
       /* notifications are best-effort */
     }
-    return appointment;
+    return this.decorateAppointment(context, appointment);
   }
 
   /**
@@ -4365,7 +4424,7 @@ export class CoreService {
       outcome: appointment.disposition.outcome,
       nextStep: appointment.disposition.nextStep
     });
-    return appointment;
+    return this.decorateAppointment(context, appointment);
   }
 
   private buildDisposition(context: RequestContext, input: DispositionInput): AppointmentDisposition {
@@ -4420,7 +4479,7 @@ export class CoreService {
       { appointmentId: appointment.id, patientId: appointment.patientId, reason: input.reason, requestedAction: "reschedule" },
       context
     );
-    return appointment;
+    return this.decorateAppointment(context, appointment);
   }
 
   async lookupMobileLinkSession(context: RequestContext, token: string) {
@@ -4437,28 +4496,11 @@ export class CoreService {
           entry.patientId === patient.id &&
           ["scheduled", "confirmed", "rescheduled", "checked_in", "in_consult"].includes(entry.status)
       )
-      .map((entry) => {
-        // Enrich with branch contact info so the PWA can show the address + a
-        // Directions link ({{address}}/{{mapLink}} equivalents) and a real
-        // support phone — never the app's placeholder number.
-        const branch = this.data.branches.find(
-          (b) => b.id === entry.branchId && b.tenantId === context.tenantId
-        );
-        // Resolve the doctor's current name/specialty from the live record (the
-        // name on the appointment is denormalized and can be stale after a rename).
-        const doctor = entry.doctorId
-          ? this.data.doctors.find((d) => d.id === entry.doctorId && d.tenantId === context.tenantId)
-          : undefined;
-        return {
-          ...entry,
-          doctorName: doctor?.displayName ?? entry.doctorName,
-          specialty: doctor?.specialty ?? entry.specialty,
-          branchName: branch?.displayName,
-          phone: branch?.phone,
-          address: branch?.address,
-          mapUrl: branch?.mapUrl
-        };
-      });
+      // Resolve doctor name/specialty + branch contact (branchName/phone/address/
+      // mapUrl) from the live records via the shared decorator, so the PWA shows
+      // current values and a real support phone — never a stale copy or the app's
+      // placeholder number.
+      .map((entry) => this.decorateAppointment(context, entry));
     // The hospital's real name + a support phone, so the PWA shows this tenant's
     // branding instead of falling back to a demo placeholder.
     const org = this.data.organizations.find((entry) => entry.id === context.tenantId);
@@ -5486,11 +5528,15 @@ export class CoreService {
       }));
     const appointmentEvents = this.data.appointments
       .filter((entry) => entry.tenantId === context.tenantId && entry.patientId === patientId)
-      .map((entry) => ({
-        at: formatDue(entry.scheduledAt),
-        title: entry.reason,
-        note: `${entry.doctorName}, ${entry.specialty}`
-      }));
+      .map((raw) => {
+        // Resolve doctor name/specialty from the live record (stored copy may be stale).
+        const entry = this.decorateAppointment(context, raw);
+        return {
+          at: formatDue(entry.scheduledAt),
+          title: entry.reason,
+          note: `${entry.doctorName}, ${entry.specialty}`
+        };
+      });
 
     return [...interactionEvents, ...taskEvents, ...appointmentEvents].slice(0, 5);
   }

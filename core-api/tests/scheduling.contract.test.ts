@@ -12,6 +12,9 @@ describe("scheduling & appointments contract", () => {
   let token: string;
   let doctorId: string;
   let firstSlot: string;
+  // Kept so a test can corrupt a stored denormalized copy directly and prove the
+  // read-time decorator (not the updateDoctor backfill) resolves the live value.
+  let service: Awaited<ReturnType<typeof createCoreService>>;
   const previousEnv = {
     DATABASE_URL: process.env.DATABASE_URL,
     STAFF_SESSION_SECRET: process.env.STAFF_SESSION_SECRET,
@@ -22,7 +25,7 @@ describe("scheduling & appointments contract", () => {
     delete process.env.DATABASE_URL;
     process.env.STAFF_SESSION_SECRET = "scheduling_contract_secret";
     process.env.ALLOW_DEMO_SESSION_ISSUER = "true";
-    const service = await createCoreService();
+    service = await createCoreService();
     server = createApiServer(service);
     baseUrl = await listen(server);
 
@@ -144,6 +147,39 @@ describe("scheduling & appointments contract", () => {
       method: "PATCH",
       body: JSON.stringify({ displayName: "Dr. Test Sharma" })
     });
+  });
+
+  it("resolves the live doctor name on GET /appointments even when the stored copy is stale (decorator, not backfill)", async () => {
+    const date = nextMonday();
+    // Simulate a stored denormalized copy that has drifted out of sync with the
+    // live doctor record WITHOUT going through updateDoctor (so the backfill never
+    // ran). This isolates the read-time decorator: the appointment row physically
+    // holds a stale name/specialty, yet the endpoint must surface the live values.
+    const data = (service as unknown as {
+      data: {
+        appointments: Array<{ doctorId?: string; doctorName: string; specialty: string }>;
+      };
+    }).data;
+    const stale = data.appointments.filter((entry) => entry.doctorId === doctorId);
+    assert.ok(stale.length > 0, "expected at least one appointment for the doctor");
+    for (const entry of stale) {
+      entry.doctorName = "Dr. STALE COPY";
+      entry.specialty = "Stale Specialty";
+    }
+
+    const res = (await (await authed(`/appointments?doctorId=${doctorId}&date=${date}`)).json()) as {
+      data: Array<{ doctorName: string; specialty: string }>;
+    };
+    assert.ok(res.data.length > 0);
+    // Live record is "Dr. Test Sharma" (restored above) — decorator must win.
+    assert.ok(
+      res.data.every((a) => a.doctorName === "Dr. Test Sharma"),
+      "GET /appointments must surface the live doctor name, not the stale stored copy"
+    );
+    assert.ok(
+      res.data.every((a) => a.specialty !== "Stale Specialty"),
+      "GET /appointments must surface the live specialty, not the stale stored copy"
+    );
   });
 
   it("rejects double-booking the same slot with 409", async () => {
