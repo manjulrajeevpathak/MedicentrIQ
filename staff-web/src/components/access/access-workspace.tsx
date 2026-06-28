@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CalendarDays,
   Phone,
+  RotateCcw,
   Search,
   Send,
   Stethoscope,
@@ -50,6 +51,8 @@ type Props = {
 const statusTone: Record<AppointmentStatus, "good" | "neutral" | "high" | "brand" | "critical"> = {
   scheduled: "brand",
   confirmed: "good",
+  checked_in: "brand",
+  in_consult: "brand",
   rescheduled: "brand",
   completed: "good",
   cancelled: "critical",
@@ -524,7 +527,9 @@ function BookingTab({
               .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
               .map((appointment) => {
                 const busy = busyAppointmentId === appointment.id;
-                const terminal = ["cancelled", "completed", "no_show"].includes(appointment.status);
+                // Cancelled / no-show can be re-opened back to Scheduled. Completed is final.
+                const reopenable = ["cancelled", "no_show"].includes(appointment.status);
+                const done = appointment.status === "completed";
                 return (
                   <li key={appointment.id} className="p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -542,21 +547,33 @@ function BookingTab({
                         {APPOINTMENT_STATUS_LABELS[appointment.status]}
                       </Badge>
                     </div>
-                    {!terminal ? (
-                      <div className="mt-2.5 flex flex-wrap gap-1.5">
-                        {APPOINTMENT_ACTIONS.map((action) => (
-                          <Button
-                            key={action.status}
-                            variant={action.status === "cancelled" ? "subtle" : "outline"}
-                            size="sm"
-                            disabled={busy}
-                            onClick={() => changeStatus(appointment, action.status)}
-                          >
-                            {action.label}
-                          </Button>
-                        ))}
+                    {reopenable ? (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "scheduled")}>
+                          <RotateCcw className="size-3.5" /> Reopen
+                        </Button>
+                        <span className="text-[11px] text-ink-faint">Re-opens to Scheduled.</span>
                       </div>
-                    ) : null}
+                    ) : done ? null : (
+                      <>
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {APPOINTMENT_ACTIONS.map((action) => (
+                            <Button
+                              key={action.status}
+                              variant={action.status === "cancelled" ? "subtle" : "outline"}
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => changeStatus(appointment, action.status)}
+                            >
+                              {action.label}
+                            </Button>
+                          ))}
+                        </div>
+                        <p className="mt-1.5 text-[11px] text-ink-faint">
+                          Check-in & completion update automatically when the patient is seen in OPD.
+                        </p>
+                      </>
+                    )}
                   </li>
                 );
               })}

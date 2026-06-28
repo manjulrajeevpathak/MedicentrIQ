@@ -205,6 +205,58 @@ describe("scheduling & appointments contract", () => {
     assert.ok(res.status >= 400 && res.status < 500);
   });
 
+  it("OPD walk-in checks in + completes the linked same-day appointment", async () => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const wd = new Date(`${todayIso}T00:00:00.000Z`).getUTCDay();
+    const dr = (await (
+      await authed("/doctors", {
+        method: "POST",
+        body: JSON.stringify({ displayName: "Dr. OPD Link", specialty: "Ophthalmology", branchIds: ["blr-indiranagar"], slotMinutes: 15 })
+      })
+    ).json()) as { data: { id: string } };
+    const drId = dr.data.id;
+    await authed(`/doctors/${drId}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify({ slotMinutes: 15, weeklyHours: { [wd]: [{ start: "00:00", end: "23:45" }] } })
+    });
+
+    const appt = (await (
+      await authed("/appointments", {
+        method: "POST",
+        body: JSON.stringify({
+          doctorId: drId,
+          scheduledAt: `${todayIso}T12:00:00.000Z`,
+          patient: { name: "OPD Link Patient", phone: "+919733004400" }
+        })
+      })
+    ).json()) as { data: { id: string; patientId: string; status: string } };
+    assert.equal(appt.data.status, "scheduled");
+    const apptId = appt.data.id;
+    const pid = appt.data.patientId;
+    const apptStatus = async () => {
+      const list = (await (await authed(`/appointments?doctorId=${drId}&date=${todayIso}`)).json()) as {
+        data: Array<{ id: string; status: string }>;
+      };
+      return list.data.find((a) => a.id === apptId)?.status;
+    };
+
+    // Patient walks in → OPD visit auto-checks-in the appointment.
+    const visit = (await (
+      await authed("/visits", {
+        method: "POST",
+        body: JSON.stringify({ patientId: pid, doctorId: drId, chiefComplaint: "Walk-in" })
+      })
+    ).json()) as { data: { id: string } };
+    assert.equal(await apptStatus(), "checked_in");
+
+    // Completing the OPD visit auto-completes the appointment.
+    await authed(`/visits/${visit.data.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "completed", disposition: { outcome: "prescribed" } })
+    });
+    assert.equal(await apptStatus(), "completed");
+  });
+
   it("send-confirmations returns sent/failed counts", async () => {
     const res = await authed("/scheduling/send-confirmations", { method: "POST" });
     const body = (await res.json()) as { data: { sent: number; failed: number } };

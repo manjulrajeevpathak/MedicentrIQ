@@ -20,6 +20,7 @@ import type {
   AccessRequest,
   Appointment,
   AppointmentDisposition,
+  AppointmentStatus,
   AuditEvent,
   Call,
   CallDirection,
@@ -1909,6 +1910,32 @@ export class CoreService {
       updatedAt: timestamp
     };
     this.data.visits.push(visit);
+
+    // OPD inference: if this patient has a scheduled/confirmed appointment with
+    // this doctor today, link it and mark it checked-in (they walked in). The
+    // appointment then auto-completes when the visit is completed (see updateVisit).
+    if (!visit.appointmentId) {
+      const dateISO = visit.registeredAt.slice(0, 10);
+      const appt = this.data.appointments.find(
+        (a) =>
+          a.tenantId === context.tenantId &&
+          a.patientId === visit.patientId &&
+          (a.status === "scheduled" || a.status === "confirmed") &&
+          a.scheduledAt.slice(0, 10) === dateISO &&
+          (!visit.doctorId || a.doctorId === visit.doctorId)
+      );
+      if (appt) {
+        visit.appointmentId = appt.id;
+        appt.status = "checked_in";
+        appt.updatedAt = nowIso();
+        await this.persistence.saveCollection("appointments", this.data.appointments);
+        await this.audit(context, "appointment.update", "appointment", appt.id, appt.patientId, {
+          status: "checked_in",
+          via: "opd"
+        });
+      }
+    }
+
     await this.persistence.saveCollection("visits", this.data.visits);
     await this.audit(context, "visit.register", "visit", visit.id, visit.patientId, {
       visitType,
@@ -1916,6 +1943,31 @@ export class CoreService {
       department
     });
     return this.visitView(context, visit);
+  }
+
+  /** Keep a visit's linked appointment in lock-step with the visit's status. */
+  private async syncLinkedAppointment(context: RequestContext, visit: Visit): Promise<void> {
+    if (!visit.appointmentId) return;
+    const appt = this.data.appointments.find(
+      (a) => a.id === visit.appointmentId && a.tenantId === context.tenantId
+    );
+    if (!appt || appt.status === "cancelled") return;
+    const map: Record<VisitStatus, AppointmentStatus | undefined> = {
+      registered: "checked_in",
+      in_consult: "in_consult",
+      completed: "completed",
+      left_without_seen: "no_show"
+    };
+    const target = map[visit.status];
+    if (target && appt.status !== target) {
+      appt.status = target;
+      appt.updatedAt = nowIso();
+      await this.persistence.saveCollection("appointments", this.data.appointments);
+      await this.audit(context, "appointment.update", "appointment", appt.id, appt.patientId, {
+        status: target,
+        via: "opd"
+      });
+    }
   }
 
   async updateVisit(context: RequestContext, visitId: string, input: UpdateVisitInput) {
@@ -1970,6 +2022,10 @@ export class CoreService {
         visit.status = next;
       }
     }
+
+    // OPD inference: advance the linked appointment to match (in_consult →
+    // in_consult, completed → completed, left_without_seen → no_show).
+    await this.syncLinkedAppointment(context, visit);
 
     visit.updatedAt = nowIso();
     await this.persistence.saveCollection("visits", this.data.visits);

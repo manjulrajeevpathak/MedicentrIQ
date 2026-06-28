@@ -36,6 +36,8 @@ export type Slot = {
 export type AppointmentStatus =
   | "scheduled"
   | "confirmed"
+  | "checked_in"
+  | "in_consult"
   | "cancelled"
   | "completed"
   | "no_show"
@@ -87,6 +89,8 @@ export const APPOINTMENT_ACTIONS: { status: Extract<AppointmentStatus, "confirme
 export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
   scheduled: "Scheduled",
   confirmed: "Confirmed",
+  checked_in: "Checked in",
+  in_consult: "In consult",
   cancelled: "Cancelled",
   completed: "Completed",
   no_show: "No-show",
