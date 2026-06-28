@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -8,9 +8,9 @@ import {
   ClipboardPlus,
   Clock,
   FileText,
+  Loader2,
   Phone,
   Plus,
-  Search,
   Stethoscope,
   Upload,
   UserPlus,
@@ -395,6 +395,16 @@ function RegisterModal({
     });
   }
 
+  // Auto-lookup: once a full phone number is typed, look the patient up (debounced)
+  // — no manual button press needed.
+  useEffect(() => {
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 10) return;
+    const handle = setTimeout(() => runLookup(), 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phone]);
+
   const selectedDoctor = doctors.find((d) => d.id === doctorId);
 
   function submit() {
@@ -453,28 +463,30 @@ function RegisterModal({
       <div className="max-h-[68vh] space-y-5 overflow-y-auto p-5">
         {/* Step 1 — lookup */}
         <div className="rounded-xl border border-line bg-surface-muted p-3.5">
-          <p className="mb-2 text-xs font-medium text-ink-soft">Look up by phone</p>
-          <div className="flex gap-2">
-            <div className="flex flex-1 items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-200">
-              <Phone className="size-4 text-ink-faint" />
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    runLookup();
-                  }
-                }}
-                inputMode="tel"
-                placeholder="+91…"
-                aria-label="Phone number"
-                className="h-10 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
-              />
-            </div>
-            <Button variant="outline" onClick={runLookup} disabled={lookingUp}>
-              <Search className="size-3.5" /> {lookingUp ? "Looking…" : "Look up"}
-            </Button>
+          <p className="mb-2 text-xs font-medium text-ink-soft">
+            Find patient by phone <span className="font-normal text-ink-faint">— searches as you type</span>
+          </p>
+          <div className="flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-200">
+            <Phone className="size-4 text-ink-faint" />
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  runLookup();
+                }
+              }}
+              inputMode="tel"
+              placeholder="+91…"
+              aria-label="Phone number"
+              className="h-10 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
+            />
+            {lookingUp ? (
+              <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-ink-muted">
+                <Loader2 className="size-3.5 animate-spin" /> Searching…
+              </span>
+            ) : null}
           </div>
 
           {lookup ? (
