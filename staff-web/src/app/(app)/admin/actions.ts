@@ -125,7 +125,7 @@ export async function saveChannelsAction(_prev: ChannelActionState, formData: Fo
 
   const result = await coreApi<unknown>("/tenant/channels", { method: "PATCH", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the channel." };
-  revalidatePath("/admin");
+  revalidatePath("/communications/channels");
   return { ok: true, message: "Channel saved." };
 }
 
@@ -141,7 +141,7 @@ export async function sendTestMessageAction(_prev: ChannelActionState, formData:
 
   const result = await coreApi<{ ok: boolean; channel: string; error?: string }>("/messages/test", { method: "POST", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not send the test." };
-  revalidatePath("/admin");
+  revalidatePath("/communications/channels");
   if (!result.data.ok) return { ok: false, error: result.data.error ?? "The provider rejected the message." };
   return { ok: true, message: `Test sent via ${result.data.channel}.` };
 }
@@ -167,6 +167,6 @@ export async function saveNotificationRuleAction(
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the notification." };
-  revalidatePath("/admin");
+  revalidatePath("/communications/templates");
   return { ok: true, message: "Notification saved." };
 }

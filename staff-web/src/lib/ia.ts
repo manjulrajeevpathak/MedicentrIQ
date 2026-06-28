@@ -6,7 +6,9 @@ import {
   IndianRupee,
   Inbox,
   LayoutDashboard,
+  MailCheck,
   Megaphone,
+  Radio,
   Route,
   Settings2,
   ShieldCheck,
@@ -76,6 +78,13 @@ export const navGroups: NavGroup[] = [
       { href: "/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
       { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
       { href: "/billing", label: "Billing", icon: IndianRupee, description: "Invoices and payments — billed vs settled", module: "billing" }
+    ]
+  },
+  {
+    label: "Communications",
+    items: [
+      { href: "/communications/channels", label: "Channels", icon: Radio, description: "WhatsApp & telephony credentials", module: "admin", requires: "audit:view" },
+      { href: "/communications/templates", label: "Templates", icon: MailCheck, description: "Appointment message templates & timing", module: "admin", requires: "audit:view" }
     ]
   },
   {

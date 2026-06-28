@@ -2,10 +2,7 @@ import { Lock } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty";
 import { AdminView } from "@/components/admin/admin-view";
-import { IntegrationsPanel } from "@/components/admin/integrations-panel";
-import { NotificationsPanel } from "@/components/admin/notifications-panel";
-import { fetchAppointmentNotifications, fetchBranches, fetchChannels, fetchUsers } from "@/lib/users-api";
-import type { AppointmentNotifications, ChannelStatus } from "@/lib/users-types";
+import { fetchBranches, fetchUsers } from "@/lib/users-api";
 
 export const dynamic = "force-dynamic";
 
@@ -35,23 +32,7 @@ export default async function AdminPage() {
     );
   }
 
-  const [branches, channelsResult, notificationsResult] = await Promise.all([
-    fetchBranches(),
-    fetchChannels(),
-    fetchAppointmentNotifications()
-  ]);
-  const channels: ChannelStatus = channelsResult.ok
-    ? channelsResult.data
-    : {
-        ultramsg: { configured: false, enabled: false, instanceId: null, tokenTail: null },
-        aisensy: { configured: false, enabled: false, apiKeyTail: null },
-        telephony: { configured: false, enabled: false, provider: null, callerId: null, apiKeyTail: null }
-      };
-
-  const emptyRule = { enabled: false, body: "" };
-  const notifications: AppointmentNotifications = notificationsResult.ok
-    ? notificationsResult.data
-    : { booked: emptyRule, reminder24h: emptyRule, reminder3h: emptyRule, cancelled: emptyRule };
+  const branches = await fetchBranches();
 
   return (
     <div className="space-y-8">
@@ -61,8 +42,6 @@ export default async function AdminPage() {
         mfaPolicy={usersResult.data.mfaPolicy}
         branches={branches}
       />
-      <IntegrationsPanel channels={channels} />
-      <NotificationsPanel notifications={notifications} />
     </div>
   );
 }
