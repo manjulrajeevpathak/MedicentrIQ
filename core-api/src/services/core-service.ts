@@ -2224,16 +2224,82 @@ export class CoreService {
     }
   }
 
+  /** Resolve the base time a `relative` stage is anchored to, per its anchorEvent.
+   *  Returns null when the anchor isn't known yet (e.g. `visit_end` before the
+   *  visit has been completed) so the scheduler simply waits. */
+  private resolveAnchorMs(run: WorkflowRun, appointment: Appointment, anchorEvent: string): number | null {
+    let iso: string | undefined;
+    if (anchorEvent === "enrollment") iso = run.startedAt;
+    else if (anchorEvent === "visit_end") iso = run.visitEndAt;
+    else iso = appointment.scheduledAt; // appointment_start (default)
+    if (!iso) return null;
+    const ms = new Date(iso).getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+
+  /** Mark a run completed once nothing is left pending. Returns true if it changed. */
+  private maybeCompleteRun(run: WorkflowRun): boolean {
+    if (run.status !== "active") return false;
+    if (run.stageRuns.some((s) => s.status === "pending")) return false;
+    run.status = "completed";
+    run.completedAt = nowIso();
+    run.updatedAt = run.completedAt;
+    return true;
+  }
+
+  /** The appointment/visit finished: stamp the visit-end anchor, retire stages that
+   *  can no longer fire (pre-visit timing + mutually-exclusive events), fire any
+   *  `visit_completed` stages, and KEEP the run alive for `visit_end`-anchored stages
+   *  (e.g. a revisit reminder weeks later). The run auto-completes once nothing is
+   *  pending. Best-effort — never throws. */
+  private async completeAppointmentRuns(context: RequestContext, appointment: Appointment): Promise<void> {
+    try {
+      const ts = nowIso();
+      const runs = this.data.workflowRuns.filter(
+        (run) =>
+          run.tenantId === context.tenantId &&
+          run.anchorType === "appointment" &&
+          run.anchorId === appointment.id &&
+          run.status === "active"
+      );
+      for (const run of runs) {
+        if (!run.visitEndAt) run.visitEndAt = ts;
+        const workflow = this.data.workflows.find((w) => w.id === run.workflowId && w.tenantId === context.tenantId);
+        for (const stageRun of run.stageRuns) {
+          if (stageRun.status !== "pending") continue;
+          const trigger = workflow?.stages.find((s) => s.key === stageRun.stageKey)?.trigger;
+          // Keep only what can still legitimately fire after completion.
+          const keep =
+            (trigger?.type === "on_event" && trigger.event === "visit_completed") ||
+            (trigger?.type === "relative" && trigger.anchorEvent === "visit_end");
+          if (!keep) stageRun.status = "skipped";
+        }
+      }
+      // Fire any visit_completed on_event stages (persists internally).
+      await this.signalWorkflowEvent(context, appointment, "visit_completed");
+      let mutated = runs.length > 0;
+      for (const run of runs) {
+        if (this.maybeCompleteRun(run)) mutated = true;
+      }
+      if (mutated) {
+        await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
   /**
    * Time-based workflow scheduler (replaces runAppointmentReminders). Scans every
    * active appointment-anchored run; for each enabled `relative` stage with a still
-   * "pending" StageRun, computes dueAt = appointment.scheduledAt + offsetHours and
-   * fires when due (and not absurdly past). MIRRORS the old now/dueAt wall-clock-as-
-   * UTC handling: scheduledAt encodes wall-clock as UTC, offsets are relative to it.
+   * "pending" StageRun, computes dueAt = anchor + offsetHours (anchor per the stage's
+   * anchorEvent — appointment start, enrollment, or visit end) and fires when due
+   * (and not absurdly past). MIRRORS the old wall-clock-as-UTC handling.
    */
   async runWorkflowScheduler(): Promise<{ fired: number; byStage: Record<string, number> }> {
     const byStage: Record<string, number> = {};
     let fired = 0;
+    let mutated = false;
     const now = Date.now();
     const H = 60 * 60_000;
     // Don't fire a reminder whose due time is absurdly in the past (e.g. a run that
@@ -2250,14 +2316,17 @@ export class CoreService {
       if (!appointment) {
         continue;
       }
-      // Stop reminders once the appointment is cancelled/completed/no-show.
-      if (appointment.status === "cancelled" || appointment.status === "completed" || appointment.status === "no_show") {
-        await this.closeAppointmentRuns(
-          this.systemContext(run.tenantId),
-          appointment.id,
-          appointment.status === "cancelled" ? "cancelled" : "completed"
-        );
+      // Cancelled / no-show are terminal — stop everything.
+      if (appointment.status === "cancelled" || appointment.status === "no_show") {
+        await this.closeAppointmentRuns(this.systemContext(run.tenantId), appointment.id, "cancelled");
         continue;
+      }
+      // A completed appointment is NOT terminal for the run: visit_end-anchored
+      // stages (e.g. a revisit reminder) still need to fire. Stamp the visit-end
+      // anchor if it wasn't set, then fall through to process stages.
+      if (appointment.status === "completed" && !run.visitEndAt) {
+        run.visitEndAt = appointment.updatedAt ?? new Date(now).toISOString();
+        mutated = true;
       }
       const startMs = new Date(appointment.scheduledAt).getTime();
       if (Number.isNaN(startMs)) {
@@ -2284,19 +2353,25 @@ export class CoreService {
         if (!stageRun || stageRun.status !== "pending") {
           continue;
         }
-        const dueMs = startMs + stage.trigger.offsetHours * H;
+        const anchorMs = this.resolveAnchorMs(run, appointment, stage.trigger.anchorEvent);
+        if (anchorMs == null) continue; // anchor not known yet (e.g. visit_end before completion)
+        const dueMs = anchorMs + stage.trigger.offsetHours * H;
         // Due window: now has reached dueAt, and dueAt is not absurdly past.
         if (now >= dueMs && now - dueMs <= GRACE_MS) {
           await this.fireStage(context, run, stage, appointment, patient);
           // Re-read: fireStage mutates the StageRun (TS can't see it through the call).
           if (this.stageRunFor(run, stage.key)?.status === "sent") {
             fired += 1;
+            mutated = true;
             byStage[stage.key] = (byStage[stage.key] ?? 0) + 1;
           }
         }
       }
+      // A run with nothing left pending is done (e.g. a completed appointment whose
+      // revisit reminder has now fired).
+      if (this.maybeCompleteRun(run)) mutated = true;
     }
-    if (fired > 0) {
+    if (mutated) {
       await this.persistence.saveCollection("workflowRuns", this.data.workflowRuns);
     }
     return { fired, byStage };
@@ -2623,6 +2698,8 @@ export class CoreService {
           status: "checked_in",
           via: "opd"
         });
+        // Drive any "Patient checked in" workflow stages.
+        await this.signalWorkflowEvent(context, appt, "checked_in");
       }
     }
 
@@ -2657,6 +2734,10 @@ export class CoreService {
         status: target,
         via: "opd"
       });
+      // Drive the workflow runtime off the visit-driven status change.
+      if (target === "checked_in") await this.signalWorkflowEvent(context, appt, "checked_in");
+      else if (target === "completed") await this.completeAppointmentRuns(context, appt);
+      else if (target === "no_show") await this.closeAppointmentRuns(context, appt.id, "cancelled");
     }
   }
 
@@ -4520,14 +4601,18 @@ export class CoreService {
         nextStep: appointment.disposition?.nextStep
       });
     }
-    // Best-effort cancellation notice via the workflow runtime. Never fails the
-    // status update. Cancelling/completing also stops the appointment's time-based
-    // reminders by closing its active runs.
+    // Drive the workflow runtime off the status change (best-effort — never fails
+    // the status update). Cancel/no-show are terminal; "completed" stamps the
+    // visit-end anchor and keeps the run alive for any post-visit (revisit) stages.
     if (input.status === "cancelled") {
       await this.signalWorkflowEvent(context, appointment, "cancelled");
       await this.closeAppointmentRuns(context, appointment.id, "cancelled");
-    } else if (input.status === "completed" || input.status === "no_show") {
-      await this.closeAppointmentRuns(context, appointment.id, "completed");
+    } else if (input.status === "checked_in") {
+      await this.signalWorkflowEvent(context, appointment, "checked_in");
+    } else if (input.status === "completed") {
+      await this.completeAppointmentRuns(context, appointment);
+    } else if (input.status === "no_show") {
+      await this.closeAppointmentRuns(context, appointment.id, "cancelled");
     }
     return this.decorateAppointment(context, appointment);
   }
@@ -4764,6 +4849,8 @@ export class CoreService {
       outcome: appointment.disposition.outcome,
       nextStep: appointment.disposition.nextStep
     });
+    // Visit done → fire visit_completed + keep the run alive for revisit stages.
+    await this.completeAppointmentRuns(context, appointment);
     return this.decorateAppointment(context, appointment);
   }
 

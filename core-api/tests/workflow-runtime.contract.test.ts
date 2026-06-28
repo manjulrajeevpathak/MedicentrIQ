@@ -302,6 +302,63 @@ describe("communication workflow runtime contract", () => {
     assert.equal(typeof body.data.fired, "number");
     assert.equal(typeof body.data.byStage, "object");
   });
+
+  it("drives checked_in + visit_completed events and a visit_end revisit stage; the run survives completion", async () => {
+    const mkTemplate = async (name: string, body: string) =>
+      (
+        (await (
+          await authed("/templates", { method: "POST", body: JSON.stringify({ name, channel: "whatsapp", kind: "text", body }) })
+        ).json()) as { data: { id: string } }
+      ).data.id;
+    const tCheckin = await mkTemplate("WF checked in", "Welcome {{patientName}}, you are checked in.");
+    const tDone = await mkTemplate("WF visit done", "Thanks {{patientName}}, your visit is complete.");
+    const tRevisit = await mkTemplate("WF revisit", "{{patientName}}, time to book your follow-up.");
+
+    const wf = (
+      (await (
+        await authed("/workflows", {
+          method: "POST",
+          body: JSON.stringify({
+            name: "OPD lifecycle test",
+            anchor: "appointment",
+            stages: [
+              { key: "s_in", name: "Checked in", action: "message", templateId: tCheckin, trigger: { type: "on_event", event: "checked_in" }, enabled: true },
+              { key: "s_done", name: "Visit done", action: "message", templateId: tDone, trigger: { type: "on_event", event: "visit_completed" }, enabled: true },
+              { key: "s_revisit", name: "Revisit", action: "message", templateId: tRevisit, trigger: { type: "relative", anchorEvent: "visit_end", offsetHours: 0 }, enabled: true }
+            ]
+          })
+        })
+      ).json()) as { data: { id: string } }
+    ).data;
+    await authed(`/workflows/${wf.id}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) });
+
+    const slot = await openSlot();
+    const booked = (
+      (await (
+        await authed("/appointments", {
+          method: "POST",
+          body: JSON.stringify({ patient: { name: "OPD Tester", phone: "+919800050005" }, doctorId, scheduledAt: slot, reason: "OPD lifecycle" })
+        })
+      ).json()) as { data: { id: string } }
+    ).data;
+    const myRun = () => service.listAppointmentWorkflowRunsForTest(booked.id).find((r) => r.workflowId === wf.id)!;
+
+    // Check in → the checked_in stage fires.
+    await authed(`/appointments/${booked.id}`, { method: "PATCH", body: JSON.stringify({ status: "checked_in" }) });
+    assert.ok((await messages(tCheckin)).length >= 1, "checked_in stage fired a message");
+
+    // Complete → visit_completed fires; the run stays alive for the visit_end stage.
+    await authed(`/appointments/${booked.id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
+    assert.ok((await messages(tDone)).length >= 1, "visit_completed stage fired a message");
+    assert.equal(myRun().status, "active", "run survives completion (a visit_end stage is still pending)");
+    assert.ok(myRun().visitEndAt, "visit-end anchor was stamped on completion");
+    assert.equal((await messages(tRevisit)).length, 0, "the revisit stage has not fired before the scheduler runs");
+
+    // Scheduler → the visit_end+0 revisit stage fires, then the run auto-completes.
+    await service.runWorkflowScheduler();
+    assert.ok((await messages(tRevisit)).length >= 1, "visit_end-anchored revisit stage fired via the scheduler");
+    assert.equal(myRun().status, "completed", "run auto-completes once nothing is pending");
+  });
 });
 
 function restoreEnv(values: Record<string, string | undefined>) {

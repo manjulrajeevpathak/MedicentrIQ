@@ -316,6 +316,9 @@ export type WorkflowRun = {
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** Stamped when the appointment/visit is completed — the anchor for any
+   *  `visit_end`-relative stages (e.g. a revisit reminder N days after the visit). */
+  visitEndAt?: string;
 };
 
 // ---- Telephony (per-tenant call log) --------------------------------------
