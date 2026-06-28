@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { Bell, CalendarCheck, Clock, XCircle } from "lucide-react";
+import { Bell, CalendarCheck, CalendarClock, Clock, XCircle } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -60,6 +60,13 @@ const EVENTS: EventMeta[] = [
     label: "On cancellation",
     when: "Sent immediately when an appointment is cancelled.",
     icon: <XCircle className="size-4 text-brand-600" />,
+    needsConfirmLink: false
+  },
+  {
+    event: "rescheduled",
+    label: "On reschedule",
+    when: "Sent when the patient picks a new slot from the secure link (no confirm link — they already chose it).",
+    icon: <CalendarClock className="size-4 text-brand-600" />,
     needsConfirmLink: false
   }
 ];

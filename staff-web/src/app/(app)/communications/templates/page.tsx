@@ -10,7 +10,7 @@ export default async function TemplatesPage() {
   const emptyRule = { enabled: false, body: "" };
   const notifications: AppointmentNotifications = notificationsResult.ok
     ? notificationsResult.data
-    : { booked: emptyRule, reminder24h: emptyRule, reminder3h: emptyRule, cancelled: emptyRule };
+    : { booked: emptyRule, reminder24h: emptyRule, reminder3h: emptyRule, cancelled: emptyRule, rescheduled: emptyRule };
 
   return (
     <div className="space-y-6">

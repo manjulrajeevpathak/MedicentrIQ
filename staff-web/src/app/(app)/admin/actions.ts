@@ -149,7 +149,7 @@ export async function sendTestMessageAction(_prev: ChannelActionState, formData:
 
 // ---- Appointment notifications --------------------------------------------
 
-const NOTIFICATION_EVENTS: NotificationEvent[] = ["booked", "reminder24h", "reminder3h", "cancelled"];
+const NOTIFICATION_EVENTS: NotificationEvent[] = ["booked", "reminder24h", "reminder3h", "cancelled", "rescheduled"];
 
 export async function saveNotificationRuleAction(
   event: NotificationEvent,

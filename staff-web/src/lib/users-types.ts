@@ -52,13 +52,14 @@ export type ChannelStatus = {
 
 export type NotificationRule = { enabled: boolean; body: string; offsetHours?: number };
 
-export type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled";
+export type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled" | "rescheduled";
 
 export type AppointmentNotifications = {
   booked: NotificationRule;
   reminder24h: NotificationRule;
   reminder3h: NotificationRule;
   cancelled: NotificationRule;
+  rescheduled: NotificationRule;
 };
 
 export const STAFF_ROLES: { value: StaffRole; label: string }[] = [
