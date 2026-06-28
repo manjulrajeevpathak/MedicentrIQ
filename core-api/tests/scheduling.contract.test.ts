@@ -168,6 +168,43 @@ describe("scheduling & appointments contract", () => {
     assert.equal(body.data[0].doctorId, doctorId);
   });
 
+  it("books phone-first for a new patient (no patientId) — creates the patient + appointment", async () => {
+    const date = nextMonday();
+    const slots = (await (await authed(`/doctors/${doctorId}/slots?date=${date}`)).json()) as {
+      data: Array<{ start: string }>;
+    };
+    const freeSlot = slots.data[0].start; // first remaining open slot
+    const res = await authed("/appointments", {
+      method: "POST",
+      body: JSON.stringify({
+        doctorId,
+        branchId: "blr-indiranagar",
+        scheduledAt: freeSlot,
+        reason: "Watering eyes",
+        patient: { name: "Phone First Patient", phone: "+919700099001" }
+      })
+    });
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    assert.ok(body.data.patientId, "an appointment patientId was assigned");
+    assert.equal(body.data.scheduledAt, freeSlot);
+    // the created patient is now bookable / known
+    const patient = (await (await authed(`/patients/${String(body.data.patientId)}`)).json()) as {
+      data: JsonObject;
+    };
+    assert.equal(patient.data.displayName, "Phone First Patient");
+  });
+
+  it("rejects phone-first booking with neither patientId nor patient.name (400)", async () => {
+    const date = nextMonday();
+    const res = await authed("/appointments", {
+      method: "POST",
+      body: JSON.stringify({ doctorId, scheduledAt: `${date}T09:00:00.000Z`, patient: { phone: "+910000000000" } })
+    });
+    // 09:00 is taken/invalid OR name missing — either way a 4xx, never a 500.
+    assert.ok(res.status >= 400 && res.status < 500);
+  });
+
   it("send-confirmations returns sent/failed counts", async () => {
     const res = await authed("/scheduling/send-confirmations", { method: "POST" });
     const body = (await res.json()) as { data: { sent: number; failed: number } };

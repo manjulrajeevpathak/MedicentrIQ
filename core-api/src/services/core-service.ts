@@ -147,6 +147,8 @@ type CreateAppointmentInput = {
 
 type BookAppointmentInput = {
   patientId?: string;
+  /** Phone-first booking: when no patientId, create the patient from these. */
+  patient?: { name?: string; phone?: string; gender?: Patient["gender"]; age?: number };
   doctorId?: string;
   branchId?: string;
   scheduledAt?: string;
@@ -1854,38 +1856,14 @@ export class CoreService {
     const visitType: VisitType = input.visitType === "appointment" ? "appointment" : "walk_in";
 
     // Resolve the patient: existing id, or create one (lead conversion best-effort).
-    let patient: Patient;
-    if (typeof input.patientId === "string" && input.patientId.trim()) {
-      patient = this.ensureKnownPatient(context, input.patientId.trim());
-    } else {
-      const name = ensureString(input.name, "name");
-      const phone =
-        typeof input.phone === "string" && input.phone.trim() ? input.phone.trim() : undefined;
-      const summary = await this.createPatient(context, {
-        displayName: name,
-        age: input.age,
-        gender: input.gender,
-        primaryPhone: phone,
-        branchId: input.branchId
-      });
-      patient = this.ensureKnownPatient(context, summary.id);
-
-      // Best-effort: if a lead matched this phone, mark it converted.
-      const normalized = phone ? normalizePhone(phone) : undefined;
-      if (normalized) {
-        const lead = this.data.leads
-          .filter((entry) => entry.tenantId === context.tenantId && normalizePhone(entry.phone) === normalized)
-          .filter((entry) => !entry.convertedPatientId)
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-        if (lead) {
-          lead.convertedPatientId = patient.id;
-          lead.matchedPatientId = lead.matchedPatientId ?? patient.id;
-          lead.stage = "converted";
-          lead.updatedAt = nowIso();
-          await this.persistence.saveCollection("leads", this.data.leads);
-        }
-      }
-    }
+    const patient = await this.resolveOrCreatePatient(context, {
+      patientId: input.patientId,
+      name: input.name,
+      phone: input.phone,
+      gender: input.gender,
+      age: input.age,
+      branchId: input.branchId
+    });
 
     // Resolve the doctor (name + department) if a doctorId is given.
     let doctorId: string | undefined;
@@ -3458,9 +3436,47 @@ export class CoreService {
    * Book an appointment against a doctor's computed schedule. Validates the requested
    * slot falls inside the doctor's weekly availability AND is not already taken (409).
    */
+  /**
+   * Resolve a patient by id, or create one from name/phone (phone-first intake).
+   * When a new patient is created and a lead matches the phone, the lead is
+   * best-effort marked converted. Shared by OPD visits and appointment booking.
+   */
+  private async resolveOrCreatePatient(
+    context: RequestContext,
+    input: { patientId?: unknown; name?: unknown; phone?: unknown; gender?: Patient["gender"]; age?: number; branchId?: string }
+  ): Promise<Patient> {
+    if (typeof input.patientId === "string" && input.patientId.trim()) {
+      return this.ensureKnownPatient(context, input.patientId.trim());
+    }
+    const name = ensureString(input.name, "name");
+    const phone = typeof input.phone === "string" && input.phone.trim() ? input.phone.trim() : undefined;
+    const summary = await this.createPatient(context, {
+      displayName: name,
+      age: input.age,
+      gender: input.gender,
+      primaryPhone: phone,
+      branchId: input.branchId
+    });
+    const patient = this.ensureKnownPatient(context, summary.id);
+
+    const normalized = phone ? normalizePhone(phone) : undefined;
+    if (normalized) {
+      const lead = this.data.leads
+        .filter((entry) => entry.tenantId === context.tenantId && normalizePhone(entry.phone) === normalized)
+        .filter((entry) => !entry.convertedPatientId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (lead) {
+        lead.convertedPatientId = patient.id;
+        lead.matchedPatientId = lead.matchedPatientId ?? patient.id;
+        lead.stage = "converted";
+        lead.updatedAt = nowIso();
+        await this.persistence.saveCollection("leads", this.data.leads);
+      }
+    }
+    return patient;
+  }
+
   async bookAppointment(context: RequestContext, input: BookAppointmentInput) {
-    const patientId = ensureString(input.patientId, "patientId");
-    this.ensureKnownPatient(context, patientId);
     const doctorId = ensureString(input.doctorId, "doctorId");
     const doctor = this.ensureVisibleDoctor(context, doctorId);
     if (doctor.status !== "active") {
@@ -3495,8 +3511,19 @@ export class CoreService {
       throw new ApiError(400, "Requested time is outside the doctor's available schedule");
     }
 
+    // Slot is valid → resolve the patient (existing id, or create phone-first).
+    // Done after validation so a bad slot never creates an orphan patient.
+    const patient = await this.resolveOrCreatePatient(context, {
+      patientId: input.patientId,
+      name: input.patient?.name,
+      phone: input.patient?.phone,
+      gender: input.patient?.gender,
+      age: input.patient?.age,
+      branchId
+    });
+
     return this.createAppointment(context, {
-      patientId,
+      patientId: patient.id,
       doctorId: doctor.id,
       doctorName: doctor.displayName,
       specialty: doctor.specialty ?? "Consultation",
