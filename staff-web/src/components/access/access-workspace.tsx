@@ -34,7 +34,7 @@ import {
   sendConfirmationsAction,
   setAppointmentStatusAction,
   type IntakeLookup
-} from "@/app/(app)/access/actions";
+} from "@/app/(app)/appointments/actions";
 
 type Props = {
   doctors: Doctor[];

@@ -8,7 +8,7 @@ import type { Appointment, AppointmentStatus, Slot } from "@/lib/scheduling-type
 /**
  * Appointments / scheduling server actions. Each reads the session bearer (via
  * `coreApi`) and calls core-api, surfacing the `{error.message}` envelope, then
- * revalidates the /access route so the server-rendered view reflects changes.
+ * revalidates the /appointments route so the server-rendered view reflects changes.
  */
 
 export type ActionState<T = unknown> = {
@@ -91,7 +91,7 @@ export async function bookAppointmentAction(input: {
     // 409 (slot taken) / 400 (outside schedule) messages are surfaced verbatim.
     return { ok: false, error: result.error ?? "Could not book the appointment." };
   }
-  revalidatePath("/access");
+  revalidatePath("/appointments");
   return { ok: true, data: result.data, message: "Appointment booked." };
 }
 
@@ -106,7 +106,7 @@ export async function setAppointmentStatusAction(
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not update the appointment." };
   }
-  revalidatePath("/access");
+  revalidatePath("/appointments");
   return { ok: true, data: result.data, message: "Appointment updated." };
 }
 
@@ -117,7 +117,7 @@ export async function sendConfirmationsAction(): Promise<ActionState<{ sent: num
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not send confirmations." };
   }
-  revalidatePath("/access");
+  revalidatePath("/appointments");
   return {
     ok: true,
     data: result.data,

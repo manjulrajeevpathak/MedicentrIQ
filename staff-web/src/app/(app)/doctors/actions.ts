@@ -7,7 +7,7 @@ import type { Doctor, WeeklyHours } from "@/lib/scheduling-types";
 /**
  * Doctor-management server actions. Each reads the session bearer (via
  * `coreApi`) and calls core-api, surfacing the `{error.message}` envelope, then
- * revalidates the /doctors and /access routes (booking reads the doctor list).
+ * revalidates the /doctors and /appointments routes (booking reads the doctor list).
  */
 
 export type ActionState<T = unknown> = {
@@ -40,7 +40,7 @@ export async function createDoctorAction(input: {
     return { ok: false, error: result.error ?? "Could not add the doctor." };
   }
   revalidatePath("/doctors");
-  revalidatePath("/access");
+  revalidatePath("/appointments");
   return { ok: true, data: result.data, message: "Doctor added." };
 }
 
@@ -62,7 +62,7 @@ export async function updateDoctorAction(
     return { ok: false, error: result.error ?? "Could not update the doctor." };
   }
   revalidatePath("/doctors");
-  revalidatePath("/access");
+  revalidatePath("/appointments");
   return { ok: true, data: result.data, message: "Doctor updated." };
 }
 
@@ -79,6 +79,6 @@ export async function setDoctorScheduleAction(
     return { ok: false, error: result.error ?? "Could not save the schedule." };
   }
   revalidatePath("/doctors");
-  revalidatePath("/access");
+  revalidatePath("/appointments");
   return { ok: true, data: result.data, message: "Schedule saved." };
 }
