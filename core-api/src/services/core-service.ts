@@ -4403,30 +4403,43 @@ export class CoreService {
     }
     const patient = this.summarizePatient(context, this.ensureKnownPatient(context, session.patientId));
     await this.audit(context, "mobile_link.lookup", "mobile_link_session", session.token, session.patientId);
+    const appointments = this.data.appointments
+      .filter(
+        (entry) =>
+          entry.tenantId === context.tenantId &&
+          entry.patientId === patient.id &&
+          ["scheduled", "confirmed", "rescheduled", "checked_in", "in_consult"].includes(entry.status)
+      )
+      .map((entry) => {
+        // Enrich with branch contact info so the PWA can show the address + a
+        // Directions link ({{address}}/{{mapLink}} equivalents) and a real
+        // support phone — never the app's placeholder number.
+        const branch = this.data.branches.find(
+          (b) => b.id === entry.branchId && b.tenantId === context.tenantId
+        );
+        return {
+          ...entry,
+          branchName: branch?.displayName,
+          phone: branch?.phone,
+          address: branch?.address,
+          mapUrl: branch?.mapUrl
+        };
+      });
+    // The hospital's real name + a support phone, so the PWA shows this tenant's
+    // branding instead of falling back to a demo placeholder.
+    const org = this.data.organizations.find((entry) => entry.id === context.tenantId);
+    const supportBranch = this.data.branches.find(
+      (b) => b.tenantId === context.tenantId && !!b.phone
+    );
     return {
       session,
       patient,
+      organization: {
+        name: org?.displayName ?? "",
+        supportPhone: appointments.find((a) => a.phone)?.phone ?? supportBranch?.phone ?? ""
+      },
       household: patient.household ? this.householdView(context, patient.household) : undefined,
-      appointments: this.data.appointments
-        .filter(
-          (entry) =>
-            entry.tenantId === context.tenantId &&
-            entry.patientId === patient.id &&
-            ["scheduled", "confirmed", "rescheduled", "checked_in", "in_consult"].includes(entry.status)
-        )
-        .map((entry) => {
-          // Enrich with branch contact info so the PWA can show the address + a
-          // Directions link ({{address}}/{{mapLink}} equivalents).
-          const branch = this.data.branches.find(
-            (b) => b.id === entry.branchId && b.tenantId === context.tenantId
-          );
-          return {
-            ...entry,
-            branchName: branch?.displayName,
-            address: branch?.address,
-            mapUrl: branch?.mapUrl
-          };
-        }),
+      appointments,
       followUps: this.data.followUps.filter(
         (entry) => entry.tenantId === context.tenantId && entry.patientId === patient.id && entry.status === "due"
       )

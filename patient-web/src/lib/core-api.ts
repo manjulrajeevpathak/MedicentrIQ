@@ -130,6 +130,7 @@ type CoreAppointment = {
   specialty: string;
   branchId: string;
   branchName?: string;
+  phone?: string;
   address?: string;
   mapUrl?: string;
   scheduledAt: string;
@@ -139,6 +140,9 @@ type CoreSession = {
   session: { token: string; expiresAt: string; allowedActions: string[] };
   patient: { id: string; displayName: string; primaryPhone?: string };
   appointments: CoreAppointment[];
+  // The real hospital name + a support phone for this tenant (so we never fall
+  // back to demo branding for a live link).
+  organization?: { name?: string; supportPhone?: string };
   // Branch contact info may ride alongside the session rather than on the appointment.
   branch?: { name?: string; address?: string; mapUrl?: string };
   provider?: { name?: string; supportPhone?: string };
@@ -162,9 +166,12 @@ function mapSession(token: string, core: CoreSession): PatientLinkState {
       allowedActions: core.session.allowedActions.filter(isAllowedAction)
     },
     provider: {
-      name: core.provider?.name ?? base.provider.name,
+      // Prefer this tenant's real name/phone; only fall back to the demo brand
+      // when the live payload genuinely has none (never for the phone — an empty
+      // string hides the call CTA instead of showing a placeholder number).
+      name: core.organization?.name?.trim() || core.provider?.name || base.provider.name,
       branch: branchName,
-      supportPhone: core.provider?.supportPhone ?? base.provider.supportPhone
+      supportPhone: core.organization?.supportPhone?.trim() || appointment?.phone?.trim() || ""
     },
     patient: {
       id: core.patient.id,
