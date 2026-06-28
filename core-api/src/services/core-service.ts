@@ -526,6 +526,8 @@ type CreateVisitInput = {
 type UpdateVisitInput = {
   status?: string;
   doctorId?: string;
+  /** Reason for visit — fillable during the encounter if skipped at registration. */
+  chiefComplaint?: string;
   vitals?: unknown;
   diagnosis?: unknown;
   disposition?: unknown;
@@ -2636,7 +2638,9 @@ export class CoreService {
   }
 
   async createVisit(context: RequestContext, input: CreateVisitInput) {
-    const chiefComplaint = ensureString(input.chiefComplaint, "chiefComplaint");
+    // Chief complaint is NO LONGER required at registration — the front desk just
+    // captures identity; the nurse/doctor fills the reason during the encounter.
+    const chiefComplaint = typeof input.chiefComplaint === "string" ? input.chiefComplaint.trim() : "";
     const visitType: VisitType = input.visitType === "appointment" ? "appointment" : "walk_in";
 
     // Resolve the patient: existing id, or create one (lead conversion best-effort).
@@ -2785,6 +2789,10 @@ export class CoreService {
       visit.doctorId = doctor.id;
       visit.doctorName = doctor.displayName;
       visit.department = visit.department ?? doctor.specialty;
+    }
+
+    if (typeof input.chiefComplaint === "string") {
+      visit.chiefComplaint = input.chiefComplaint.trim();
     }
 
     if (input.vitals !== undefined) {

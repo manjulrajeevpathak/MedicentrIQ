@@ -47,8 +47,8 @@ export type RegisterVisitInput = {
   gender?: string;
   phone?: string;
   branchId?: string;
-  /** Visit details. */
-  chiefComplaint: string;
+  /** Visit details. Reason for visit is now optional — captured at the encounter. */
+  chiefComplaint?: string;
   doctorId?: string;
   department?: string;
   /** Link this walk-in to the patient's existing appointment today. */
@@ -60,13 +60,13 @@ export type RegisterVisitInput = {
 };
 
 export async function registerVisitAction(input: RegisterVisitInput): Promise<ActionState<Visit>> {
-  const chiefComplaint = input.chiefComplaint.trim();
-  if (!chiefComplaint) return { ok: false, error: "Enter the chief complaint." };
+  // Reason for visit is optional at registration — the doctor captures it at the encounter.
+  const chiefComplaint = input.chiefComplaint?.trim() ?? "";
 
   const body: Record<string, unknown> = {
-    chiefComplaint,
     visitType: "walk_in"
   };
+  if (chiefComplaint) body.chiefComplaint = chiefComplaint;
 
   if (input.patientId) {
     body.patientId = input.patientId;
@@ -99,6 +99,8 @@ export async function registerVisitAction(input: RegisterVisitInput): Promise<Ac
 export type UpdateVisitInput = {
   status?: VisitStatus;
   doctorId?: string;
+  /** Reason for visit — captured/edited at the encounter. */
+  chiefComplaint?: string;
   vitals?: Vitals;
   diagnosis?: IntakeCondition[];
   disposition?: Disposition;
@@ -112,6 +114,7 @@ export async function updateVisitAction(
   const body: Record<string, unknown> = {};
   if (input.status) body.status = input.status;
   if (input.doctorId) body.doctorId = input.doctorId;
+  if (input.chiefComplaint !== undefined) body.chiefComplaint = input.chiefComplaint.trim();
   if (input.vitals && Object.keys(input.vitals).length) body.vitals = input.vitals;
   if (input.diagnosis) body.diagnosis = input.diagnosis;
   if (input.disposition) body.disposition = input.disposition;

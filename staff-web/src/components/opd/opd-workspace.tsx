@@ -10,7 +10,6 @@ import {
   FileText,
   Loader2,
   Phone,
-  Plus,
   Stethoscope,
   Upload,
   UserPlus,
@@ -25,7 +24,6 @@ import { EmptyState } from "@/components/ui/empty";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import {
-  CHIEF_COMPLAINT_CHIPS,
   DISPOSITION_OUTCOMES,
   DISPOSITION_OUTCOME_LABELS,
   GENDER_OPTIONS,
@@ -181,7 +179,6 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors, conditionC
         open={registerOpen}
         onClose={() => setRegisterOpen(false)}
         doctors={doctors}
-        conditionCatalog={conditionCatalog}
         onRegistered={async () => {
           setRegisterOpen(false);
           toast("Walk-in registered.", "success");
@@ -231,7 +228,11 @@ function QueueCard({
         </Badge>
       </div>
 
-      <p className="mt-3 line-clamp-2 text-sm text-ink-soft">{visit.chiefComplaint}</p>
+      {visit.chiefComplaint?.trim() ? (
+        <p className="mt-3 line-clamp-2 text-sm text-ink-soft">{visit.chiefComplaint}</p>
+      ) : (
+        <p className="mt-3 text-sm italic text-ink-faint">Reason not captured yet</p>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
         {visit.doctorName || visit.department ? (
@@ -290,13 +291,11 @@ function RegisterModal({
   open,
   onClose,
   doctors,
-  conditionCatalog,
   onRegistered
 }: {
   open: boolean;
   onClose: () => void;
   doctors: IntakeDoctor[];
-  conditionCatalog: ConditionCatalogEntry[];
   onRegistered: () => void;
 }) {
   const { toast } = useToast();
@@ -315,14 +314,10 @@ function RegisterModal({
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("female");
 
-  // Visit
-  const [chiefComplaint, setChiefComplaint] = useState("");
-  const [conditions, setConditions] = useState<IntakeCondition[]>([]);
-  const [allergies, setAllergies] = useState<string[]>([]);
+  // Visit — identity-only registration; clinical capture moves to the encounter.
   const [doctorId, setDoctorId] = useState("");
   const [vitals, setVitals] = useState<Vitals>({});
   const [showVitals, setShowVitals] = useState(false);
-  const [notes, setNotes] = useState("");
 
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
@@ -337,13 +332,9 @@ function RegisterModal({
     setName("");
     setAge("");
     setGender("female");
-    setChiefComplaint("");
-    setConditions([]);
-    setAllergies([]);
     setDoctorId("");
     setVitals({});
     setShowVitals(false);
-    setNotes("");
     setError(null);
   }
 
@@ -376,8 +367,6 @@ function RegisterModal({
         setName(data.patient.displayName);
         setAge(data.patient.age ? String(data.patient.age) : "");
         if (data.patient.gender) setGender(data.patient.gender);
-        if (data.clinical?.conditions?.length) setConditions(data.clinical.conditions);
-        if (data.clinical?.allergies?.length) setAllergies(data.clinical.allergies);
         setRecentCount(data.recentVisits?.length ?? 0);
         // Reflect today's appointment(s): default to linking the first, and adopt
         // its doctor so the walk-in lands in the right queue.
@@ -408,11 +397,6 @@ function RegisterModal({
   const selectedDoctor = doctors.find((d) => d.id === doctorId);
 
   function submit() {
-    const cc = chiefComplaint.trim();
-    if (!cc) {
-      setError("Enter the chief complaint.");
-      return;
-    }
     if (!matchedPatientId && !name.trim()) {
       setError("Enter the patient's name (or look up an existing patient).");
       return;
@@ -428,14 +412,10 @@ function RegisterModal({
         ...(matchedPatientId
           ? { patientId: matchedPatientId }
           : { name: name.trim(), age: parsedAge, gender, phone: phone.trim() || undefined }),
-        chiefComplaint: cc,
         doctorId: doctorId || undefined,
         appointmentId: linkedApptId || undefined,
         department: selectedDoctor?.specialty || undefined,
-        intakeConditions: conditions,
-        intakeAllergies: allergies,
-        vitals: Object.keys(vitals).length ? vitals : undefined,
-        intakeNotes: notes || undefined
+        vitals: Object.keys(vitals).length ? vitals : undefined
       });
       if (!result.ok) {
         setError(result.error ?? "Could not register the walk-in.");
@@ -453,7 +433,7 @@ function RegisterModal({
           <h2 id="opd-register-title" className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink">
             <UserPlus className="size-4 text-brand-600" /> Register walk-in
           </h2>
-          <p className="mt-1 text-xs text-ink-muted">Phone-first intake — look up, then capture the visit.</p>
+          <p className="mt-1 text-xs text-ink-muted">Just register the patient — the doctor captures the rest at the consult.</p>
         </div>
         <button type="button" onClick={close} className="rounded-lg p-1.5 text-ink-faint hover:bg-surface-muted hover:text-ink" aria-label="Close">
           <X className="size-4" />
@@ -496,7 +476,6 @@ function RegisterModal({
                   <div className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">
                     Existing patient: <span className="font-semibold">{lookup.patient?.displayName}</span>
                     {recentCount > 0 ? <span className="text-brand-600"> · {recentCount} recent visit{recentCount === 1 ? "" : "s"}</span> : null}
-                    <span className="text-brand-600"> · conditions & allergies prefilled</span>
                   </div>
                   {todaysAppts.length > 0 ? (
                     <div className="rounded-lg border border-[var(--color-good)]/30 bg-[var(--color-good-soft)] px-3 py-2.5">
@@ -573,48 +552,6 @@ function RegisterModal({
           </Field>
         </div>
 
-        {/* Chief complaint */}
-        <div>
-          <p className="mb-1.5 text-xs font-medium text-ink-soft">Chief complaint *</p>
-          <textarea
-            value={chiefComplaint}
-            onChange={(e) => setChiefComplaint(e.target.value)}
-            rows={2}
-            placeholder="What brings the patient in today…"
-            className={textareaClass}
-          />
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {CHIEF_COMPLAINT_CHIPS.map((chip) => (
-              <button
-                key={chip}
-                type="button"
-                onClick={() =>
-                  setChiefComplaint((prev) => {
-                    const t = prev.trim();
-                    if (!t) return chip;
-                    if (t.toLowerCase().includes(chip.toLowerCase())) return prev;
-                    return `${t}, ${chip}`;
-                  })
-                }
-                className="rounded-full bg-fill px-2.5 py-1 text-xs text-ink-soft transition hover:bg-brand-50 hover:text-brand-700"
-              >
-                + {chip}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Pre-existing conditions */}
-        <ConditionPicker
-          label="Pre-existing conditions"
-          catalog={conditionCatalog}
-          value={conditions}
-          onChange={setConditions}
-        />
-
-        {/* Allergies */}
-        <AllergyInput value={allergies} onChange={setAllergies} />
-
         {/* Doctor / department */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Doctor / department" htmlFor="opd-doctor">
@@ -652,12 +589,6 @@ function RegisterModal({
           ) : null}
         </div>
 
-        {/* Notes */}
-        <div>
-          <p className="mb-1.5 text-xs font-medium text-ink-soft">Notes</p>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Intake notes…" className={textareaClass} />
-        </div>
-
         {error ? <p className="text-xs font-medium text-[var(--color-critical)]">{error}</p> : null}
       </div>
 
@@ -688,10 +619,11 @@ function ConsultDrawer({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
+  const [chiefComplaint, setChiefComplaint] = useState(visit.chiefComplaint ?? "");
   const [diagnosis, setDiagnosis] = useState<IntakeCondition[]>(visit.diagnosis ?? []);
   const [outcome, setOutcome] = useState(visit.disposition?.outcome ?? DISPOSITION_OUTCOMES[0]?.value ?? "");
   const [dispNotes, setDispNotes] = useState(visit.disposition?.notes ?? "");
-  const [nextStep, setNextStep] = useState(visit.disposition?.nextStep ?? "");
+  const [revisitAdvised, setRevisitAdvised] = useState(Boolean(visit.disposition?.nextActionDate));
   const [nextActionDate, setNextActionDate] = useState(visit.disposition?.nextActionDate ?? "");
   const [vitals, setVitals] = useState<Vitals>(visit.vitals ?? {});
   const [consultNotes, setConsultNotes] = useState(visit.consultNotes ?? "");
@@ -702,15 +634,16 @@ function ConsultDrawer({
       toast("Pick a disposition outcome to complete the visit.", "error");
       return;
     }
+    const revisitOn = revisitAdvised ? nextActionDate : "";
     const disposition: Disposition = {
       outcome,
       ...(dispNotes.trim() ? { notes: dispNotes.trim() } : {}),
-      ...(nextStep.trim() ? { nextStep: nextStep.trim() } : {}),
-      ...(nextActionDate ? { nextActionDate } : {})
+      ...(revisitOn ? { nextStep: "revisit", nextActionDate: revisitOn } : {})
     };
     startSaving(async () => {
       const result = await updateVisitAction(visit.id, {
         status: "completed",
+        chiefComplaint,
         diagnosis,
         disposition,
         vitals: Object.keys(vitals).length ? vitals : undefined,
@@ -740,7 +673,8 @@ function ConsultDrawer({
               <ClipboardPlus className="size-4 text-brand-600" /> Record consult
             </h2>
             <p className="mt-1 text-xs text-ink-muted">
-              {visit.patientName ?? "Walk-in patient"} · {visit.chiefComplaint}
+              {visit.patientName ?? "Walk-in patient"}
+              {visit.chiefComplaint ? ` · ${visit.chiefComplaint}` : ""}
             </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-ink-faint hover:bg-surface-muted hover:text-ink" aria-label="Close">
@@ -749,6 +683,18 @@ function ConsultDrawer({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto p-5">
+          {/* Reason for visit (chief complaint) — captured at the encounter */}
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-ink-soft">Reason for visit</p>
+            <textarea
+              value={chiefComplaint}
+              onChange={(e) => setChiefComplaint(e.target.value)}
+              rows={2}
+              placeholder="What brings the patient in today…"
+              className={textareaClass}
+            />
+          </div>
+
           {/* Diagnosis */}
           <ConditionPicker
             label="Diagnosis"
@@ -761,25 +707,36 @@ function ConsultDrawer({
           {/* Disposition */}
           <div className="rounded-xl border border-line p-3.5">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-soft">Disposition *</p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Outcome" htmlFor="opd-disp-outcome">
-                <select id="opd-disp-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} className={selectClass}>
-                  {DISPOSITION_OUTCOMES.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Next action date" htmlFor="opd-disp-date">
-                <Input id="opd-disp-date" type="date" value={nextActionDate} onChange={(e) => setNextActionDate(e.target.value)} />
-              </Field>
+            <Field label="Outcome" htmlFor="opd-disp-outcome">
+              <select id="opd-disp-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} className={selectClass}>
+                {DISPOSITION_OUTCOMES.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            {/* Revisit advised → date */}
+            <div className="mt-3 rounded-lg border border-line bg-surface-muted p-3">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={revisitAdvised}
+                  onChange={(e) => setRevisitAdvised(e.target.checked)}
+                  className="size-4 rounded border-line-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-200"
+                />
+                <span className="font-medium">Revisit advised</span>
+              </label>
+              {revisitAdvised ? (
+                <div className="mt-3">
+                  <Field label="Revisit on" htmlFor="opd-disp-date">
+                    <Input id="opd-disp-date" type="date" value={nextActionDate} onChange={(e) => setNextActionDate(e.target.value)} />
+                  </Field>
+                </div>
+              ) : null}
             </div>
-            <div className="mt-3">
-              <Field label="Next step" htmlFor="opd-disp-next">
-                <Input id="opd-disp-next" value={nextStep} onChange={(e) => setNextStep(e.target.value)} placeholder="e.g. Review in 2 weeks" />
-              </Field>
-            </div>
+
             <div className="mt-3">
               <Field label="Notes" htmlFor="opd-disp-notes">
                 <textarea id="opd-disp-notes" value={dispNotes} onChange={(e) => setDispNotes(e.target.value)} rows={2} placeholder="Disposition notes…" className={textareaClass} />
@@ -961,64 +918,6 @@ function ConditionPicker({
         ) : query.trim() ? (
           <p className="mt-1 px-1 text-[11px] text-ink-muted">No catalog match for “{query}”.</p>
         ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ---- Shared: allergies chip input ------------------------------------------
-
-function AllergyInput({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
-  const [input, setInput] = useState("");
-
-  function add() {
-    const v = input.trim();
-    if (!v || value.includes(v)) {
-      setInput("");
-      return;
-    }
-    onChange([...value, v]);
-    setInput("");
-  }
-
-  return (
-    <div>
-      <p className="mb-1.5 text-xs font-medium text-ink-soft">Allergies</p>
-      {value.length > 0 ? (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {value.map((a) => (
-            <span
-              key={a}
-              className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-high-soft)] px-2.5 py-0.5 text-xs font-medium text-[var(--color-high)]"
-            >
-              {a}
-              <button
-                type="button"
-                onClick={() => onChange(value.filter((x) => x !== a))}
-                className="rounded-full p-0.5 hover:bg-black/5"
-                aria-label={`Remove ${a}`}
-              >
-                <X className="size-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      <div className="flex gap-2">
-        <Input
-          placeholder="e.g. Penicillin"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <Button variant="outline" onClick={add} disabled={!input.trim()}>
-          <Plus className="size-3.5" /> Add
-        </Button>
       </div>
     </div>
   );
