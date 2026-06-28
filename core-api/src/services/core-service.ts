@@ -3578,6 +3578,21 @@ export class CoreService {
       branchId
     });
 
+    // One active appointment per patient + doctor + day — stop the same patient
+    // from clogging a doctor's schedule with duplicate slots.
+    const sameDay = this.data.appointments.find(
+      (entry) =>
+        entry.tenantId === context.tenantId &&
+        entry.patientId === patient.id &&
+        entry.doctorId === doctor.id &&
+        entry.scheduledAt.slice(0, 10) === dateISO &&
+        entry.status !== "cancelled" &&
+        entry.status !== "no_show"
+    );
+    if (sameDay) {
+      throw new ApiError(409, "This patient already has an appointment with this doctor that day");
+    }
+
     return this.createAppointment(context, {
       patientId: patient.id,
       doctorId: doctor.id,

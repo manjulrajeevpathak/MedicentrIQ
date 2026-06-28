@@ -242,6 +242,39 @@ describe("scheduling & appointments contract", () => {
     assert.ok(!after.data.some((s) => s.start === s2.start), "new slot is taken");
   });
 
+  it("rejects a second same-day appointment for the same patient + doctor (409)", async () => {
+    const date = nextMonday();
+    const dr = (await (
+      await authed("/doctors", {
+        method: "POST",
+        body: JSON.stringify({ displayName: "Dr. Dedup", specialty: "Ophthalmology", branchIds: ["blr-indiranagar"], slotMinutes: 30 })
+      })
+    ).json()) as { data: { id: string } };
+    const drId = dr.data.id;
+    await authed(`/doctors/${drId}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify({ slotMinutes: 30, weeklyHours: { 1: [{ start: "09:00", end: "12:00" }] } })
+    });
+    const slots = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as { data: Array<{ start: string }> };
+    const [s1, s2] = slots.data;
+
+    const first = (await (
+      await authed("/appointments", {
+        method: "POST",
+        body: JSON.stringify({ doctorId: drId, scheduledAt: s1.start, patient: { name: "Dedup Patient", phone: "+919712349999" } })
+      })
+    ).json()) as { data: { patientId: string } };
+
+    // same patient (by id) + same doctor + same day → rejected
+    const dup = await authed("/appointments", {
+      method: "POST",
+      body: JSON.stringify({ doctorId: drId, scheduledAt: s2.start, patientId: first.data.patientId })
+    });
+    const body = (await dup.json()) as JsonObject;
+    assert.equal(dup.status, 409);
+    assert.match(String((body.error as JsonObject)?.message), /already has an appointment/i);
+  });
+
   it("OPD walk-in checks in + completes the linked same-day appointment", async () => {
     const todayIso = new Date().toISOString().slice(0, 10);
     const wd = new Date(`${todayIso}T00:00:00.000Z`).getUTCDay();
