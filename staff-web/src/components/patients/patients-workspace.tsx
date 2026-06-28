@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
+  ClipboardPlus,
   FileText,
   Phone,
   Plus,
@@ -114,9 +115,16 @@ export function PatientsWorkspace({
               title="Patient directory"
               subtitle={`${directory.length} ${directory.length === 1 ? "record" : "records"}`}
               action={
-                <Button size="sm" onClick={() => setComposerOpen(true)}>
-                  <UserPlus className="size-3.5" /> New patient
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Link href="/opd">
+                    <Button size="sm">
+                      <ClipboardPlus className="size-3.5" /> Register walk-in (OPD)
+                    </Button>
+                  </Link>
+                  <Button size="sm" variant="outline" onClick={() => setComposerOpen(true)}>
+                    <UserPlus className="size-3.5" /> Add patient
+                  </Button>
+                </div>
               }
             />
             <div className="mt-3 flex items-center gap-2 rounded-xl border border-line bg-surface-muted px-3 focus-within:border-brand-300 focus-within:ring-2 focus-within:ring-brand-100">

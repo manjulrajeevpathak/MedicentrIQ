@@ -59,6 +59,7 @@ const permissionLabels: Record<PermissionKey, string> = {
   "patient360:view": "Patient 360",
   "patients:create": "Add patients",
   "appointment:write": "Appointments",
+  "visits:read": "OPD visits",
   "followup:manage": "Follow-up",
   "audit:view": "Audit",
   "analytics:view": "Analytics",

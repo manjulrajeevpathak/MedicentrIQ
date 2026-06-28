@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   CalendarClock,
+  ClipboardPlus,
   IndianRupee,
   Inbox,
   LayoutDashboard,
@@ -24,6 +25,7 @@ export type ModuleKey =
   | "inbox"
   | "patients"
   | "access"
+  | "opd"
   | "doctors"
   | "journeys"
   | "continuity"
@@ -55,7 +57,8 @@ export const navGroups: NavGroup[] = [
     items: [
       { href: "/today", label: "Today", icon: LayoutDashboard, description: "Your floor, right now", module: "today", badgeKey: "workbench" },
       { href: "/inbox", label: "Unified Inbox", icon: Inbox, description: "WhatsApp, call, web and referral conversations", module: "inbox", requires: "inbox:assign", badgeKey: "inbox" },
-      { href: "/access", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" }
+      { href: "/access", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" },
+      { href: "/opd", label: "OPD", icon: ClipboardPlus, description: "Walk-in intake, queue and consult capture", module: "patients", requires: "patients:create" }
     ]
   },
   {

@@ -25,6 +25,7 @@ export type PermissionKey =
   | "patient360:view"
   | "patients:create"
   | "appointment:write"
+  | "visits:read"
   | "followup:manage"
   | "audit:view"
   | "analytics:view"
