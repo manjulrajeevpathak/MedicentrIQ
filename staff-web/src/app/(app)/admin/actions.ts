@@ -3,11 +3,9 @@
 import { revalidatePath } from "next/cache";
 import {
   coreApi,
-  type AppointmentNotifications,
   type Branch,
   type ManagedUser,
-  type MfaPolicy,
-  type NotificationEvent
+  type MfaPolicy
 } from "@/lib/users-api";
 
 /**
@@ -145,31 +143,6 @@ export async function sendTestMessageAction(_prev: ChannelActionState, formData:
   revalidatePath("/communications/channels");
   if (!result.data.ok) return { ok: false, error: result.data.error ?? "The provider rejected the message." };
   return { ok: true, message: `Test sent via ${result.data.channel}.` };
-}
-
-// ---- Appointment notifications --------------------------------------------
-
-const NOTIFICATION_EVENTS: NotificationEvent[] = ["booked", "reminder24h", "reminder3h", "cancelled", "rescheduled"];
-
-export async function saveNotificationRuleAction(
-  event: NotificationEvent,
-  rule: { enabled: boolean; body: string; offsetHours?: number }
-): Promise<ChannelActionState> {
-  if (!NOTIFICATION_EVENTS.includes(event)) return { ok: false, error: "Unknown notification." };
-
-  const result = await coreApi<AppointmentNotifications>("/tenant/notifications", {
-    method: "PATCH",
-    body: {
-      [event]: {
-        enabled: rule.enabled,
-        body: rule.body,
-        ...(typeof rule.offsetHours === "number" ? { offsetHours: rule.offsetHours } : {})
-      }
-    }
-  });
-  if (!result.ok) return { ok: false, error: result.error ?? "Could not save the notification." };
-  revalidatePath("/communications/templates");
-  return { ok: true, message: "Notification saved." };
 }
 
 // ---- Clinic locations (per-branch contact + map) --------------------------

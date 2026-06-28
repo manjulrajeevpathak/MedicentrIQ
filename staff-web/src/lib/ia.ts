@@ -14,7 +14,8 @@ import {
   ShieldCheck,
   Sprout,
   Stethoscope,
-  Users
+  Users,
+  Workflow
 } from "lucide-react";
 import type { PermissionKey } from "./types";
 
@@ -84,7 +85,8 @@ export const navGroups: NavGroup[] = [
     label: "Communications",
     items: [
       { href: "/communications/channels", label: "Channels", icon: Radio, description: "WhatsApp & telephony credentials", module: "admin", requires: "audit:view" },
-      { href: "/communications/templates", label: "Templates", icon: MailCheck, description: "Appointment message templates & timing", module: "admin", requires: "audit:view" }
+      { href: "/communications/templates", label: "Templates", icon: MailCheck, description: "Reusable WhatsApp messages & call scripts", module: "admin", requires: "audit:view" },
+      { href: "/communications/workflows", label: "Workflows", icon: Workflow, description: "Staged message, call, form & task orchestration", module: "admin", requires: "audit:view" }
     ]
   },
   {
