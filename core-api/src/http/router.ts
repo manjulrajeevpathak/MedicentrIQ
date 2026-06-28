@@ -424,6 +424,23 @@ const createRoutes = (service: CoreService): Route[] => [
     service.updateCall(auth, params.callId, toRecord(body))
   ),
 
+  // OPD walk-in Visits (encounters). Module-gated under `patients`.
+  route("GET", "/intake/lookup", "visits:read", ({ auth, query }) =>
+    service.intakeLookup(auth, query.get("phone") ?? ""), "patients"
+  ),
+  route("GET", "/visits", "visits:read", ({ auth, query }) =>
+    service.listVisits(auth, {
+      status: query.get("status") ?? undefined,
+      patientId: query.get("patientId") ?? undefined,
+      date: query.get("date") ?? undefined
+    }), "patients"
+  ),
+  route("POST", "/visits", "visits:manage", ({ auth, body }) => service.createVisit(auth, toRecord(body)), "patients"),
+  route("GET", "/visits/:visitId", "visits:read", ({ auth, params }) => service.getVisit(auth, params.visitId), "patients"),
+  route("PATCH", "/visits/:visitId", "visits:manage", ({ auth, params, body }) =>
+    service.updateVisit(auth, params.visitId, toRecord(body)), "patients"
+  ),
+
   route("POST", "/service-events/integration", "service_events:ingest", ({ auth, body }) =>
     service.intakeIntegrationEvent(auth, toRecord(body))
   ),

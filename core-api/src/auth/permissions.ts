@@ -33,7 +33,9 @@ const allStaffPermissions: Permission[] = [
   "campaigns:manage",
   "campaigns:send",
   "calls:read",
-  "calls:manage"
+  "calls:manage",
+  "visits:read",
+  "visits:manage"
 ];
 
 export const rolePermissions: Record<Role, Permission[]> = {
@@ -65,7 +67,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "leads:manage",
     "campaigns:read",
     "calls:read",
-    "calls:manage"
+    "calls:manage",
+    "visits:read",
+    "visits:manage"
   ],
   call_center: [
     "auth:read_self",
@@ -87,7 +91,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "leads:manage",
     "campaigns:read",
     "calls:read",
-    "calls:manage"
+    "calls:manage",
+    "visits:read"
   ],
   care_coordinator: [
     "auth:read_self",
@@ -119,7 +124,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "campaigns:manage",
     "campaigns:send",
     "calls:read",
-    "calls:manage"
+    "calls:manage",
+    "visits:read",
+    "visits:manage"
   ],
   nurse: [
     "auth:read_self",
@@ -139,7 +146,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "followups:confirm",
     "followups:manage",
     "journeys:read",
-    "journeys:update"
+    "journeys:update",
+    "visits:read",
+    "visits:manage"
   ],
   doctor: [
     "auth:read_self",
@@ -153,7 +162,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "clinical:read",
     "clinical:write",
     "followups:confirm",
-    "journeys:read"
+    "journeys:read",
+    "visits:read",
+    "visits:manage"
   ],
   admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage", "doctors:manage", "forms:manage"],
   org_admin: [...allStaffPermissions, "audit:read", "service_events:ingest", "users:read", "users:manage", "tenant:settings:manage", "doctors:manage", "forms:manage"],

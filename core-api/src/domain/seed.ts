@@ -28,6 +28,7 @@ import type {
   PlatformAdmin,
   ServiceApiKey,
   User,
+  Visit,
   WorkbenchTask
 } from "./types.js";
 import { hashPassword } from "../auth/passwords.js";
@@ -86,6 +87,7 @@ export type SeedData = {
   leads: Lead[];
   forms: LeadForm[];
   campaigns: Campaign[];
+  visits: Visit[];
   auditEvents: AuditEvent[];
 };
 
@@ -840,6 +842,49 @@ export const createSeedData = (): SeedData => ({
       updatedAt: daysFromNow(-5)
     }
   ],
+  visits: [
+    {
+      id: "visit_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      patientId: "patient_demo_001",
+      branchId: DEMO_BRANCH_IND,
+      visitType: "walk_in",
+      doctorId: "doctor_demo_kavita",
+      doctorName: "Dr. Kavita Menon",
+      department: "Ophthalmology",
+      status: "completed",
+      chiefComplaint: "Blurred vision in right eye, post-cataract review",
+      intakeConditions: [
+        { icd10Code: "H25.9", label: "Age-related cataract, unspecified", notes: "Right eye, post-op" }
+      ],
+      intakeAllergies: ["Sulfa drugs"],
+      vitals: {
+        bp: "130/82",
+        pulseBpm: 76,
+        visualAcuityOD: "6/12",
+        visualAcuityOS: "6/9",
+        iopOD: 16,
+        iopOS: 15
+      },
+      intakeNotes: "Walk-in for routine post-op review.",
+      registeredBy: DEMO_STAFF_USER_ID,
+      registeredAt: daysFromNow(-7),
+      diagnosis: [
+        { icd10Code: "H25.9", label: "Age-related cataract, unspecified", notes: "Healing well post-op" }
+      ],
+      disposition: {
+        outcome: "follow_up",
+        notes: "Recovery on track.",
+        nextStep: "30-day refraction review",
+        nextActionDate: daysFromNow(23)
+      },
+      consultNotes: "Anterior segment quiet; IOP within range. Continue tapering drops.",
+      consultedBy: "user_demo_doctor",
+      consultedAt: daysFromNow(-7),
+      createdAt: daysFromNow(-7),
+      updatedAt: daysFromNow(-7)
+    }
+  ],
   auditEvents: []
 });
 
@@ -893,6 +938,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     leads: data.leads?.length ? withTenant(data.leads) : seed.leads,
     forms: data.forms?.length ? withTenant(data.forms) : seed.forms,
     campaigns: data.campaigns?.length ? withTenant(data.campaigns) : seed.campaigns,
+    visits: data.visits?.length ? withTenant(data.visits) : seed.visits,
     auditEvents: withTenant(data.auditEvents ?? [])
   };
 };

@@ -86,6 +86,8 @@ export type Permission =
   | "campaigns:send"
   | "calls:read"
   | "calls:manage"
+  | "visits:read"
+  | "visits:manage"
   | "platform:tenants:read"
   | "platform:tenants:manage"
   | "platform:entitlements:manage"
@@ -428,6 +430,8 @@ export type AuditEvent = {
     | "campaign.send"
     | "call.create"
     | "call.update"
+    | "visit.register"
+    | "visit.update"
     | "auth.login"
     | "auth.login_failed"
     | "auth.logout"
@@ -693,6 +697,8 @@ export type DocumentMetadata = {
   patientId: string;
   sessionToken?: string;
   appointmentId?: string;
+  /** Optional link to the OPD visit (encounter) this document belongs to. */
+  visitId?: string;
   documentType: "lab_report" | "prescription" | "insurance" | "id_proof" | "referral" | "other";
   fileName: string;
   mimeType?: string;
@@ -726,6 +732,64 @@ export type ClinicalRecord = {
   notes?: string;
   updatedAt: string;
   createdAt: string;
+};
+
+// ---- OPD walk-in Visit (encounter) ----------------------------------------
+
+export type VisitType = "walk_in" | "appointment";
+export type VisitStatus = "registered" | "in_consult" | "completed" | "left_without_seen";
+
+/** Vitals captured at OPD intake (eye-first product → visual acuity + IOP). */
+export type VisitVitals = {
+  bp?: string;
+  pulseBpm?: number;
+  spo2?: number;
+  tempC?: number;
+  weightKg?: number;
+  heightCm?: number;
+  // eye-specific:
+  visualAcuityOD?: string;
+  visualAcuityOS?: string;
+  iopOD?: number;
+  iopOS?: number;
+};
+
+export type VisitDisposition = {
+  outcome: string;
+  notes?: string;
+  nextStep?: string;
+  nextActionDate?: string;
+};
+
+/** An OPD encounter — a walk-in (or appointment-backed) clinical visit. */
+export type Visit = {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  branchId?: string;
+  visitType: VisitType;
+  appointmentId?: string;
+  doctorId?: string;
+  doctorName?: string;
+  /** Specialty / queue the visit belongs to. */
+  department?: string;
+  status: VisitStatus;
+  // intake (captured at registration):
+  chiefComplaint: string;
+  intakeConditions?: ClinicalCondition[];
+  intakeAllergies?: string[];
+  vitals?: VisitVitals;
+  intakeNotes?: string;
+  registeredBy?: string;
+  registeredAt: string;
+  // post-consult:
+  diagnosis?: ClinicalCondition[];
+  disposition?: VisitDisposition;
+  consultNotes?: string;
+  consultedBy?: string;
+  consultedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type FollowUp = {

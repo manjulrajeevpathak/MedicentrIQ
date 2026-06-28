@@ -79,6 +79,11 @@ import type {
   TaskStatus,
   TenantType,
   TimelineEvent,
+  Visit,
+  VisitDisposition,
+  VisitStatus,
+  VisitType,
+  VisitVitals,
   WorkbenchTask,
   WorkbenchTaskView
 } from "../domain/types.js";
@@ -353,6 +358,7 @@ type ConfirmAppointmentInput = {
 
 type CreateDocumentMetadataInput = {
   appointmentId?: string;
+  visitId?: string;
   documentType?: DocumentMetadata["documentType"];
   fileName?: string;
   mimeType?: string;
@@ -463,6 +469,34 @@ type UpsertCampaignInput = {
   trigger?: unknown;
   automatedOn?: unknown;
   status?: unknown;
+};
+
+type CreateVisitInput = {
+  // existing patient OR new-patient fields:
+  patientId?: string;
+  name?: string;
+  age?: number;
+  gender?: Patient["gender"];
+  phone?: string;
+  branchId?: string;
+  // visit fields:
+  chiefComplaint?: string;
+  visitType?: string;
+  doctorId?: string;
+  department?: string;
+  intakeConditions?: unknown;
+  intakeAllergies?: unknown;
+  vitals?: unknown;
+  intakeNotes?: string;
+};
+
+type UpdateVisitInput = {
+  status?: string;
+  doctorId?: string;
+  vitals?: unknown;
+  diagnosis?: unknown;
+  disposition?: unknown;
+  consultNotes?: string;
 };
 
 export class ApiError extends Error {
@@ -1735,6 +1769,353 @@ export class CoreService {
       disposition: call.disposition
     });
     return call;
+  }
+
+  // ---- OPD walk-in Visit (encounter) ----------------------------------------
+
+  /**
+   * Phone-first intake prefill. Resolves a patient by normalized phone (with
+   * their clinical record + recent visits), else the most recent matching lead,
+   * else "none". Drives the OPD registration screen's "who is this?" lookup.
+   */
+  intakeLookup(context: RequestContext, phone: string) {
+    const trimmed = typeof phone === "string" ? phone.trim() : "";
+    if (!trimmed) {
+      throw new ApiError(400, "Missing required query parameter: phone");
+    }
+
+    const patient = this.findPatientByPhone(context.tenantId, trimmed);
+    if (patient && this.canAccessPatient(context, patient)) {
+      const clinical = this.getClinicalRecord(context, patient.id);
+      const recentVisits = this.data.visits
+        .filter((visit) => visit.tenantId === context.tenantId && visit.patientId === patient.id)
+        .sort((a, b) => b.registeredAt.localeCompare(a.registeredAt))
+        .slice(0, 5);
+      return {
+        match: "patient" as const,
+        patient: {
+          id: patient.id,
+          displayName: patient.displayName,
+          age: patient.age,
+          gender: patient.gender,
+          primaryPhone: patient.primaryPhone,
+          branchId: patient.branchId
+        },
+        clinical: {
+          conditions: clinical.conditions,
+          allergies: clinical.allergies ?? [],
+          notes: clinical.notes
+        },
+        recentVisits
+      };
+    }
+
+    const normalized = normalizePhone(trimmed);
+    const lead = normalized
+      ? this.data.leads
+          .filter((entry) => entry.tenantId === context.tenantId && normalizePhone(entry.phone) === normalized)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+      : undefined;
+    if (lead) {
+      return {
+        match: "lead" as const,
+        lead: {
+          id: lead.id,
+          name: lead.name,
+          phone: lead.phone,
+          email: lead.email,
+          source: lead.source,
+          formData: lead.formData ?? {}
+        }
+      };
+    }
+
+    return { match: "none" as const };
+  }
+
+  listVisits(context: RequestContext, filters: { status?: string; patientId?: string; date?: string } = {}) {
+    const day = typeof filters.date === "string" && filters.date.trim() ? filters.date.trim() : undefined;
+    return this.data.visits
+      .filter((visit) => visit.tenantId === context.tenantId)
+      .filter((visit) => this.canAccessBranch(context, visit.branchId ?? "default-branch"))
+      .filter((visit) => (filters.status ? visit.status === filters.status : true))
+      .filter((visit) => (filters.patientId ? visit.patientId === filters.patientId : true))
+      .filter((visit) => (day ? visit.registeredAt.slice(0, 10) === day : true))
+      .sort((a, b) => b.registeredAt.localeCompare(a.registeredAt))
+      .map((visit) => this.visitView(context, visit));
+  }
+
+  getVisit(context: RequestContext, visitId: string) {
+    return this.visitView(context, this.ensureVisibleVisit(context, visitId));
+  }
+
+  async createVisit(context: RequestContext, input: CreateVisitInput) {
+    const chiefComplaint = ensureString(input.chiefComplaint, "chiefComplaint");
+    const visitType: VisitType = input.visitType === "appointment" ? "appointment" : "walk_in";
+
+    // Resolve the patient: existing id, or create one (lead conversion best-effort).
+    let patient: Patient;
+    if (typeof input.patientId === "string" && input.patientId.trim()) {
+      patient = this.ensureKnownPatient(context, input.patientId.trim());
+    } else {
+      const name = ensureString(input.name, "name");
+      const phone =
+        typeof input.phone === "string" && input.phone.trim() ? input.phone.trim() : undefined;
+      const summary = await this.createPatient(context, {
+        displayName: name,
+        age: input.age,
+        gender: input.gender,
+        primaryPhone: phone,
+        branchId: input.branchId
+      });
+      patient = this.ensureKnownPatient(context, summary.id);
+
+      // Best-effort: if a lead matched this phone, mark it converted.
+      const normalized = phone ? normalizePhone(phone) : undefined;
+      if (normalized) {
+        const lead = this.data.leads
+          .filter((entry) => entry.tenantId === context.tenantId && normalizePhone(entry.phone) === normalized)
+          .filter((entry) => !entry.convertedPatientId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (lead) {
+          lead.convertedPatientId = patient.id;
+          lead.matchedPatientId = lead.matchedPatientId ?? patient.id;
+          lead.stage = "converted";
+          lead.updatedAt = nowIso();
+          await this.persistence.saveCollection("leads", this.data.leads);
+        }
+      }
+    }
+
+    // Resolve the doctor (name + department) if a doctorId is given.
+    let doctorId: string | undefined;
+    let doctorName: string | undefined;
+    let department: string | undefined =
+      typeof input.department === "string" && input.department.trim() ? input.department.trim() : undefined;
+    if (typeof input.doctorId === "string" && input.doctorId.trim()) {
+      const doctor = this.ensureVisibleDoctor(context, input.doctorId.trim());
+      doctorId = doctor.id;
+      doctorName = doctor.displayName;
+      department = department ?? doctor.specialty;
+    }
+
+    const intakeConditions = this.sanitizeConditions(input.intakeConditions);
+    const intakeAllergies = this.sanitizeAllergies(input.intakeAllergies);
+    const vitals = this.sanitizeVitals(input.vitals);
+
+    // Merge intake conditions + allergies into the longitudinal clinical record.
+    if (intakeConditions.length > 0 || intakeAllergies.length > 0) {
+      await this.mergeClinicalIntake(context, patient.id, intakeConditions, intakeAllergies);
+    }
+
+    const timestamp = nowIso();
+    const visit: Visit = {
+      id: createId("visit"),
+      tenantId: context.tenantId,
+      patientId: patient.id,
+      branchId: patient.branchId,
+      visitType,
+      doctorId,
+      doctorName,
+      department,
+      status: "registered",
+      chiefComplaint,
+      intakeConditions: intakeConditions.length > 0 ? intakeConditions : undefined,
+      intakeAllergies: intakeAllergies.length > 0 ? intakeAllergies : undefined,
+      vitals,
+      intakeNotes:
+        typeof input.intakeNotes === "string" && input.intakeNotes.trim() ? input.intakeNotes.trim() : undefined,
+      registeredBy: context.actorId,
+      registeredAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.data.visits.push(visit);
+    await this.persistence.saveCollection("visits", this.data.visits);
+    await this.audit(context, "visit.register", "visit", visit.id, visit.patientId, {
+      visitType,
+      doctorId,
+      department
+    });
+    return this.visitView(context, visit);
+  }
+
+  async updateVisit(context: RequestContext, visitId: string, input: UpdateVisitInput) {
+    const visit = this.ensureVisibleVisit(context, visitId);
+
+    if (typeof input.doctorId === "string" && input.doctorId.trim()) {
+      const doctor = this.ensureVisibleDoctor(context, input.doctorId.trim());
+      visit.doctorId = doctor.id;
+      visit.doctorName = doctor.displayName;
+      visit.department = visit.department ?? doctor.specialty;
+    }
+
+    if (input.vitals !== undefined) {
+      const vitals = this.sanitizeVitals(input.vitals);
+      if (vitals) {
+        visit.vitals = { ...(visit.vitals ?? {}), ...vitals };
+      }
+    }
+
+    if (typeof input.consultNotes === "string") {
+      visit.consultNotes = input.consultNotes.trim() ? input.consultNotes.trim() : undefined;
+    }
+
+    // Diagnosis: persist on the visit AND merge into the clinical record.
+    if (input.diagnosis !== undefined) {
+      const diagnosis = this.sanitizeConditions(input.diagnosis);
+      visit.diagnosis = diagnosis.length > 0 ? diagnosis : undefined;
+      if (diagnosis.length > 0) {
+        await this.mergeClinicalIntake(context, visit.patientId, diagnosis, []);
+      }
+    }
+
+    if (input.disposition !== undefined) {
+      visit.disposition = this.sanitizeVisitDisposition(input.disposition) ?? visit.disposition;
+    }
+
+    if (typeof input.status === "string") {
+      const statuses: VisitStatus[] = ["registered", "in_consult", "completed", "left_without_seen"];
+      if ((statuses as string[]).includes(input.status)) {
+        const next = input.status as VisitStatus;
+        if (next === "in_consult" && !visit.consultedAt) {
+          visit.consultedBy = context.actorId;
+          visit.consultedAt = nowIso();
+        }
+        if (next === "completed" && !visit.disposition) {
+          throw new ApiError(400, "A disposition is required to complete a visit");
+        }
+        if (next === "completed" && !visit.consultedAt) {
+          visit.consultedBy = visit.consultedBy ?? context.actorId;
+          visit.consultedAt = visit.consultedAt ?? nowIso();
+        }
+        visit.status = next;
+      }
+    }
+
+    visit.updatedAt = nowIso();
+    await this.persistence.saveCollection("visits", this.data.visits);
+    await this.audit(context, "visit.update", "visit", visit.id, visit.patientId, {
+      status: visit.status,
+      diagnosisCount: visit.diagnosis?.length ?? 0
+    });
+    return this.visitView(context, visit);
+  }
+
+  private ensureVisibleVisit(context: RequestContext, visitId: string): Visit {
+    const visit = this.data.visits.find((entry) => entry.id === visitId && entry.tenantId === context.tenantId);
+    if (!visit) {
+      throw new ApiError(404, `Visit not found: ${visitId}`);
+    }
+    if (!this.canAccessBranch(context, visit.branchId ?? "default-branch")) {
+      throw new ApiError(403, "Visit is outside the actor's branch scope");
+    }
+    return visit;
+  }
+
+  private visitView(context: RequestContext, visit: Visit) {
+    const patient = this.data.patients.find(
+      (entry) => entry.id === visit.patientId && entry.tenantId === context.tenantId
+    );
+    return { ...visit, patientName: patient?.displayName };
+  }
+
+  /** Union intake/diagnosis conditions (by icd10Code) + allergies (by string) into the clinical record. */
+  private async mergeClinicalIntake(
+    context: RequestContext,
+    patientId: string,
+    conditions: ClinicalCondition[],
+    allergies: string[]
+  ) {
+    const current = this.getClinicalRecord(context, patientId);
+    const mergedConditions = [...current.conditions];
+    for (const condition of conditions) {
+      if (!mergedConditions.some((entry) => entry.icd10Code === condition.icd10Code)) {
+        mergedConditions.push(condition);
+      }
+    }
+    const mergedAllergies = [...(current.allergies ?? [])];
+    for (const allergy of allergies) {
+      if (!mergedAllergies.includes(allergy)) {
+        mergedAllergies.push(allergy);
+      }
+    }
+    await this.setClinicalRecord(context, patientId, {
+      conditions: mergedConditions,
+      allergies: mergedAllergies,
+      notes: current.notes
+    });
+  }
+
+  private sanitizeAllergies(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const allergies: string[] = [];
+    for (const entry of value) {
+      if (typeof entry === "string" && entry.trim()) {
+        const trimmed = entry.trim();
+        if (!seen.has(trimmed)) {
+          seen.add(trimmed);
+          allergies.push(trimmed);
+        }
+      }
+    }
+    return allergies;
+  }
+
+  private sanitizeVitals(value: unknown): VisitVitals | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const candidate = value as Record<string, unknown>;
+    const vitals: VisitVitals = {};
+    const str = (key: keyof VisitVitals) => {
+      const raw = candidate[key];
+      if (typeof raw === "string" && raw.trim()) {
+        (vitals[key] as unknown) = raw.trim();
+      }
+    };
+    const num = (key: keyof VisitVitals) => {
+      const raw = candidate[key];
+      const parsed = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : Number.NaN;
+      if (Number.isFinite(parsed)) {
+        (vitals[key] as unknown) = parsed;
+      }
+    };
+    str("bp");
+    num("pulseBpm");
+    num("spo2");
+    num("tempC");
+    num("weightKg");
+    num("heightCm");
+    str("visualAcuityOD");
+    str("visualAcuityOS");
+    num("iopOD");
+    num("iopOS");
+    return Object.keys(vitals).length > 0 ? vitals : undefined;
+  }
+
+  private sanitizeVisitDisposition(value: unknown): VisitDisposition | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const candidate = value as Record<string, unknown>;
+    const outcome = typeof candidate.outcome === "string" ? candidate.outcome.trim() : "";
+    if (!outcome) {
+      return undefined;
+    }
+    return {
+      outcome,
+      ...(typeof candidate.notes === "string" && candidate.notes.trim() ? { notes: candidate.notes.trim() } : {}),
+      ...(typeof candidate.nextStep === "string" && candidate.nextStep.trim()
+        ? { nextStep: candidate.nextStep.trim() }
+        : {}),
+      ...(typeof candidate.nextActionDate === "string" && candidate.nextActionDate.trim()
+        ? { nextActionDate: candidate.nextActionDate.trim() }
+        : {})
+    };
   }
 
   // ---- Platform admin management (superadmin) -------------------------------
@@ -3418,6 +3799,7 @@ export class CoreService {
       patientId: session.patientId,
       sessionToken: token,
       appointmentId: input.appointmentId,
+      visitId: typeof input.visitId === "string" && input.visitId.trim() ? input.visitId.trim() : undefined,
       documentType: input.documentType ?? "other",
       fileName: ensureString(input.fileName, "fileName"),
       mimeType: input.mimeType,
