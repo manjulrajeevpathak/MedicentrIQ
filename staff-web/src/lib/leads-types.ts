@@ -43,7 +43,7 @@ export type LeadFunnel = {
 
 // ---- Lead forms ------------------------------------------------------------
 
-export type LeadFieldType = "text" | "phone" | "email" | "number" | "select" | "textarea";
+export type LeadFieldType = "text" | "phone" | "email" | "number" | "select" | "multiselect" | "textarea";
 
 export type LeadFormField = {
   key: string;
@@ -129,8 +129,12 @@ export const LEAD_FIELD_TYPES: { value: LeadFieldType; label: string }[] = [
   { value: "email", label: "Email" },
   { value: "number", label: "Number" },
   { value: "select", label: "Dropdown" },
+  { value: "multiselect", label: "Checkboxes (multi-select)" },
   { value: "textarea", label: "Long text" }
 ];
+
+/** Field types that carry a list of choices (need the options input). */
+export const OPTION_FIELD_TYPES: LeadFieldType[] = ["select", "multiselect"];
 
 export const FORM_STATUS_TONE: Record<string, "neutral" | "good" | "high"> = {
   active: "good",

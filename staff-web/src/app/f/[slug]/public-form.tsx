@@ -27,6 +27,16 @@ export function PublicFormView({ slug, form }: { slug: string; form: PublicLeadF
     setValues((prev) => ({ ...prev, [key]: value }));
   }
 
+  function toggleMulti(key: string, option: string) {
+    setValues((prev) => {
+      const selected = (prev[key] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const next = selected.includes(option)
+        ? selected.filter((o) => o !== option)
+        : [...selected, option];
+      return { ...prev, [key]: next.join(", ") };
+    });
+  }
+
   function submit() {
     const missing = form.fields.find((f) => f.required && !(values[f.key] ?? "").trim());
     if (missing) {
@@ -98,6 +108,29 @@ export function PublicFormView({ slug, form }: { slug: string; form: PublicLeadF
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>
+              ) : field.type === "multiselect" ? (
+                <div className="space-y-0.5 rounded-lg border border-line-strong bg-surface p-1.5">
+                  {(field.options ?? []).map((opt) => {
+                    const selected = (values[field.key] ?? "")
+                      .split(",")
+                      .map((s) => s.trim())
+                      .includes(opt);
+                    return (
+                      <label
+                        key={opt}
+                        className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-ink hover:bg-surface-muted"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleMulti(field.key, opt)}
+                          className="size-4 rounded border-line-strong text-brand-600 focus:ring-brand-200"
+                        />
+                        {opt}
+                      </label>
+                    );
+                  })}
+                </div>
               ) : (
                 <Input
                   id={id}

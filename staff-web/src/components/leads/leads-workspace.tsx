@@ -32,6 +32,7 @@ import {
   LEAD_FIELD_TYPES,
   LEAD_SOURCES,
   LEAD_STAGES,
+  OPTION_FIELD_TYPES,
   formatLeadDate,
   leadSourceLabel,
   leadStageLabel,
@@ -823,10 +824,9 @@ function FormBuilderModal({
     if (cleaned.length === 0) return setError("Add at least one field with a label.");
 
     const built: LeadFormField[] = cleaned.map((f, i) => {
-      const options =
-        f.type === "select"
-          ? f.optionsText.split(",").map((o) => o.trim()).filter(Boolean)
-          : undefined;
+      const options = OPTION_FIELD_TYPES.includes(f.type)
+        ? f.optionsText.split(",").map((o) => o.trim()).filter(Boolean)
+        : undefined;
       return {
         key: f.key.trim() || slugifyKey(f.label, i + 1),
         label: f.label.trim(),
@@ -836,8 +836,8 @@ function FormBuilderModal({
       };
     });
 
-    if (built.some((f) => f.type === "select" && (!f.options || f.options.length === 0))) {
-      return setError("Dropdown fields need at least one option (comma-separated).");
+    if (built.some((f) => OPTION_FIELD_TYPES.includes(f.type) && (!f.options || f.options.length === 0))) {
+      return setError("Dropdown and checkbox fields need at least one option (comma-separated).");
     }
 
     setError(null);
@@ -934,9 +934,11 @@ function FormBuilderModal({
                     <Trash2 className="size-4" />
                   </button>
                 </div>
-                {f.type === "select" ? (
+                {OPTION_FIELD_TYPES.includes(f.type) ? (
                   <div className="mt-2">
-                    <label className="mb-1 block text-[11px] font-medium text-ink-soft">Options (comma-separated)</label>
+                    <label className="mb-1 block text-[11px] font-medium text-ink-soft">
+                      {f.type === "multiselect" ? "Choices (comma-separated — patients can pick several)" : "Options (comma-separated)"}
+                    </label>
                     <Input
                       value={f.optionsText}
                       onChange={(e) => updateField(f._id, { optionsText: e.target.value })}

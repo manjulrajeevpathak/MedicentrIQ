@@ -576,7 +576,7 @@ const sanitizeModuleOverrides = (value: unknown): Partial<Record<ModuleKey, bool
 
 const LEAD_SOURCES: LeadSource[] = ["camp", "meta", "referral", "form", "import", "walk_in"];
 const LEAD_STAGES: LeadStage[] = ["new", "contacted", "qualified", "booked", "converted", "lost"];
-const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email", "number", "select", "textarea"]);
+const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email", "number", "select", "multiselect", "textarea"]);
 
 const CAMPAIGN_AUTOMATED_ON: CampaignAutomatedOn[] = ["new_lead", "appointment_missed", "opd_done"];
 const CAMPAIGN_STATUSES: CampaignStatus[] = ["draft", "sending", "sent", "scheduled"];

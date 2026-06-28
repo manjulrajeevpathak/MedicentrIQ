@@ -281,7 +281,7 @@ export type Lead = {
   updatedAt: string;
 };
 
-export type LeadFormFieldType = "text" | "phone" | "email" | "number" | "select" | "textarea";
+export type LeadFormFieldType = "text" | "phone" | "email" | "number" | "select" | "multiselect" | "textarea";
 
 export type LeadFormField = {
   key: string;
