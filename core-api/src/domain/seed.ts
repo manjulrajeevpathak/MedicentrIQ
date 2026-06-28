@@ -1,6 +1,7 @@
 import type {
   Appointment,
   AccessRequest,
+  AppointmentNotificationConfig,
   AuditEvent,
   Branch,
   Call,
@@ -65,6 +66,7 @@ export type SeedData = {
   loginChallenges: LoginChallenge[];
   passwordResetTokens: PasswordResetToken[];
   channelConfigs: TenantChannelConfig[];
+  notificationConfigs: AppointmentNotificationConfig[];
   messages: MessageLog[];
   calls: Call[];
   apiKeys: ServiceApiKey[];
@@ -185,6 +187,7 @@ export const createSeedData = (): SeedData => ({
   loginChallenges: [],
   passwordResetTokens: [],
   channelConfigs: [],
+  notificationConfigs: [],
   messages: [],
   calls: [
     {
@@ -916,6 +919,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     loginChallenges: data.loginChallenges ?? [],
     passwordResetTokens: data.passwordResetTokens ?? [],
     channelConfigs: data.channelConfigs ?? [],
+    notificationConfigs: data.notificationConfigs ?? [],
     messages: data.messages ?? [],
     calls: withTenant(data.calls ?? []),
     apiKeys: data.apiKeys?.length ? withTenant(data.apiKeys) : seed.apiKeys,

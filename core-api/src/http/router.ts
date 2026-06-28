@@ -96,6 +96,10 @@ const createRoutes = (service: CoreService): Route[] => [
   // Messaging channels (per-tenant WhatsApp): config + send.
   route("GET", "/tenant/channels", "tenant:settings:manage", ({ auth }) => service.getTenantChannels(auth)),
   route("PATCH", "/tenant/channels", "tenant:settings:manage", ({ auth, body }) => service.updateTenantChannels(auth, toRecord(body))),
+  route("GET", "/tenant/notifications", "tenant:settings:manage", ({ auth }) => service.getAppointmentNotifications(auth)),
+  route("PATCH", "/tenant/notifications", "tenant:settings:manage", ({ auth, body }) =>
+    service.updateAppointmentNotifications(auth, toRecord(body))
+  ),
   route("POST", "/messages/send", "messages:send", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
   route("POST", "/messages/test", "tenant:settings:manage", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
   route("GET", "/messages", "tenant:settings:manage", ({ auth, query }) =>
@@ -242,6 +246,7 @@ const createRoutes = (service: CoreService): Route[] => [
   route("POST", "/scheduling/send-confirmations", "doctors:manage", ({ auth }) =>
     service.sendDoctorConfirmations(auth), "access"
   ),
+  route("POST", "/scheduling/run-reminders", "appointments:create", () => service.runAppointmentReminders(), "access"),
 
   route("GET", "/appointments", "appointments:read", ({ auth, query }) =>
     service.listAppointments(auth, {

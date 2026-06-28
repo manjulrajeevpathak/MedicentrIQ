@@ -20,6 +20,7 @@ import type {
   AccessRequest,
   Appointment,
   AppointmentDisposition,
+  AppointmentNotificationConfig,
   AppointmentStatus,
   AuditEvent,
   Call,
@@ -627,10 +628,39 @@ const sanitizeStringArray = (value: unknown): string[] | undefined => {
   return list.length > 0 ? list : undefined;
 };
 
+/** First word of a display name (falls back to "there"). */
+const firstName = (name: string): string => name.trim().split(/\s+/)[0] || "there";
+
 /** Replace the {{name}} token with the recipient's first name (whole string falls back to "there"). */
 const personalize = (body: string, name: string): string => {
-  const firstName = name.trim().split(/\s+/)[0] || "there";
-  return body.replace(/\{\{\s*name\s*\}\}/gi, firstName);
+  return body.replace(/\{\{\s*name\s*\}\}/gi, firstName(name));
+};
+
+/**
+ * Per-event appointment-notification defaults — used when a tenant has no
+ * notificationConfigs row (resolve-with-defaults on read). Tokens supported:
+ * {{patientName}} {{doctorName}} {{date}} {{time}} {{branch}} {{confirmLink}}.
+ */
+type NotificationEvent = "booked" | "reminder24h" | "reminder3h" | "cancelled";
+
+const NOTIFICATION_DEFAULTS: Record<NotificationEvent, { enabled: boolean; body: string }> = {
+  booked: {
+    enabled: true,
+    body:
+      "Hi {{patientName}}, your appointment with {{doctorName}} is booked for {{date}} at {{time}} at {{branch}}. Tap to confirm: {{confirmLink}}"
+  },
+  reminder24h: {
+    enabled: true,
+    body: "Reminder, {{patientName}}: your appointment with {{doctorName}} is tomorrow, {{date}} at {{time}}. Confirm: {{confirmLink}}"
+  },
+  reminder3h: {
+    enabled: true,
+    body: "Hi {{patientName}}, your appointment with {{doctorName}} is today at {{time}}. See you at {{branch}}."
+  },
+  cancelled: {
+    enabled: true,
+    body: "Hi {{patientName}}, your appointment with {{doctorName}} on {{date}} at {{time}} has been cancelled. Call us to rebook."
+  }
 };
 
 const sanitizeLeadSource = (value: unknown, fallback: LeadSource = "import"): LeadSource =>
@@ -1611,6 +1641,215 @@ export class CoreService {
       telephony: c.telephony ? { configured: Boolean(c.telephony.apiKey), enabled: c.telephony.enabled } : null
     });
     return this.getTenantChannels(context);
+  }
+
+  // ---- Appointment notifications (per-tenant templates) ---------------------
+
+  /**
+   * Resolve the active tenant's appointment-notification config, falling back to
+   * NOTIFICATION_DEFAULTS for any event a stored row does not override. Returns a
+   * fully-populated config even when the tenant has no row (defaults).
+   */
+  getAppointmentNotifications(context: RequestContext): AppointmentNotificationConfig {
+    const stored = this.data.notificationConfigs.find((entry) => entry.tenantId === context.tenantId);
+    const rule = (event: NotificationEvent): { enabled: boolean; body: string } => ({
+      enabled: stored?.[event]?.enabled ?? NOTIFICATION_DEFAULTS[event].enabled,
+      body: stored?.[event]?.body ?? NOTIFICATION_DEFAULTS[event].body
+    });
+    return {
+      tenantId: context.tenantId,
+      booked: rule("booked"),
+      reminder24h: rule("reminder24h"),
+      reminder3h: rule("reminder3h"),
+      cancelled: rule("cancelled"),
+      createdAt: stored?.createdAt ?? nowIso(),
+      updatedAt: stored?.updatedAt ?? nowIso()
+    };
+  }
+
+  /** Upsert a partial of the tenant's notification templates (any of the 4 events). */
+  async updateAppointmentNotifications(context: RequestContext, input: Record<string, unknown>) {
+    const now = nowIso();
+    let stored = this.data.notificationConfigs.find((entry) => entry.tenantId === context.tenantId);
+    if (!stored) {
+      // Seed the row from the resolved defaults so partial edits keep the rest intact.
+      const resolved = this.getAppointmentNotifications(context);
+      stored = { ...resolved, createdAt: now, updatedAt: now };
+      this.data.notificationConfigs.push(stored);
+    }
+    const events: NotificationEvent[] = ["booked", "reminder24h", "reminder3h", "cancelled"];
+    for (const event of events) {
+      const patch = input[event];
+      if (patch && typeof patch === "object") {
+        const p = patch as Record<string, unknown>;
+        if (typeof p.enabled === "boolean") {
+          stored[event].enabled = p.enabled;
+        }
+        if (typeof p.body === "string" && p.body.trim()) {
+          stored[event].body = p.body;
+        }
+      }
+    }
+    stored.updatedAt = now;
+    await this.persistence.saveCollection("notificationConfigs", this.data.notificationConfigs);
+    await this.audit(context, "tenant.notifications.update", "notification_config", context.tenantId, undefined, {
+      booked: stored.booked.enabled,
+      reminder24h: stored.reminder24h.enabled,
+      reminder3h: stored.reminder3h.enabled,
+      cancelled: stored.cancelled.enabled
+    });
+    return this.getAppointmentNotifications(context);
+  }
+
+  /** Mint a 72h confirm/reschedule mobile-link session for the patient (PWA deep-link). */
+  private async mintConfirmSession(context: RequestContext, patientId: string): Promise<MobileLinkSession> {
+    const session: MobileLinkSession = {
+      token: createId("mls"),
+      tenantId: context.tenantId,
+      patientId,
+      expiresAt: new Date(Date.now() + 72 * 60 * 60_000).toISOString(),
+      allowedActions: ["confirm_appointment", "reschedule_request"],
+      createdAt: nowIso()
+    };
+    this.data.sessions.push(session);
+    await this.persistence.saveCollection("sessions", this.data.sessions);
+    return session;
+  }
+
+  /**
+   * Build the token map for a notification. NOTE: appointment.scheduledAt encodes
+   * the wall-clock time as UTC, so we format date/time from the UTC components
+   * (so "09:30Z" renders as 9:30 AM, not a tz-shifted value).
+   */
+  private appointmentTokens(appointment: Appointment, patient: Patient): Record<string, string> {
+    const at = new Date(appointment.scheduledAt);
+    const date = Number.isNaN(at.getTime())
+      ? appointment.scheduledAt
+      : at.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+    const time = Number.isNaN(at.getTime())
+      ? ""
+      : at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" });
+    const branch =
+      this.data.branches.find((entry) => entry.id === appointment.branchId)?.displayName ?? "";
+    return {
+      patientName: firstName(patient.displayName),
+      doctorName: appointment.doctorName ?? "your doctor",
+      date,
+      time,
+      branch
+    };
+  }
+
+  /** Replace every {{token}} (case-insensitive, optional spaces) present in `tokens`. */
+  private renderTemplate(body: string, tokens: Record<string, string>): string {
+    let out = body;
+    for (const [key, value] of Object.entries(tokens)) {
+      out = out.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "gi"), value);
+    }
+    return out;
+  }
+
+  /**
+   * Best-effort: send a configured appointment notification to the patient over
+   * WhatsApp (transactional). Resolves the tenant rule for `event`; mints a confirm
+   * session when the body references {{confirmLink}}. NEVER throws — returns false on
+   * any failure (disabled rule, no phone, unconfigured channel, provider error) so
+   * the appointment operation always succeeds.
+   */
+  private async notifyAppointment(
+    context: RequestContext,
+    appointment: Appointment,
+    event: NotificationEvent
+  ): Promise<boolean> {
+    try {
+      const config = this.getAppointmentNotifications(context);
+      const rule = config[event];
+      if (!rule.enabled) {
+        return false;
+      }
+      const patient = this.ensureKnownPatient(context, appointment.patientId);
+      if (!patient.primaryPhone) {
+        return false;
+      }
+      const tokens = this.appointmentTokens(appointment, patient);
+      if (/\{\{\s*confirmLink\s*\}\}/i.test(rule.body)) {
+        const session = await this.mintConfirmSession(context, patient.id);
+        tokens.confirmLink = `${process.env.PATIENT_WEB_URL || "http://localhost:3201"}/?token=${session.token}`;
+      }
+      const body = this.renderTemplate(rule.body, tokens);
+      await this.sendMessage(context, { to: patient.primaryPhone, type: "transactional", body });
+      return true;
+    } catch {
+      // Notifications are best-effort; never surface to the caller.
+      return false;
+    }
+  }
+
+  /** Minimal system RequestContext for a tenant (used by the reminder scan). */
+  private systemContext(tenantId: string): RequestContext {
+    return {
+      actorType: "service",
+      tenantId,
+      actorId: "system",
+      displayName: "Reminder Service",
+      roles: [],
+      branchIds: [],
+      permissions: ["appointments:create"],
+      isDemoMode: false,
+      source: "system_default"
+    };
+  }
+
+  /**
+   * Scan every tenant's scheduled/confirmed appointments and fire the 24h / 3h
+   * reminders that are due and not yet sent. NOTE: scheduledAt is wall-clock encoded
+   * as UTC, so reminders fire relative to that encoding — acceptable for now.
+   */
+  async runAppointmentReminders(): Promise<{ sent: number; byEvent: Record<string, number> }> {
+    const byEvent: Record<string, number> = { reminder24h: 0, reminder3h: 0 };
+    let sent = 0;
+    let mutated = false;
+    const now = Date.now();
+    const H = 60 * 60_000;
+
+    for (const appointment of this.data.appointments) {
+      if (appointment.status !== "scheduled" && appointment.status !== "confirmed") {
+        continue;
+      }
+      const at = new Date(appointment.scheduledAt).getTime();
+      if (Number.isNaN(at)) {
+        continue;
+      }
+      const msUntil = at - now;
+      const already = appointment.remindersSent ?? [];
+      const context = this.systemContext(appointment.tenantId);
+
+      let event: NotificationEvent | undefined;
+      if (msUntil > 3 * H && msUntil <= 24 * H && !already.includes("reminder24h")) {
+        event = "reminder24h";
+      } else if (msUntil > 0 && msUntil <= 3 * H && !already.includes("reminder3h")) {
+        event = "reminder3h";
+      }
+      if (!event) {
+        continue;
+      }
+
+      const ok = await this.notifyAppointment(context, appointment, event);
+      // Mark as attempted regardless of provider outcome to avoid re-spamming on
+      // every 10-minute tick (a failed send is logged in the messages collection).
+      appointment.remindersSent = [...already, event];
+      appointment.updatedAt = nowIso();
+      mutated = true;
+      if (ok) {
+        sent += 1;
+        byEvent[event] += 1;
+      }
+    }
+
+    if (mutated) {
+      await this.persistence.saveCollection("appointments", this.data.appointments);
+    }
+    return { sent, byEvent };
   }
 
   /**
@@ -3599,7 +3838,7 @@ export class CoreService {
       throw new ApiError(409, `This patient already has an appointment with this doctor on ${prettyDate}`);
     }
 
-    return this.createAppointment(context, {
+    const created = await this.createAppointment(context, {
       patientId: patient.id,
       doctorId: doctor.id,
       doctorName: doctor.displayName,
@@ -3609,6 +3848,13 @@ export class CoreService {
       durationMinutes: doctor.slotMinutes,
       reason: input.reason
     });
+    // Best-effort patient confirmation (WhatsApp + PWA confirm link). Never fails the booking.
+    try {
+      await this.notifyAppointment(context, created, "booked");
+    } catch {
+      /* notifications are best-effort */
+    }
+    return created;
   }
 
   /**
@@ -3796,6 +4042,14 @@ export class CoreService {
         nextStep: appointment.disposition?.nextStep
       });
     }
+    // Best-effort cancellation notice. Never fails the status update.
+    if (input.status === "cancelled") {
+      try {
+        await this.notifyAppointment(context, appointment, "cancelled");
+      } catch {
+        /* notifications are best-effort */
+      }
+    }
     return appointment;
   }
 
@@ -3851,12 +4105,20 @@ export class CoreService {
     appointment.scheduledAt = normalizedStart;
     appointment.durationMinutes = doctor.slotMinutes;
     appointment.status = "rescheduled";
+    // New time → let the time-based reminders fire again for the new slot.
+    appointment.remindersSent = [];
     appointment.updatedAt = nowIso();
     await this.persistence.saveCollection("appointments", this.data.appointments);
     await this.audit(context, "appointment.update", "appointment", appointment.id, appointment.patientId, {
       status: "rescheduled",
       scheduledAt: normalizedStart
     });
+    // Best-effort: re-send the confirmation with the new time + a fresh confirm link.
+    try {
+      await this.notifyAppointment(context, appointment, "booked");
+    } catch {
+      /* notifications are best-effort */
+    }
     return appointment;
   }
 

@@ -16,6 +16,7 @@ const collections: CollectionName[] = [
   "loginChallenges",
   "passwordResetTokens",
   "channelConfigs",
+  "notificationConfigs",
   "messages",
   "calls",
   "apiKeys",
@@ -240,7 +241,7 @@ function recordId(collection: CollectionName, record: unknown): string {
   // channelConfigs are one-per-tenant (keyed by tenantId); clinicalRecords are
   // one-per-patient (keyed by patientId).
   const value =
-    collection === "channelConfigs"
+    collection === "channelConfigs" || collection === "notificationConfigs"
       ? record.tenantId
       : collection === "clinicalRecords"
         ? record.patientId

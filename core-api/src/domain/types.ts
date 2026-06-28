@@ -214,6 +214,19 @@ export type TenantChannelConfig = {
   updatedAt: string;
 };
 
+/** Per-tenant appointment-notification templates (one row per tenant). */
+export type NotificationRule = { enabled: boolean; body: string };
+
+export type AppointmentNotificationConfig = {
+  tenantId: string;
+  booked: NotificationRule;
+  reminder24h: NotificationRule;
+  reminder3h: NotificationRule;
+  cancelled: NotificationRule;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** Outbound message audit log (basis for future campaign delivery tracking). */
 export type MessageLog = {
   id: string;
@@ -418,6 +431,7 @@ export type AuditEvent = {
     | "tenant.create"
     | "tenant.update"
     | "tenant.settings_update"
+    | "tenant.notifications.update"
     | "message.send"
     | "lead.create"
     | "lead.update"
@@ -636,6 +650,8 @@ export type Appointment = {
   /** Captured when the visit reaches "completed" — the clinical outcome + next step. */
   disposition?: AppointmentDisposition;
   noShowRisk?: Priority;
+  /** Which time-based reminders have already been sent (e.g. ["reminder24h"]). */
+  remindersSent?: string[];
   createdAt: string;
   updatedAt: string;
 };
