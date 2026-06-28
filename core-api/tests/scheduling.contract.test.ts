@@ -119,6 +119,33 @@ describe("scheduling & appointments contract", () => {
     assert.equal(body.data.status, "scheduled");
   });
 
+  it("backfills the doctor name on existing appointments when the doctor is renamed", async () => {
+    const date = nextMonday();
+    // Booked above as "Dr. Test Sharma".
+    const before = (await (await authed(`/appointments?doctorId=${doctorId}&date=${date}`)).json()) as {
+      data: Array<{ id: string; doctorName: string }>;
+    };
+    assert.ok(before.data.some((a) => a.doctorName === "Dr. Test Sharma"));
+
+    const rename = await authed(`/doctors/${doctorId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ displayName: "Dr. Renamed Verma" })
+    });
+    assert.equal(rename.status, 200);
+
+    const after = (await (await authed(`/appointments?doctorId=${doctorId}&date=${date}`)).json()) as {
+      data: Array<{ doctorName: string }>;
+    };
+    assert.ok(after.data.length > 0);
+    assert.ok(after.data.every((a) => a.doctorName === "Dr. Renamed Verma"));
+
+    // Restore the name so later assertions in this suite still hold.
+    await authed(`/doctors/${doctorId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ displayName: "Dr. Test Sharma" })
+    });
+  });
+
   it("rejects double-booking the same slot with 409", async () => {
     const res = await authed("/appointments", {
       method: "POST",

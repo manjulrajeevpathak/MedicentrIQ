@@ -1803,9 +1803,15 @@ export class CoreService {
       : at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" });
     const branchRecord = this.data.branches.find((entry) => entry.id === appointment.branchId);
     const branch = branchRecord?.displayName ?? "";
+    // Resolve the doctor's CURRENT name from the live record — the name stored on
+    // the appointment is denormalized at booking and goes stale if the doctor is
+    // later renamed.
+    const doctorRecord = appointment.doctorId
+      ? this.data.doctors.find((entry) => entry.id === appointment.doctorId)
+      : undefined;
     return {
       patientName: firstName(patient.displayName),
-      doctorName: appointment.doctorName ?? "your doctor",
+      doctorName: doctorRecord?.displayName ?? appointment.doctorName ?? "your doctor",
       date,
       time,
       branch,
@@ -3709,6 +3715,8 @@ export class CoreService {
 
   async updateDoctor(context: RequestContext, doctorId: string, input: Record<string, unknown>) {
     const doctor = this.ensureVisibleDoctor(context, doctorId);
+    const prevName = doctor.displayName;
+    const prevSpecialty = doctor.specialty;
     if (typeof input.displayName === "string" && input.displayName.trim().length > 0) {
       doctor.displayName = input.displayName.trim();
     }
@@ -3746,6 +3754,25 @@ export class CoreService {
       doctor.weeklyHours = sanitizeWeeklyHours(input.weeklyHours);
     }
     await this.persistence.saveCollection("doctors", this.data.doctors);
+
+    // Keep the denormalized doctorName/specialty on this doctor's appointments in
+    // sync with the rename, so staff lists and outbound messages don't go stale.
+    if (doctor.displayName !== prevName || doctor.specialty !== prevSpecialty) {
+      let touched = false;
+      for (const appointment of this.data.appointments) {
+        if (appointment.tenantId !== context.tenantId || appointment.doctorId !== doctor.id) continue;
+        const nextSpecialty = doctor.specialty ?? appointment.specialty;
+        if (appointment.doctorName !== doctor.displayName || appointment.specialty !== nextSpecialty) {
+          appointment.doctorName = doctor.displayName;
+          appointment.specialty = nextSpecialty;
+          touched = true;
+        }
+      }
+      if (touched) {
+        await this.persistence.saveCollection("appointments", this.data.appointments);
+      }
+    }
+
     await this.audit(context, "doctor.update", "doctor", doctor.id, undefined, { status: doctor.status });
     return doctor;
   }
@@ -4417,8 +4444,15 @@ export class CoreService {
         const branch = this.data.branches.find(
           (b) => b.id === entry.branchId && b.tenantId === context.tenantId
         );
+        // Resolve the doctor's current name/specialty from the live record (the
+        // name on the appointment is denormalized and can be stale after a rename).
+        const doctor = entry.doctorId
+          ? this.data.doctors.find((d) => d.id === entry.doctorId && d.tenantId === context.tenantId)
+          : undefined;
         return {
           ...entry,
+          doctorName: doctor?.displayName ?? entry.doctorName,
+          specialty: doctor?.specialty ?? entry.specialty,
           branchName: branch?.displayName,
           phone: branch?.phone,
           address: branch?.address,
