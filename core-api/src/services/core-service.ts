@@ -3778,6 +3778,67 @@ export class CoreService {
     return appointment;
   }
 
+  /** Move an appointment to a different open slot (same or different doctor/date). */
+  async rescheduleAppointment(
+    context: RequestContext,
+    appointmentId: string,
+    input: { scheduledAt?: string; doctorId?: string; branchId?: string }
+  ) {
+    const appointment = this.ensureVisibleAppointment(context, appointmentId);
+    const doctorId =
+      typeof input.doctorId === "string" && input.doctorId.trim() ? input.doctorId.trim() : appointment.doctorId;
+    if (!doctorId) {
+      throw new ApiError(400, "Appointment has no doctor to reschedule");
+    }
+    const doctor = this.ensureVisibleDoctor(context, doctorId);
+    if (doctor.status !== "active") {
+      throw new ApiError(400, "Doctor is not accepting appointments");
+    }
+    const scheduledAt = ensureString(input.scheduledAt, "scheduledAt");
+    const parsed = new Date(scheduledAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new ApiError(400, "scheduledAt must be a valid ISO timestamp");
+    }
+    const normalizedStart = parsed.toISOString();
+    const dateISO = normalizedStart.slice(0, 10);
+    const branchId =
+      input.branchId ?? (doctor.branchIds.includes(appointment.branchId) ? appointment.branchId : doctor.branchIds[0]);
+    if (!branchId || !doctor.branchIds.includes(branchId)) {
+      throw new ApiError(400, "Doctor does not work at the requested branch");
+    }
+    // Validate the target slot: it must be in the schedule and not held by ANOTHER
+    // non-cancelled appointment (getDoctorSlots already drops taken slots; this
+    // appointment's own current slot is excluded by the id check below).
+    const slots = this.getDoctorSlots(context, doctorId, dateISO, branchId);
+    if (!slots.some((slot) => slot.start === normalizedStart)) {
+      const taken = this.data.appointments.some(
+        (entry) =>
+          entry.tenantId === context.tenantId &&
+          entry.id !== appointment.id &&
+          entry.doctorId === doctor.id &&
+          entry.status !== "cancelled" &&
+          entry.scheduledAt === normalizedStart
+      );
+      throw taken
+        ? new ApiError(409, "That slot is already booked")
+        : new ApiError(400, "Requested time is outside the doctor's available schedule");
+    }
+    appointment.doctorId = doctor.id;
+    appointment.doctorName = doctor.displayName;
+    appointment.specialty = doctor.specialty ?? appointment.specialty;
+    appointment.branchId = branchId;
+    appointment.scheduledAt = normalizedStart;
+    appointment.durationMinutes = doctor.slotMinutes;
+    appointment.status = "rescheduled";
+    appointment.updatedAt = nowIso();
+    await this.persistence.saveCollection("appointments", this.data.appointments);
+    await this.audit(context, "appointment.update", "appointment", appointment.id, appointment.patientId, {
+      status: "rescheduled",
+      scheduledAt: normalizedStart
+    });
+    return appointment;
+  }
+
   /** Convenience endpoint: complete an appointment and record its disposition in one call. */
   async recordAppointmentDisposition(context: RequestContext, appointmentId: string, input: DispositionInput) {
     const appointment = this.ensureVisibleAppointment(context, appointmentId);

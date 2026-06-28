@@ -205,6 +205,43 @@ describe("scheduling & appointments contract", () => {
     assert.ok(res.status >= 400 && res.status < 500);
   });
 
+  it("reschedules an appointment to another open slot (frees the old, takes the new)", async () => {
+    const date = nextMonday();
+    const dr = (await (
+      await authed("/doctors", {
+        method: "POST",
+        body: JSON.stringify({ displayName: "Dr. Reschedule", specialty: "Ophthalmology", branchIds: ["blr-indiranagar"], slotMinutes: 30 })
+      })
+    ).json()) as { data: { id: string } };
+    const drId = dr.data.id;
+    await authed(`/doctors/${drId}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify({ slotMinutes: 30, weeklyHours: { 1: [{ start: "09:00", end: "12:00" }] } })
+    });
+    const slots = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as { data: Array<{ start: string }> };
+    const [s1, s2] = slots.data;
+
+    const booked = (await (
+      await authed("/appointments", {
+        method: "POST",
+        body: JSON.stringify({ doctorId: drId, scheduledAt: s1.start, patient: { name: "Resched Test", phone: "+919712340000" } })
+      })
+    ).json()) as { data: { id: string } };
+
+    const res = await authed(`/appointments/${booked.data.id}/reschedule`, {
+      method: "POST",
+      body: JSON.stringify({ scheduledAt: s2.start })
+    });
+    const body = (await res.json()) as { data: { scheduledAt: string; status: string } };
+    assert.equal(res.status, 200);
+    assert.equal(body.data.scheduledAt, s2.start);
+    assert.equal(body.data.status, "rescheduled");
+
+    const after = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as { data: Array<{ start: string }> };
+    assert.ok(after.data.some((s) => s.start === s1.start), "old slot is freed");
+    assert.ok(!after.data.some((s) => s.start === s2.start), "new slot is taken");
+  });
+
   it("OPD walk-in checks in + completes the linked same-day appointment", async () => {
     const todayIso = new Date().toISOString().slice(0, 10);
     const wd = new Date(`${todayIso}T00:00:00.000Z`).getUTCDay();

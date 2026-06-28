@@ -258,6 +258,9 @@ const createRoutes = (service: CoreService): Route[] => [
   route("PATCH", "/appointments/:appointmentId", "appointments:create", ({ auth, params, body }) =>
     service.updateAppointment(auth, params.appointmentId, toRecord(body))
   ),
+  route("POST", "/appointments/:appointmentId/reschedule", "appointments:create", ({ auth, params, body }) =>
+    service.rescheduleAppointment(auth, params.appointmentId, toRecord(body)), "access"
+  ),
   route("POST", "/appointments/:appointmentId/disposition", "appointments:create", ({ auth, params, body }) =>
     service.recordAppointmentDisposition(auth, params.appointmentId, toRecord(body))
   ),
