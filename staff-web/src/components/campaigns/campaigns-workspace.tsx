@@ -59,12 +59,16 @@ import {
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
+/** Reusable text templates from the Templates library, usable as a campaign body. */
+export type CampaignTemplateOption = { id: string; name: string; body: string };
+
 type Props = {
   campaigns: Campaign[];
   conditions: ConditionCatalogEntry[];
+  templates: CampaignTemplateOption[];
 };
 
-export function CampaignsWorkspace({ campaigns, conditions }: Props) {
+export function CampaignsWorkspace({ campaigns, conditions, templates }: Props) {
   const [composerOpen, setComposerOpen] = useState(false);
 
   return (
@@ -106,6 +110,7 @@ export function CampaignsWorkspace({ campaigns, conditions }: Props) {
         open={composerOpen}
         onClose={() => setComposerOpen(false)}
         conditions={conditions}
+        templates={templates}
       />
     </div>
   );
@@ -251,11 +256,13 @@ function audienceSummary(a: CampaignAudience): string {
 function CampaignComposer({
   open,
   onClose,
-  conditions
+  conditions,
+  templates
 }: {
   open: boolean;
   onClose: () => void;
   conditions: ConditionCatalogEntry[];
+  templates: CampaignTemplateOption[];
 }) {
   const { toast } = useToast();
   const [saving, startSaving] = useTransition();
@@ -415,16 +422,37 @@ function CampaignComposer({
         ) : null}
 
         {provider === "ultramsg" ? (
-          <Field
-            label="Message body"
-            htmlFor="nc-body"
-            hint={
-              <>
-                Free-text WhatsApp via UltraMsg. Use <code className="font-mono">{"{{name}}"}</code> to
-                merge the recipient&apos;s name.
-              </>
-            }
-          >
+          <>
+            {templates.length > 0 ? (
+              <Field label="Start from a template (optional)" htmlFor="nc-template">
+                <select
+                  id="nc-template"
+                  value=""
+                  onChange={(e) => {
+                    const tpl = templates.find((t) => t.id === e.target.value);
+                    if (tpl) setBody(tpl.body);
+                  }}
+                  className={selectClass}
+                >
+                  <option value="">Choose a saved template…</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+            <Field
+              label="Message body"
+              htmlFor="nc-body"
+              hint={
+                <>
+                  Free-text WhatsApp via UltraMsg. Use <code className="font-mono">{"{{name}}"}</code> to
+                  merge the recipient&apos;s name.
+                </>
+              }
+            >
             <textarea
               id="nc-body"
               value={body}
@@ -433,7 +461,8 @@ function CampaignComposer({
               placeholder="Namaste {{name}}, your follow-up is due. Reply to book a slot."
               className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             />
-          </Field>
+            </Field>
+          </>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="AISensy campaign" htmlFor="nc-aisensy">
