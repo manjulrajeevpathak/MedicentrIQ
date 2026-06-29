@@ -542,11 +542,11 @@ function parseWorkbook(data: ArrayBuffer): ParsedSheet {
 /** Generate + download the templatised leads workbook entirely client-side. */
 function downloadLeadsTemplate() {
   const aoa = [
-    ["Name", "Phone", "Email", "Source", "Notes"],
-    ["Ramesh Kumar", "+919812345678", "ramesh@example.com", "camp", "Met at eye camp"]
+    ["Name", "Phone", "Source", "Notes"],
+    ["Ramesh Kumar", "+919812345678", "camp", "Met at eye camp"]
   ];
   const sheet = XLSX.utils.aoa_to_sheet(aoa);
-  sheet["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 26 }, { wch: 12 }, { wch: 30 }];
+  sheet["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 30 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, sheet, "Leads");
   XLSX.writeFile(wb, "healthcareos-leads-template.xlsx");
@@ -678,7 +678,7 @@ function ImportTab() {
             value={raw}
             onChange={(e) => applyCsv(e.target.value)}
             rows={6}
-            placeholder={"name,phone,email\nRamesh Kumar,+919812345678,ramesh@example.com"}
+            placeholder={"name,phone,source,notes\nRamesh Kumar,+919812345678,camp,Met at eye camp"}
             className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 font-mono text-xs text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
           />
           <div className="mt-2 flex flex-wrap items-center gap-3">

@@ -427,8 +427,11 @@ export type Campaign = {
   id: string;
   tenantId: string;
   name: string;
-  /** transactional → UltraMsg; marketing → AISensy. */
+  /** Message category (label + WhatsApp category): marketing vs transactional. */
   channelType: CampaignChannelType;
+  /** Delivery provider — decoupled from category, so a marketing broadcast can go
+   *  via UltraMsg (free text) or AISensy (template). Defaults from channelType. */
+  provider?: ChannelProvider;
   audience: CampaignAudience;
   /** transactional: free text; supports {{name}} token. */
   body?: string;

@@ -476,6 +476,7 @@ type CampaignAudienceInput = {
 type UpsertCampaignInput = {
   name?: unknown;
   channelType?: unknown;
+  provider?: unknown;
   audience?: unknown;
   body?: unknown;
   aisensyCampaign?: unknown;
@@ -2390,17 +2391,21 @@ export class CoreService {
   async sendMessage(context: RequestContext, input: Record<string, unknown>) {
     const to = ensureString(input.to, "to");
     const type: MessageType = input.type === "marketing" ? "marketing" : "transactional";
+    // Routing is by PROVIDER, not by message category — a marketing broadcast can
+    // go via UltraMsg (free-form) just as well as AISensy (approved template).
+    // Default keeps back-compat: marketing→AISensy, transactional→UltraMsg.
+    const providerOverride =
+      input.provider === "ultramsg" || input.provider === "aisensy" ? (input.provider as ChannelProvider) : undefined;
     const config = this.tenantChannelConfig(context.tenantId);
 
-    let channel: ChannelProvider;
+    const channel: ChannelProvider = providerOverride ?? (type === "marketing" ? "aisensy" : "ultramsg");
     let result: { ok: true; providerId?: string } | { ok: false; error: string };
     let body: string | undefined;
     let campaign: string | undefined;
 
-    if (type === "marketing") {
-      channel = "aisensy";
+    if (channel === "aisensy") {
       if (!config?.aisensy?.enabled || !config.aisensy.apiKey) {
-        throw new ApiError(400, "AISensy (marketing) is not configured for this hospital.");
+        throw new ApiError(400, "AISensy is not configured for this hospital.");
       }
       campaign = typeof input.campaign === "string" ? input.campaign : undefined;
       result = await sendAiSensy({ apiKey: config.aisensy.apiKey }, to, {
@@ -2409,9 +2414,8 @@ export class CoreService {
         params: Array.isArray(input.params) ? (input.params.filter((p) => typeof p === "string") as string[]) : undefined
       });
     } else {
-      channel = "ultramsg";
       if (!config?.ultramsg?.enabled || !config.ultramsg.instanceId || !config.ultramsg.token) {
-        throw new ApiError(400, "UltraMsg (transactional) is not configured for this hospital.");
+        throw new ApiError(400, "UltraMsg is not configured for this hospital.");
       }
       body = ensureString(input.body, "body");
       result = await sendUltraMsg({ instanceId: config.ultramsg.instanceId, token: config.ultramsg.token }, to, body);
@@ -6723,6 +6727,9 @@ export class CoreService {
       createdAt: timestamp,
       updatedAt: timestamp
     };
+    if (input.provider === "ultramsg" || input.provider === "aisensy") {
+      campaign.provider = input.provider;
+    }
     if (typeof input.body === "string" && input.body.trim()) campaign.body = input.body.trim();
     if (typeof input.aisensyCampaign === "string" && input.aisensyCampaign.trim()) {
       campaign.aisensyCampaign = input.aisensyCampaign.trim();
@@ -6754,6 +6761,9 @@ export class CoreService {
     }
     if (input.channelType === "marketing" || input.channelType === "transactional") {
       campaign.channelType = input.channelType;
+    }
+    if (input.provider === "ultramsg" || input.provider === "aisensy") {
+      campaign.provider = input.provider;
     }
     if (input.audience !== undefined) {
       campaign.audience = this.sanitizeAudience(input.audience);
@@ -6795,6 +6805,8 @@ export class CoreService {
   async sendCampaign(context: RequestContext, campaignId: string) {
     const campaign = this.ensureCampaign(context, campaignId);
     const recipients = this.resolveCampaignAudience(context, campaign.audience);
+    // Effective delivery provider — explicit, else derived from the category.
+    const provider: ChannelProvider = campaign.provider ?? (campaign.channelType === "marketing" ? "aisensy" : "ultramsg");
 
     let sent = 0;
     let failed = 0;
@@ -6803,10 +6815,11 @@ export class CoreService {
         const result = await this.sendMessage(context, {
           to: recipient.phone,
           type: campaign.channelType,
-          body: campaign.channelType === "transactional" && campaign.body ? personalize(campaign.body, recipient.name) : undefined,
-          campaign: campaign.aisensyCampaign,
+          provider,
+          body: provider === "ultramsg" && campaign.body ? personalize(campaign.body, recipient.name) : undefined,
+          campaign: provider === "aisensy" ? campaign.aisensyCampaign : undefined,
           userName: recipient.name,
-          params: campaign.templateParams
+          params: provider === "aisensy" ? campaign.templateParams : undefined
         });
         if (result.ok) {
           sent += 1;

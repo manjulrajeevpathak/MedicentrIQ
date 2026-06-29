@@ -41,23 +41,25 @@ export async function createCampaignAction(input: CampaignInput): Promise<Action
   const name = input.name.trim();
   if (!name) return { ok: false, error: "Enter a campaign name." };
 
-  if (input.channelType === "transactional" && !input.body?.trim()) {
+  const provider = input.provider === "aisensy" ? "aisensy" : "ultramsg";
+  if (provider === "ultramsg" && !input.body?.trim()) {
     return { ok: false, error: "Enter the WhatsApp message body." };
   }
-  if (input.channelType === "marketing" && !input.aisensyCampaign?.trim()) {
-    return { ok: false, error: "Enter the AISensy campaign name." };
+  if (provider === "aisensy" && !input.aisensyCampaign?.trim()) {
+    return { ok: false, error: "Enter the AISensy template/campaign name." };
   }
 
   const body: Record<string, unknown> = {
     name,
     channelType: input.channelType,
+    provider,
     audience: cleanAudience(input.audience),
     trigger: input.trigger
   };
-  if (input.channelType === "transactional" && input.body?.trim()) {
+  if (provider === "ultramsg" && input.body?.trim()) {
     body.body = input.body.trim();
   }
-  if (input.channelType === "marketing") {
+  if (provider === "aisensy") {
     body.aisensyCampaign = input.aisensyCampaign?.trim();
     const params = (input.templateParams ?? []).map((p) => p.trim()).filter(Boolean);
     if (params.length) body.templateParams = params;

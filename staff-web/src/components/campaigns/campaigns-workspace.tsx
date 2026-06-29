@@ -31,11 +31,14 @@ import {
   CHANNEL_OPTIONS,
   CHANNEL_LABELS,
   CHANNEL_TONE,
+  PROVIDER_OPTIONS,
+  PROVIDER_LABELS,
   STATUS_LABELS,
   STATUS_TONE,
   TRIGGER_LABELS,
   TRIGGER_OPTIONS,
   automatedOnLabel,
+  campaignProvider,
   formatCampaignDate,
   formatCampaignDateTime,
   type AudienceInclude,
@@ -43,6 +46,7 @@ import {
   type Campaign,
   type CampaignAudience,
   type CampaignChannel,
+  type CampaignProvider,
   type CampaignTrigger,
   type ConditionCatalogEntry
 } from "@/lib/campaigns-types";
@@ -141,6 +145,7 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
             <Badge tone={CHANNEL_TONE[campaign.channelType]}>
               {CHANNEL_LABELS[campaign.channelType]}
             </Badge>
+            <Badge tone="neutral">via {PROVIDER_LABELS[campaignProvider(campaign)]}</Badge>
             <Badge tone="neutral">
               {campaign.trigger === "automated" ? (
                 <Zap className="size-3" />
@@ -168,7 +173,7 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
         <span className="inline-flex items-center gap-1">
           <Users className="size-3" /> {audienceSummary(campaign.audience)}
         </span>
-        {campaign.channelType === "marketing" && campaign.aisensyCampaign ? (
+        {campaignProvider(campaign) === "aisensy" && campaign.aisensyCampaign ? (
           <span className="inline-flex items-center gap-1">
             <Sparkles className="size-3" /> {campaign.aisensyCampaign}
           </span>
@@ -176,7 +181,7 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
         <span>· created {formatCampaignDate(campaign.createdAt)}</span>
       </div>
 
-      {campaign.channelType === "transactional" && campaign.body ? (
+      {campaignProvider(campaign) === "ultramsg" && campaign.body ? (
         <p className="mx-4 mb-3 rounded-lg bg-surface-muted px-3 py-2 text-xs text-ink-soft">
           {campaign.body}
         </p>
@@ -258,6 +263,7 @@ function CampaignComposer({
 
   const [name, setName] = useState("");
   const [channelType, setChannelType] = useState<CampaignChannel>("transactional");
+  const [provider, setProvider] = useState<CampaignProvider>("ultramsg");
   const [trigger, setTrigger] = useState<CampaignTrigger>("manual");
   const [automatedOn, setAutomatedOn] = useState(AUTOMATED_ON_OPTIONS[0].value);
 
@@ -273,6 +279,7 @@ function CampaignComposer({
   function reset() {
     setName("");
     setChannelType("transactional");
+    setProvider("ultramsg");
     setTrigger("manual");
     setAutomatedOn(AUTOMATED_ON_OPTIONS[0].value);
     setBody("");
@@ -284,10 +291,10 @@ function CampaignComposer({
 
   function submit() {
     if (!name.trim()) return setError("Enter a campaign name.");
-    if (channelType === "transactional" && !body.trim())
+    if (provider === "ultramsg" && !body.trim())
       return setError("Enter the WhatsApp message body.");
-    if (channelType === "marketing" && !aisensyCampaign.trim())
-      return setError("Enter the AISensy campaign name.");
+    if (provider === "aisensy" && !aisensyCampaign.trim())
+      return setError("Enter the AISensy template/campaign name.");
     setError(null);
 
     const params = templateParams
@@ -299,12 +306,13 @@ function CampaignComposer({
       const result = await createCampaignAction({
         name,
         channelType,
+        provider,
         trigger,
         automatedOn: trigger === "automated" ? automatedOn : undefined,
         audience,
-        body: channelType === "transactional" ? body : undefined,
-        aisensyCampaign: channelType === "marketing" ? aisensyCampaign : undefined,
-        templateParams: channelType === "marketing" && params.length ? params : undefined
+        body: provider === "ultramsg" ? body : undefined,
+        aisensyCampaign: provider === "aisensy" ? aisensyCampaign : undefined,
+        templateParams: provider === "aisensy" && params.length ? params : undefined
       });
       if (!result.ok) {
         setError(result.error ?? "Could not create the campaign.");
@@ -316,7 +324,7 @@ function CampaignComposer({
     });
   }
 
-  const channelHint = CHANNEL_OPTIONS.find((c) => c.value === channelType)?.hint;
+  const channelHint = PROVIDER_OPTIONS.find((p) => p.value === provider)?.hint;
 
   return (
     <Modal open={open} onClose={onClose} labelledBy="new-campaign-title" className="max-w-2xl">
@@ -342,8 +350,8 @@ function CampaignComposer({
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Channel" htmlFor="nc-channel">
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Type" htmlFor="nc-channel">
             <select
               id="nc-channel"
               value={channelType}
@@ -353,6 +361,20 @@ function CampaignComposer({
               {CHANNEL_OPTIONS.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Send via" htmlFor="nc-provider">
+            <select
+              id="nc-provider"
+              value={provider}
+              onChange={(e) => setProvider(e.target.value as CampaignProvider)}
+              className={selectClass}
+            >
+              {PROVIDER_OPTIONS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
                 </option>
               ))}
             </select>
@@ -392,7 +414,7 @@ function CampaignComposer({
           </Field>
         ) : null}
 
-        {channelType === "transactional" ? (
+        {provider === "ultramsg" ? (
           <Field
             label="Message body"
             htmlFor="nc-body"

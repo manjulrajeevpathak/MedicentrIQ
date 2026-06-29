@@ -9,6 +9,10 @@
 
 export type CampaignChannel = "transactional" | "marketing";
 
+/** Delivery provider — decoupled from the marketing/transactional category, so a
+ *  marketing broadcast can go via UltraMsg (free text) or AISensy (template). */
+export type CampaignProvider = "ultramsg" | "aisensy";
+
 export type CampaignTrigger = "manual" | "automated";
 
 export type CampaignStatus = "draft" | "sending" | "sent" | "scheduled";
@@ -53,6 +57,7 @@ export type Campaign = {
   id: string;
   name: string;
   channelType: CampaignChannel;
+  provider?: CampaignProvider;
   audience: CampaignAudience;
   body?: string;
   aisensyCampaign?: string;
@@ -68,12 +73,36 @@ export type Campaign = {
 export type CampaignInput = {
   name: string;
   channelType: CampaignChannel;
+  provider: CampaignProvider;
   audience: CampaignAudience;
   body?: string;
   aisensyCampaign?: string;
   templateParams?: string[];
   trigger: CampaignTrigger;
   automatedOn?: AutomatedOn;
+};
+
+/** Resolve a campaign's effective delivery provider (explicit, else from category). */
+export function campaignProvider(c: { provider?: CampaignProvider; channelType: CampaignChannel }): CampaignProvider {
+  return c.provider ?? (c.channelType === "marketing" ? "aisensy" : "ultramsg");
+}
+
+export const PROVIDER_OPTIONS: { value: CampaignProvider; label: string; hint: string }[] = [
+  {
+    value: "ultramsg",
+    label: "UltraMsg (free text)",
+    hint: "Sends a free-text WhatsApp message — supports a {{name}} merge field."
+  },
+  {
+    value: "aisensy",
+    label: "AISensy (approved template)",
+    hint: "Sends an approved WhatsApp template — required for first contact with a number."
+  }
+];
+
+export const PROVIDER_LABELS: Record<CampaignProvider, string> = {
+  ultramsg: "UltraMsg",
+  aisensy: "AISensy"
 };
 
 export type SendResult = {
@@ -96,12 +125,12 @@ export const CHANNEL_OPTIONS: { value: CampaignChannel; label: string; hint: str
   {
     value: "transactional",
     label: "Transactional",
-    hint: "Free-text WhatsApp via UltraMsg — supports a {{name}} merge field."
+    hint: "Service/utility message (confirmations, reminders) to people already in contact."
   },
   {
     value: "marketing",
     label: "Marketing",
-    hint: "Approved AISensy campaign — supply the campaign name + optional template params."
+    hint: "Promotional broadcast (offers, camps, re-engagement) to a lead/patient segment."
   }
 ];
 
