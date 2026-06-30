@@ -2,7 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { coreApi } from "@/lib/users-api";
-import type { Lead, LeadForm, LeadFormField } from "@/lib/leads-types";
+import type {
+  Lead,
+  LeadConfig,
+  LeadForm,
+  LeadFormField,
+  LeadFunnelStage,
+  LeadSourceOption
+} from "@/lib/leads-types";
 
 /**
  * Leads / Growth server actions. Each reads the session bearer (via `coreApi`),
@@ -66,6 +73,42 @@ export async function updateLeadAction(
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the lead." };
   revalidatePath("/leads");
   return { ok: true, data: result.data, message: "Lead updated." };
+}
+
+// ---- Move a lead across the funnel -----------------------------------------
+
+/** Moves a lead to a different configured stage: `PATCH /leads/:id {stage}`. */
+export async function moveLeadStageAction(
+  leadId: string,
+  stage: string
+): Promise<ActionState<Lead>> {
+  if (!leadId) return { ok: false, error: "Missing lead." };
+  if (!stage) return { ok: false, error: "Pick a stage to move to." };
+
+  const result = await coreApi<Lead>(`/leads/${encodeURIComponent(leadId)}`, {
+    method: "PATCH",
+    body: { stage }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not move the lead." };
+  revalidatePath("/leads");
+  return { ok: true, data: result.data, message: "Lead moved." };
+}
+
+/** Changes a lead's configured source: `PATCH /leads/:id {source}`. */
+export async function changeLeadSourceAction(
+  leadId: string,
+  source: string
+): Promise<ActionState<Lead>> {
+  if (!leadId) return { ok: false, error: "Missing lead." };
+  if (!source) return { ok: false, error: "Pick a source." };
+
+  const result = await coreApi<Lead>(`/leads/${encodeURIComponent(leadId)}`, {
+    method: "PATCH",
+    body: { source }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not update the source." };
+  revalidatePath("/leads");
+  return { ok: true, data: result.data, message: "Source updated." };
 }
 
 // ---- Convert lead → patient ------------------------------------------------
@@ -149,4 +192,40 @@ export async function setFormStatusAction(
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the form." };
   revalidatePath("/leads");
   return { ok: true, data: result.data, message: status === "active" ? "Form activated." : "Form deactivated." };
+}
+
+// ---- Funnel config (sources + ordered stages) ------------------------------
+
+function cleanConfigList<T extends { key: string; label: string }>(list: T[]): T[] {
+  return list
+    .map((e) => ({ ...e, key: e.key.trim(), label: e.label.trim() }))
+    .filter((e) => e.key && e.label);
+}
+
+/**
+ * Persists the tenant's funnel config: `PATCH /tenant/lead-config`. Stages are
+ * sent in order (= funnel order). Either list may be omitted to leave it as-is.
+ */
+export async function saveLeadConfigAction(input: {
+  sources?: LeadSourceOption[];
+  stages?: LeadFunnelStage[];
+}): Promise<ActionState<LeadConfig>> {
+  const body: Record<string, unknown> = {};
+  if (input.sources) {
+    const sources = cleanConfigList(input.sources);
+    if (sources.length === 0) return { ok: false, error: "Add at least one source." };
+    body.sources = sources;
+  }
+  if (input.stages) {
+    const stages = cleanConfigList(input.stages);
+    if (stages.length === 0) return { ok: false, error: "Add at least one stage." };
+    body.stages = stages;
+  }
+  if (Object.keys(body).length === 0) return { ok: false, error: "Nothing to save." };
+
+  const result = await coreApi<LeadConfig>("/tenant/lead-config", { method: "PATCH", body });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not save the funnel config." };
+  revalidatePath("/leads");
+  revalidatePath("/campaigns");
+  return { ok: true, data: result.data, message: "Funnel updated." };
 }

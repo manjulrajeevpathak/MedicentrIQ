@@ -3,19 +3,22 @@ import { Sprout } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty";
 import { LeadsWorkspace } from "@/components/leads/leads-workspace";
-import { fetchBranches } from "@/lib/users-api";
-import { fetchForms, fetchLeadFunnel, fetchLeads } from "@/lib/leads-api";
+import { fetchBranches, fetchIsTenantAdmin } from "@/lib/users-api";
+import { fetchForms, fetchLeadConfig, fetchLeadFunnel, fetchLeads } from "@/lib/leads-api";
 
 export const dynamic = "force-dynamic";
 
 export default async function LeadsPage() {
-  const [leadsResult, funnelResult, formsResult, branches, headerList] = await Promise.all([
-    fetchLeads(),
-    fetchLeadFunnel(),
-    fetchForms(),
-    fetchBranches(),
-    headers()
-  ]);
+  const [leadsResult, funnelResult, formsResult, branches, leadConfig, isAdmin, headerList] =
+    await Promise.all([
+      fetchLeads(),
+      fetchLeadFunnel(),
+      fetchForms(),
+      fetchBranches(),
+      fetchLeadConfig(),
+      fetchIsTenantAdmin(),
+      headers()
+    ]);
 
   if (!leadsResult.ok) {
     if (leadsResult.status === 401) {
@@ -51,6 +54,9 @@ export default async function LeadsPage() {
       funnel={funnelResult.ok ? funnelResult.data : { byStage: {}, bySource: {} }}
       forms={formsResult.ok ? formsResult.data : []}
       branches={branches}
+      sources={leadConfig.sources}
+      stages={leadConfig.stages}
+      isAdmin={isAdmin}
       origin={origin}
     />
   );

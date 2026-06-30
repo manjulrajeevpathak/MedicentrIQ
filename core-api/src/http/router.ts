@@ -102,6 +102,12 @@ const createRoutes = (service: CoreService): Route[] => [
   // Messaging channels (per-tenant WhatsApp): config + send.
   route("GET", "/tenant/channels", "tenant:settings:manage", ({ auth }) => service.getTenantChannels(auth)),
   route("PATCH", "/tenant/channels", "tenant:settings:manage", ({ auth, body }) => service.updateTenantChannels(auth, toRecord(body))),
+
+  // CRM funnel config (per-tenant lead sources + ordered stages).
+  route("GET", "/tenant/lead-config", "tenant:settings:manage", ({ auth }) => service.getLeadConfig(auth)),
+  route("PATCH", "/tenant/lead-config", "tenant:settings:manage", ({ auth, body }) =>
+    service.updateLeadConfig(auth, toRecord(body))
+  ),
   route("POST", "/messages/send", "messages:send", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
   route("POST", "/messages/test", "tenant:settings:manage", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
   route("GET", "/messages", "tenant:settings:manage", ({ auth, query }) =>

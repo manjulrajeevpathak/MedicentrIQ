@@ -1,6 +1,7 @@
 import { coreApi } from "./users-api";
 import type { ApiResult } from "./users-types";
-import type { Lead, LeadForm, LeadFunnel } from "./leads-types";
+import type { Lead, LeadConfig, LeadForm, LeadFunnel } from "./leads-types";
+import { resolveLeadConfig } from "./leads-types";
 
 /**
  * Server-only fetch helpers for the Leads / Growth surface. Each reuses the
@@ -28,4 +29,14 @@ export async function fetchLeadFunnel(): Promise<ApiResult<LeadFunnel>> {
 
 export async function fetchForms(): Promise<ApiResult<LeadForm[]>> {
   return coreApi<LeadForm[]>("/forms");
+}
+
+/**
+ * Tenant-configured lead sources + ordered funnel stages. Always resolves to
+ * non-empty, usable lists: if the endpoint is unavailable or returns empty, it
+ * falls back to sensible defaults so the board still renders.
+ */
+export async function fetchLeadConfig(): Promise<LeadConfig> {
+  const result = await coreApi<Partial<LeadConfig>>("/tenant/lead-config");
+  return resolveLeadConfig(result.ok ? result.data : null);
 }

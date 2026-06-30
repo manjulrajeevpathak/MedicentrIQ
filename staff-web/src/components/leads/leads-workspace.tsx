@@ -3,7 +3,9 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   Check,
   Copy,
   Download,
@@ -11,6 +13,7 @@ import {
   FileText,
   Filter,
   Plus,
+  Settings2,
   Sprout,
   Trash2,
   Upload,
@@ -31,44 +34,56 @@ import { cn } from "@/lib/utils";
 import type { Branch } from "@/lib/users-types";
 import {
   FORM_STATUS_TONE,
-  FUNNEL_STAGE_ORDER,
   LEAD_FIELD_TYPES,
-  LEAD_SOURCES,
-  LEAD_STAGES,
   OPTION_FIELD_TYPES,
+  configLabel,
   formatLeadDate,
-  leadSourceLabel,
-  leadStageLabel,
+  slugifyConfigKey,
   type Lead,
   type LeadFieldType,
   type LeadForm,
   type LeadFormField,
-  type LeadFunnel
+  type LeadFunnel,
+  type LeadFunnelStage,
+  type LeadSourceOption
 } from "@/lib/leads-types";
 import {
   convertLeadAction,
   createFormAction,
   createLeadAction,
   importLeadsAction,
-  setFormStatusAction,
-  updateLeadAction
+  moveLeadStageAction,
+  saveLeadConfigAction,
+  setFormStatusAction
 } from "@/app/(app)/leads/actions";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
-type Tab = "funnel" | "leads" | "import" | "forms";
+type Tab = "board" | "leads" | "import" | "forms";
 
 type Props = {
   leads: Lead[];
   funnel: LeadFunnel;
   forms: LeadForm[];
   branches: Branch[];
+  sources: LeadSourceOption[];
+  stages: LeadFunnelStage[];
+  isAdmin: boolean;
   origin: string;
 };
 
-export function LeadsWorkspace({ leads, funnel, forms, branches, origin }: Props) {
-  const [tab, setTab] = useState<Tab>("funnel");
+export function LeadsWorkspace({
+  leads,
+  forms,
+  branches,
+  sources,
+  stages,
+  isAdmin,
+  origin
+}: Props) {
+  const [tab, setTab] = useState<Tab>("board");
+  const [manageOpen, setManageOpen] = useState(false);
 
   return (
     <div className="space-y-5">
@@ -80,119 +95,224 @@ export function LeadsWorkspace({ leads, funnel, forms, branches, origin }: Props
           <div>
             <h1 className="text-sm font-semibold tracking-tight text-ink">Leads</h1>
             <p className="mt-0.5 text-xs text-ink-muted">
-              Camp, web-form and referral leads — convert them into patients.
+              Camp, web-form and referral leads — move them through your funnel and convert.
             </p>
           </div>
         </div>
-        <Segmented
-          options={[
-            { value: "funnel", label: "Funnel" },
-            { value: "leads", label: "Leads", count: leads.length },
-            { value: "import", label: "Import" },
-            { value: "forms", label: "Forms", count: forms.length }
-          ]}
-          value={tab}
-          onChange={setTab}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            options={[
+              { value: "board", label: "Board" },
+              { value: "leads", label: "List", count: leads.length },
+              { value: "import", label: "Import" },
+              { value: "forms", label: "Forms", count: forms.length }
+            ]}
+            value={tab}
+            onChange={setTab}
+          />
+          {isAdmin ? (
+            <Button variant="outline" size="sm" onClick={() => setManageOpen(true)}>
+              <Settings2 className="size-3.5" /> Manage funnel
+            </Button>
+          ) : null}
+        </div>
       </div>
 
-      {tab === "funnel" ? <FunnelTab funnel={funnel} total={leads.length} /> : null}
-      {tab === "leads" ? <LeadsTab leads={leads} branches={branches} /> : null}
-      {tab === "import" ? <ImportTab /> : null}
+      {tab === "board" ? (
+        <FunnelBoard
+          leads={leads}
+          stages={stages}
+          sources={sources}
+          branches={branches}
+        />
+      ) : null}
+      {tab === "leads" ? (
+        <LeadsTab leads={leads} branches={branches} sources={sources} stages={stages} />
+      ) : null}
+      {tab === "import" ? <ImportTab sources={sources} /> : null}
       {tab === "forms" ? <FormsTab forms={forms} branches={branches} origin={origin} /> : null}
+
+      {isAdmin && manageOpen ? (
+        <ManageFunnelModal
+          open={manageOpen}
+          onClose={() => setManageOpen(false)}
+          sources={sources}
+          stages={stages}
+        />
+      ) : null}
     </div>
   );
 }
 
 // ============================================================================
-// Funnel tab
+// Funnel board (kanban — one column per configured stage, in order)
 // ============================================================================
 
-function FunnelTab({ funnel, total }: { funnel: LeadFunnel; total: number }) {
-  const stageCounts = FUNNEL_STAGE_ORDER.map((stage) => ({
-    stage,
-    count: funnel.byStage[stage] ?? 0
-  }));
-  const lost = funnel.byStage["lost"] ?? 0;
-  const max = Math.max(1, ...stageCounts.map((s) => s.count), lost);
-  const allZero = total === 0 && stageCounts.every((s) => s.count === 0) && lost === 0;
+function FunnelBoard({
+  leads,
+  stages,
+  sources,
+  branches
+}: {
+  leads: Lead[];
+  stages: LeadFunnelStage[];
+  sources: LeadSourceOption[];
+  branches: Branch[];
+}) {
+  const [composerOpen, setComposerOpen] = useState(false);
 
-  const sources = Object.entries(funnel.bySource)
-    .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1]);
-  const sourceMax = Math.max(1, ...sources.map(([, n]) => n));
+  // Group leads by their configured stage. Leads whose stage isn't in the
+  // configured list fall into a synthetic "Unsorted" column so nothing is lost.
+  const byStage = useMemo(() => {
+    const map = new Map<string, Lead[]>();
+    for (const stage of stages) map.set(stage.key, []);
+    const orphans: Lead[] = [];
+    for (const lead of leads) {
+      const bucket = map.get(lead.stage);
+      if (bucket) bucket.push(lead);
+      else orphans.push(lead);
+    }
+    return { map, orphans };
+  }, [leads, stages]);
 
-  if (allZero) {
+  if (stages.length === 0) {
     return (
       <Panel>
         <EmptyState
-          icon={<Sprout className="size-5" />}
-          title="No leads yet"
-          description="As camps, web forms and referrals come in, your funnel will fill in here."
+          icon={<Filter className="size-5" />}
+          title="No funnel stages configured"
+          description="Add at least one stage under Manage funnel to start building your board."
         />
       </Panel>
     );
   }
 
+  const columns: { key: string; label: string; leads: Lead[] }[] = stages.map((s) => ({
+    key: s.key,
+    label: s.label,
+    leads: byStage.map.get(s.key) ?? []
+  }));
+  if (byStage.orphans.length > 0) {
+    columns.push({ key: "__unsorted", label: "Unsorted", leads: byStage.orphans });
+  }
+
   return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)]">
-      <Panel>
-        <SectionTitle icon={<Filter className="size-4" />} title="Lead funnel" subtitle="New → contacted → qualified → converted" />
-        <div className="mt-4 space-y-3">
-          {stageCounts.map(({ stage, count }) => (
-            <div key={stage}>
-              <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="font-medium text-ink-soft">{leadStageLabel(stage)}</span>
-                <span className="font-semibold tabular-nums text-ink">{count}</span>
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SectionTitle
+          icon={<Filter className="size-4" />}
+          title="Funnel board"
+          subtitle={stages.map((s) => s.label).join(" → ")}
+        />
+        <Button size="sm" onClick={() => setComposerOpen(true)}>
+          <UserPlus className="size-3.5" /> New lead
+        </Button>
+      </div>
+
+      {leads.length === 0 ? (
+        <Panel>
+          <EmptyState
+            icon={<Sprout className="size-5" />}
+            title="No leads yet"
+            description="As camps, web forms and referrals come in, they'll line up across your funnel here."
+          />
+        </Panel>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {columns.map((col) => (
+            <div
+              key={col.key}
+              className="flex w-[260px] shrink-0 flex-col rounded-xl border border-line bg-surface-muted/40"
+            >
+              <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
+                <span className="truncate text-xs font-semibold text-ink-soft">{col.label}</span>
+                <span className="rounded-full bg-fill-strong px-1.5 text-[10px] font-semibold tabular-nums text-ink-muted">
+                  {col.leads.length}
+                </span>
               </div>
-              <div className="h-7 overflow-hidden rounded-lg bg-fill">
-                <div
-                  className="flex h-full items-center rounded-lg bg-brand-500 transition-all duration-500"
-                  style={{ width: `${Math.max(count > 0 ? 8 : 0, (count / max) * 100)}%` }}
-                />
+              <div className="flex flex-col gap-2 p-2">
+                {col.leads.length === 0 ? (
+                  <p className="px-1 py-3 text-center text-[11px] text-ink-faint">No leads</p>
+                ) : (
+                  col.leads.map((lead) => (
+                    <LeadCard key={lead.id} lead={lead} stages={stages} sources={sources} />
+                  ))
+                )}
               </div>
             </div>
           ))}
-          {lost > 0 ? (
-            <div className="border-t border-line pt-3">
-              <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="font-medium text-ink-soft">Lost</span>
-                <span className="font-semibold tabular-nums text-ink">{lost}</span>
-              </div>
-              <div className="h-7 overflow-hidden rounded-lg bg-fill">
-                <div
-                  className="h-full rounded-lg bg-[var(--color-critical)] transition-all duration-500"
-                  style={{ width: `${Math.max(8, (lost / max) * 100)}%` }}
-                />
-              </div>
-            </div>
-          ) : null}
         </div>
-      </Panel>
+      )}
 
-      <Panel>
-        <SectionTitle icon={<Sprout className="size-4" />} title="By source" subtitle="Where leads come from" />
-        {sources.length === 0 ? (
-          <p className="mt-4 text-xs text-ink-muted">No source data yet.</p>
-        ) : (
-          <ul className="mt-4 space-y-2.5">
-            {sources.map(([source, n]) => (
-              <li key={source}>
-                <div className="mb-1 flex items-center justify-between text-xs">
-                  <span className="font-medium text-ink-soft">{leadSourceLabel(source)}</span>
-                  <span className="font-semibold tabular-nums text-ink">{n}</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-fill">
-                  <div
-                    className="h-full rounded-full bg-brand-400 transition-all duration-500"
-                    style={{ width: `${(n / sourceMax) * 100}%` }}
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
+      <NewLeadModal
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        branches={branches}
+        sources={sources}
+      />
+    </>
+  );
+}
+
+function LeadCard({
+  lead,
+  stages,
+  sources
+}: {
+  lead: Lead;
+  stages: LeadFunnelStage[];
+  sources: LeadSourceOption[];
+}) {
+  const { toast } = useToast();
+  const [stage, setStage] = useState(lead.stage);
+  const [pending, startTransition] = useTransition();
+
+  function move(next: string) {
+    if (next === stage) return;
+    const prev = stage;
+    setStage(next);
+    startTransition(async () => {
+      const result = await moveLeadStageAction(lead.id, next);
+      if (!result.ok) {
+        setStage(prev);
+        toast(result.error ?? "Could not move the lead.", "error");
+        return;
+      }
+      toast(result.message ?? "Lead moved.", "success");
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-2.5 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <span className="truncate text-xs font-semibold text-ink">{lead.name}</span>
+        <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
+      </div>
+      <p className="mt-0.5 truncate text-[11px] text-ink-muted">{lead.phone || "No phone"}</p>
+      {lead.assignedTo ? (
+        <p className="mt-0.5 truncate text-[11px] text-ink-faint">Owner: {lead.assignedTo}</p>
+      ) : null}
+      <div className="mt-2">
+        <label className="sr-only" htmlFor={`move-${lead.id}`}>
+          Move {lead.name} to a stage
+        </label>
+        <select
+          id={`move-${lead.id}`}
+          value={stages.some((s) => s.key === stage) ? stage : ""}
+          onChange={(e) => move(e.target.value)}
+          disabled={pending}
+          className={cn(selectClass, "h-8 text-xs")}
+        >
+          {!stages.some((s) => s.key === stage) ? (
+            <option value="">Move to…</option>
+          ) : null}
+          {stages.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
@@ -201,7 +321,17 @@ function FunnelTab({ funnel, total }: { funnel: LeadFunnel; total: number }) {
 // Leads list tab
 // ============================================================================
 
-function LeadsTab({ leads, branches }: { leads: Lead[]; branches: Branch[] }) {
+function LeadsTab({
+  leads,
+  branches,
+  sources,
+  stages
+}: {
+  leads: Lead[];
+  branches: Branch[];
+  sources: LeadSourceOption[];
+  stages: LeadFunnelStage[];
+}) {
   const [stageFilter, setStageFilter] = useState<string>("");
   const [sourceFilter, setSourceFilter] = useState<string>("");
   const [composerOpen, setComposerOpen] = useState(false);
@@ -226,14 +356,14 @@ function LeadsTab({ leads, branches }: { leads: Lead[]; branches: Branch[] }) {
           <div className="flex flex-wrap items-center gap-2">
             <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className={cn(selectClass, "h-9 w-auto")}>
               <option value="">All stages</option>
-              {LEAD_STAGES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
+              {stages.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
               ))}
             </select>
             <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className={cn(selectClass, "h-9 w-auto")}>
               <option value="">All sources</option>
-              {LEAD_SOURCES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
+              {sources.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
               ))}
             </select>
             <Button size="sm" onClick={() => setComposerOpen(true)}>
@@ -253,30 +383,44 @@ function LeadsTab({ leads, branches }: { leads: Lead[]; branches: Branch[] }) {
         ) : (
           <ul className="divide-y divide-line">
             {filtered.map((lead) => (
-              <LeadRow key={lead.id} lead={lead} />
+              <LeadRow key={lead.id} lead={lead} sources={sources} stages={stages} />
             ))}
           </ul>
         )}
       </Panel>
 
-      <NewLeadModal open={composerOpen} onClose={() => setComposerOpen(false)} branches={branches} />
+      <NewLeadModal
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        branches={branches}
+        sources={sources}
+      />
     </>
   );
 }
 
-function LeadRow({ lead }: { lead: Lead }) {
+function LeadRow({
+  lead,
+  sources,
+  stages
+}: {
+  lead: Lead;
+  sources: LeadSourceOption[];
+  stages: LeadFunnelStage[];
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const [stage, setStage] = useState(lead.stage);
   const [pending, startTransition] = useTransition();
-  const converted = lead.stage === "converted" || Boolean(lead.convertedPatientId);
+  const converted = Boolean(lead.convertedPatientId);
 
   function changeStage(next: string) {
+    const prev = stage;
     setStage(next);
     startTransition(async () => {
-      const result = await updateLeadAction(lead.id, { stage: next });
+      const result = await moveLeadStageAction(lead.id, next);
       if (!result.ok) {
-        setStage(lead.stage);
+        setStage(prev);
         toast(result.error ?? "Could not update the stage.", "error");
         return;
       }
@@ -296,12 +440,14 @@ function LeadRow({ lead }: { lead: Lead }) {
     });
   }
 
+  const knownStage = stages.some((s) => s.key === stage);
+
   return (
     <li className="flex flex-wrap items-center gap-3 px-4 py-3">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-semibold text-ink">{lead.name}</span>
-          <Badge tone="neutral">{leadSourceLabel(lead.source)}</Badge>
+          <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
           {lead.matchedPatientId && !converted ? (
             <Badge tone="violet" dot>Matches a patient</Badge>
           ) : null}
@@ -325,16 +471,16 @@ function LeadRow({ lead }: { lead: Lead }) {
         ) : (
           <>
             <select
-              value={stage}
+              value={knownStage ? stage : ""}
               onChange={(e) => changeStage(e.target.value)}
               disabled={pending}
               aria-label={`Stage for ${lead.name}`}
               className={cn(selectClass, "h-9 w-auto")}
             >
-              {LEAD_STAGES.filter((s) => s.value !== "converted").map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
+              {!knownStage ? <option value="">Move to…</option> : null}
+              {stages.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
               ))}
-              {stage === "converted" ? <option value="converted">Converted</option> : null}
             </select>
             <Button size="sm" onClick={convert} disabled={pending}>
               <UserPlus className="size-3.5" /> Convert
@@ -349,17 +495,20 @@ function LeadRow({ lead }: { lead: Lead }) {
 function NewLeadModal({
   open,
   onClose,
-  branches
+  branches,
+  sources
 }: {
   open: boolean;
   onClose: () => void;
   branches: Branch[];
+  sources: LeadSourceOption[];
 }) {
   const { toast } = useToast();
+  const defaultSource = sources[0]?.key ?? "";
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
-  const [source, setSource] = useState<string>("camp");
+  const [source, setSource] = useState<string>(defaultSource);
   const [sourceDetail, setSourceDetail] = useState("");
   const [branchId, setBranchId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -369,7 +518,7 @@ function NewLeadModal({
     setName("");
     setPhone("");
     setEmail("");
-    setSource("camp");
+    setSource(defaultSource);
     setSourceDetail("");
     setBranchId("");
     setError(null);
@@ -384,7 +533,7 @@ function NewLeadModal({
         name,
         phone,
         email: email || undefined,
-        source,
+        source: source || defaultSource || "other",
         sourceDetail: sourceDetail || undefined,
         branchId: branchId || undefined
       });
@@ -421,8 +570,8 @@ function NewLeadModal({
         <div className="grid grid-cols-2 gap-3">
           <Field label="Source" htmlFor="nl-source">
             <select id="nl-source" value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
-              {LEAD_SOURCES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
+              {sources.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
               ))}
             </select>
           </Field>
@@ -449,6 +598,240 @@ function NewLeadModal({
         </Button>
       </div>
     </Modal>
+  );
+}
+
+// ============================================================================
+// Manage funnel (configure sources + ordered stages) — admin only
+// ============================================================================
+
+let manageKeyCounter = 0;
+type EditableEntry = { _id: number; key: string; label: string; keyTouched: boolean };
+
+function toEditable(list: { key: string; label: string }[]): EditableEntry[] {
+  return list.map((e) => ({ _id: ++manageKeyCounter, key: e.key, label: e.label, keyTouched: true }));
+}
+
+function ManageFunnelModal({
+  open,
+  onClose,
+  sources,
+  stages
+}: {
+  open: boolean;
+  onClose: () => void;
+  sources: LeadSourceOption[];
+  stages: LeadFunnelStage[];
+}) {
+  const { toast } = useToast();
+  const [stageList, setStageList] = useState<EditableEntry[]>(() => toEditable(stages));
+  const [sourceList, setSourceList] = useState<EditableEntry[]>(() => toEditable(sources));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, startSaving] = useTransition();
+
+  function addEntry(setList: typeof setStageList) {
+    setList((prev) => [...prev, { _id: ++manageKeyCounter, key: "", label: "", keyTouched: false }]);
+  }
+
+  function updateEntry(setList: typeof setStageList, id: number, patch: Partial<EditableEntry>) {
+    setList((prev) => prev.map((e) => (e._id === id ? { ...e, ...patch } : e)));
+  }
+
+  function removeEntry(setList: typeof setStageList, id: number) {
+    setList((prev) => prev.filter((e) => e._id !== id));
+  }
+
+  function move(setList: typeof setStageList, id: number, dir: -1 | 1) {
+    setList((prev) => {
+      const idx = prev.findIndex((e) => e._id === id);
+      const next = idx + dir;
+      if (idx < 0 || next < 0 || next >= prev.length) return prev;
+      const copy = [...prev];
+      [copy[idx], copy[next]] = [copy[next], copy[idx]];
+      return copy;
+    });
+  }
+
+  function finalize(list: EditableEntry[]): { key: string; label: string }[] {
+    return list
+      .map((e) => {
+        const label = e.label.trim();
+        const key = (e.key.trim() || slugifyConfigKey(label)).trim();
+        return { key, label };
+      })
+      .filter((e) => e.key && e.label);
+  }
+
+  function submit() {
+    const finalStages = finalize(stageList);
+    const finalSources = finalize(sourceList);
+    if (finalStages.length === 0) return setError("Add at least one funnel stage.");
+    if (finalSources.length === 0) return setError("Add at least one lead source.");
+    const stageKeys = new Set<string>();
+    for (const s of finalStages) {
+      if (stageKeys.has(s.key)) return setError(`Duplicate stage key: ${s.key}`);
+      stageKeys.add(s.key);
+    }
+    const sourceKeys = new Set<string>();
+    for (const s of finalSources) {
+      if (sourceKeys.has(s.key)) return setError(`Duplicate source key: ${s.key}`);
+      sourceKeys.add(s.key);
+    }
+    setError(null);
+    startSaving(async () => {
+      const result = await saveLeadConfigAction({ stages: finalStages, sources: finalSources });
+      if (!result.ok) {
+        setError(result.error ?? "Could not save the funnel.");
+        return;
+      }
+      onClose();
+      toast(result.message ?? "Funnel updated.", "success");
+    });
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="manage-funnel-title" className="max-w-2xl">
+      <div className="border-b border-line p-5">
+        <h2 id="manage-funnel-title" className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink">
+          <Settings2 className="size-4 text-brand-600" /> Manage funnel
+        </h2>
+        <p className="mt-1 text-xs text-ink-muted">
+          Configure your lead funnel stages (in order) and the sources leads can come from.
+        </p>
+      </div>
+
+      <div className="max-h-[64vh] space-y-6 overflow-y-auto p-5">
+        <EntryEditor
+          title="Funnel stages"
+          subtitle="Shown left-to-right on the board. Reorder with the arrows."
+          entries={stageList}
+          ordered
+          onAdd={() => addEntry(setStageList)}
+          onUpdate={(id, patch) => updateEntry(setStageList, id, patch)}
+          onRemove={(id) => removeEntry(setStageList, id)}
+          onMove={(id, dir) => move(setStageList, id, dir)}
+          addLabel="Add stage"
+          labelPlaceholder="e.g. Qualified"
+        />
+        <EntryEditor
+          title="Lead sources"
+          subtitle="Where leads come from (camp, web form, referral…)."
+          entries={sourceList}
+          ordered={false}
+          onAdd={() => addEntry(setSourceList)}
+          onUpdate={(id, patch) => updateEntry(setSourceList, id, patch)}
+          onRemove={(id) => removeEntry(setSourceList, id)}
+          onMove={() => {}}
+          addLabel="Add source"
+          labelPlaceholder="e.g. Web form"
+        />
+        {error ? <p className="text-xs font-medium text-[var(--color-critical)]">{error}</p> : null}
+      </div>
+
+      <div className="flex justify-end gap-2 border-t border-line p-4">
+        <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button onClick={submit} disabled={saving}>
+          <Check className="size-3.5" /> {saving ? "Saving…" : "Save funnel"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+function EntryEditor({
+  title,
+  subtitle,
+  entries,
+  ordered,
+  onAdd,
+  onUpdate,
+  onRemove,
+  onMove,
+  addLabel,
+  labelPlaceholder
+}: {
+  title: string;
+  subtitle: string;
+  entries: EditableEntry[];
+  ordered: boolean;
+  onAdd: () => void;
+  onUpdate: (id: number, patch: Partial<EditableEntry>) => void;
+  onRemove: (id: number) => void;
+  onMove: (id: number, dir: -1 | 1) => void;
+  addLabel: string;
+  labelPlaceholder: string;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-ink-soft">{title}</p>
+          <p className="text-[11px] text-ink-muted">{subtitle}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onAdd}>
+          <Plus className="size-3.5" /> {addLabel}
+        </Button>
+      </div>
+      <ul className="space-y-2">
+        {entries.map((e, i) => (
+          <li key={e._id} className="flex flex-wrap items-end gap-2 rounded-xl border border-line bg-surface-muted p-2.5">
+            {ordered ? (
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => onMove(e._id, -1)}
+                  disabled={i === 0}
+                  className="flex size-5 items-center justify-center rounded text-ink-faint transition hover:text-ink disabled:opacity-30"
+                  aria-label="Move up"
+                >
+                  <ArrowUp className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMove(e._id, 1)}
+                  disabled={i === entries.length - 1}
+                  className="flex size-5 items-center justify-center rounded text-ink-faint transition hover:text-ink disabled:opacity-30"
+                  aria-label="Move down"
+                >
+                  <ArrowDown className="size-3.5" />
+                </button>
+              </div>
+            ) : null}
+            <div className="min-w-[140px] flex-1">
+              <label className="mb-1 block text-[11px] font-medium text-ink-soft">Label</label>
+              <Input
+                value={e.label}
+                onChange={(ev) => {
+                  const label = ev.target.value;
+                  // Auto-derive the key from the label until the user edits the key.
+                  const patch: Partial<EditableEntry> = { label };
+                  if (!e.keyTouched) patch.key = slugifyConfigKey(label);
+                  onUpdate(e._id, patch);
+                }}
+                placeholder={labelPlaceholder}
+              />
+            </div>
+            <div className="w-40">
+              <label className="mb-1 block text-[11px] font-medium text-ink-soft">Key</label>
+              <Input
+                value={e.key}
+                onChange={(ev) => onUpdate(e._id, { key: slugifyConfigKey(ev.target.value), keyTouched: true })}
+                placeholder="auto"
+                className="font-mono text-xs"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => onRemove(e._id)}
+              className="flex size-10 items-center justify-center rounded-lg text-ink-faint transition hover:bg-surface hover:text-[var(--color-critical)]"
+              aria-label="Remove"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -552,11 +935,12 @@ function downloadLeadsTemplate() {
   XLSX.writeFile(wb, "healthcareos-leads-template.xlsx");
 }
 
-function ImportTab() {
+function ImportTab({ sources }: { sources: LeadSourceOption[] }) {
   const { toast } = useToast();
+  const defaultSource = sources[0]?.key ?? "import";
   const [raw, setRaw] = useState("");
   const [sheet, setSheet] = useState<ParsedSheet | null>(null);
-  const [source, setSource] = useState<string>("import");
+  const [source, setSource] = useState<string>(defaultSource);
   const [nameCol, setNameCol] = useState("");
   const [phoneCol, setPhoneCol] = useState("");
   const [emailCol, setEmailCol] = useState("");
@@ -703,8 +1087,8 @@ function ImportTab() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
               <Field label="Source" htmlFor="imp-source">
                 <select id="imp-source" value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
-                  {LEAD_SOURCES.map((s) => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
+                  {sources.map((s) => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
                   ))}
                 </select>
               </Field>

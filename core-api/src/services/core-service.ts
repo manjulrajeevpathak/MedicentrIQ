@@ -52,10 +52,11 @@ import type {
   JourneyTaskStatus,
   JourneyTemplate,
   Lead,
+  LeadConfig,
   LeadForm,
   LeadFormField,
-  LeadSource,
-  LeadStage,
+  LeadFunnelStage,
+  LeadSourceOption,
   MobileLinkSession,
   PatientJourney,
   PatientJourneyStatus,
@@ -428,10 +429,16 @@ type UpdateLeadInput = {
   phone?: string;
   email?: string;
   stage?: string;
+  source?: string;
   assignedTo?: string | null;
   branchId?: string;
   notes?: string;
   sourceDetail?: string;
+};
+
+type LeadConfigInput = {
+  sources?: unknown;
+  stages?: unknown;
 };
 
 type ConvertLeadInput = {
@@ -644,8 +651,24 @@ const sanitizeModuleOverrides = (value: unknown): Partial<Record<ModuleKey, bool
   return Object.keys(overrides).length > 0 ? overrides : undefined;
 };
 
-const LEAD_SOURCES: LeadSource[] = ["camp", "meta", "referral", "form", "import", "walk_in"];
-const LEAD_STAGES: LeadStage[] = ["new", "contacted", "qualified", "booked", "converted", "lost"];
+/** Default CRM funnel config, used to lazy-provision a tenant that has none. The
+ *  source/stage keys here are the platform defaults (LeadSource / LeadStage unions). */
+const DEFAULT_LEAD_SOURCES: LeadSourceOption[] = [
+  { key: "camp", label: "Camp" },
+  { key: "meta", label: "Meta / Ads" },
+  { key: "referral", label: "Referral" },
+  { key: "form", label: "Web form" },
+  { key: "walk_in", label: "Walk-in" },
+  { key: "import", label: "Import" }
+];
+const DEFAULT_LEAD_STAGES: LeadFunnelStage[] = [
+  { key: "new", label: "New" },
+  { key: "contacted", label: "Contacted" },
+  { key: "qualified", label: "Qualified" },
+  { key: "booked", label: "Booked" },
+  { key: "converted", label: "Converted" },
+  { key: "lost", label: "Lost" }
+];
 const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email", "number", "select", "multiselect", "textarea"]);
 
 const CAMPAIGN_AUTOMATED_ON: CampaignAutomatedOn[] = ["new_lead", "appointment_missed", "opd_done"];
@@ -720,11 +743,39 @@ const NOTIFICATION_DEFAULTS = {
   }
 } as const;
 
-const sanitizeLeadSource = (value: unknown, fallback: LeadSource = "import"): LeadSource =>
-  typeof value === "string" && (LEAD_SOURCES as string[]).includes(value) ? (value as LeadSource) : fallback;
+/** Slugify a key candidate the same way the rest of the platform does. */
+const slugifyKey = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
-const sanitizeLeadStage = (value: unknown, fallback: LeadStage): LeadStage =>
-  typeof value === "string" && (LEAD_STAGES as string[]).includes(value) ? (value as LeadStage) : fallback;
+/** Resolve a lead source against a tenant's configured source keys, falling back
+ *  to "import" if configured, else the first configured key. */
+const sanitizeLeadSource = (value: unknown, sources: LeadSourceOption[], fallback?: string): string => {
+  const keys = sources.map((s) => s.key);
+  if (typeof value === "string" && keys.includes(value)) {
+    return value;
+  }
+  if (fallback && keys.includes(fallback)) {
+    return fallback;
+  }
+  return keys.includes("import") ? "import" : keys[0] ?? "import";
+};
+
+/** Resolve a lead stage against a tenant's configured stage keys, falling back to
+ *  the supplied fallback (when configured), else "new" if present, else the first stage. */
+const sanitizeLeadStage = (value: unknown, stages: LeadFunnelStage[], fallback?: string): string => {
+  const keys = stages.map((s) => s.key);
+  if (typeof value === "string" && keys.includes(value)) {
+    return value;
+  }
+  if (fallback && keys.includes(fallback)) {
+    return fallback;
+  }
+  return keys.includes("new") ? "new" : keys[0] ?? "new";
+};
 
 /** Coerce an arbitrary object into a flat Record<string,string> (drops non-stringish values). */
 const sanitizeStringMap = (value: unknown): Record<string, string> | undefined => {
@@ -6274,6 +6325,89 @@ export class CoreService {
     );
   }
 
+  // ---- Lead config (tenant-configurable CRM funnel) ------------------------
+
+  private tenantLeadConfig(tenantId: string): LeadConfig | undefined {
+    return this.data.leadConfigs.find((entry) => entry.tenantId === tenantId);
+  }
+
+  /** Resolve a tenant's CRM funnel config, lazily provisioning defaults the first
+   *  time it's needed (mirrors the channel-config getter). Always returns a config
+   *  with at least one source and one ordered stage. */
+  private async resolveLeadConfig(context: RequestContext): Promise<LeadConfig> {
+    let config = this.tenantLeadConfig(context.tenantId);
+    if (!config) {
+      const now = nowIso();
+      config = {
+        tenantId: context.tenantId,
+        sources: DEFAULT_LEAD_SOURCES.map((s) => ({ ...s })),
+        stages: DEFAULT_LEAD_STAGES.map((s) => ({ ...s })),
+        createdAt: now,
+        updatedAt: now
+      };
+      this.data.leadConfigs.push(config);
+      await this.persistence.saveCollection("leadConfigs", this.data.leadConfigs);
+    }
+    return config;
+  }
+
+  /** GET /tenant/lead-config — resolved {sources, stages} for the active tenant. */
+  async getLeadConfig(context: RequestContext) {
+    const config = await this.resolveLeadConfig(context);
+    return { sources: config.sources, stages: config.stages };
+  }
+
+  /** PATCH /tenant/lead-config — replace sources and/or stages (ordered). */
+  async updateLeadConfig(context: RequestContext, input: LeadConfigInput) {
+    const config = await this.resolveLeadConfig(context);
+    if (input.sources !== undefined) {
+      config.sources = this.parseLeadOptions(input.sources, "source");
+    }
+    if (input.stages !== undefined) {
+      config.stages = this.parseLeadOptions(input.stages, "stage");
+    }
+    config.updatedAt = nowIso();
+    await this.persistence.saveCollection("leadConfigs", this.data.leadConfigs);
+    await this.audit(context, "lead_config.update", "lead_config", context.tenantId, undefined, {
+      sources: config.sources.length,
+      stages: config.stages.length
+    });
+    return { sources: config.sources, stages: config.stages };
+  }
+
+  /** Validate an incoming sources/stages list: each entry needs a non-empty
+   *  slug key + label, keys unique within the list, and at least one entry. */
+  private parseLeadOptions(value: unknown, kind: "source" | "stage"): LeadSourceOption[] {
+    if (!Array.isArray(value)) {
+      throw new ApiError(400, `lead-config ${kind}s must be an array.`);
+    }
+    const seen = new Set<string>();
+    const parsed: LeadSourceOption[] = [];
+    for (const raw of value) {
+      if (!isPlainRecord(raw)) {
+        throw new ApiError(400, `Each ${kind} must be an object with key and label.`);
+      }
+      const keyRaw = typeof raw.key === "string" ? raw.key : "";
+      const key = slugifyKey(keyRaw);
+      const label = typeof raw.label === "string" ? raw.label.trim() : "";
+      if (!key) {
+        throw new ApiError(400, `Each ${kind} needs a non-empty key.`);
+      }
+      if (!label) {
+        throw new ApiError(400, `${kind} "${key}" needs a non-empty label.`);
+      }
+      if (seen.has(key)) {
+        throw new ApiError(400, `Duplicate ${kind} key: ${key}.`);
+      }
+      seen.add(key);
+      parsed.push({ key, label });
+    }
+    if (parsed.length === 0) {
+      throw new ApiError(400, `At least one ${kind} is required.`);
+    }
+    return parsed;
+  }
+
   // ---- Leads & data sources ------------------------------------------------
 
   listLeads(context: RequestContext, filters: { stage?: string; source?: string; assignedTo?: string } = {}) {
@@ -6285,33 +6419,37 @@ export class CoreService {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  getLeadFunnel(context: RequestContext) {
+  async getLeadFunnel(context: RequestContext) {
+    const config = await this.resolveLeadConfig(context);
     const leads = this.data.leads.filter((lead) => lead.tenantId === context.tenantId);
-    const byStage: Record<LeadStage, number> = {
-      new: 0,
-      contacted: 0,
-      qualified: 0,
-      booked: 0,
-      converted: 0,
-      lost: 0
-    };
-    const bySource: Record<LeadSource, number> = {
-      camp: 0,
-      meta: 0,
-      referral: 0,
-      form: 0,
-      import: 0,
-      walk_in: 0
-    };
-    for (const lead of leads) {
-      byStage[lead.stage] += 1;
-      bySource[lead.source] += 1;
+    // Initialise a 0 count for every configured stage/source (in funnel/display
+    // order) so the UI can render a complete board even for empty stages.
+    const byStage: Record<string, number> = {};
+    for (const stage of config.stages) {
+      byStage[stage.key] = 0;
     }
-    return { total: leads.length, byStage, bySource };
+    const bySource: Record<string, number> = {};
+    for (const source of config.sources) {
+      bySource[source.key] = 0;
+    }
+    for (const lead of leads) {
+      // Tally onto configured keys; a lead on a key removed from config still
+      // counts (so totals reconcile) by initialising the bucket on demand.
+      byStage[lead.stage] = (byStage[lead.stage] ?? 0) + 1;
+      bySource[lead.source] = (bySource[lead.source] ?? 0) + 1;
+    }
+    return {
+      total: leads.length,
+      byStage,
+      bySource,
+      stages: config.stages,
+      sources: config.sources
+    };
   }
 
   async createLead(context: RequestContext, input: CreateLeadInput) {
-    const lead = this.buildLead(context, input);
+    const config = await this.resolveLeadConfig(context);
+    const lead = this.buildLead(context, input, config);
     this.data.leads.push(lead);
     await this.persistence.saveCollection("leads", this.data.leads);
     await this.audit(context, "lead.create", "lead", lead.id, lead.convertedPatientId, {
@@ -6324,7 +6462,7 @@ export class CoreService {
 
   /** Construct (but do not persist) a tenant-scoped Lead from raw input, with a
    *  matchedPatientId hint when the phone matches an existing patient. */
-  private buildLead(context: RequestContext, input: CreateLeadInput): Lead {
+  private buildLead(context: RequestContext, input: CreateLeadInput, config: LeadConfig): Lead {
     const timestamp = nowIso();
     const phone = ensureString(input.phone, "phone");
     const lead: Lead = {
@@ -6333,9 +6471,10 @@ export class CoreService {
       name: ensureString(input.name, "name"),
       phone,
       email: typeof input.email === "string" && input.email.trim() ? input.email.trim() : undefined,
-      source: sanitizeLeadSource(input.source),
+      source: sanitizeLeadSource(input.source, config.sources),
       sourceDetail: typeof input.sourceDetail === "string" && input.sourceDetail.trim() ? input.sourceDetail.trim() : undefined,
-      stage: sanitizeLeadStage(input.stage, "new"),
+      // Default to the first configured stage (funnel entry) when none given.
+      stage: sanitizeLeadStage(input.stage, config.stages, config.stages[0]?.key),
       assignedTo: typeof input.assignedTo === "string" && input.assignedTo.trim() ? input.assignedTo.trim() : undefined,
       branchId: typeof input.branchId === "string" && input.branchId.trim() ? input.branchId.trim() : undefined,
       formData: sanitizeStringMap(input.formData),
@@ -6370,6 +6509,7 @@ export class CoreService {
 
   async updateLead(context: RequestContext, leadId: string, input: UpdateLeadInput) {
     const lead = this.ensureLead(context, leadId);
+    const config = await this.resolveLeadConfig(context);
     if (typeof input.name === "string" && input.name.trim()) {
       lead.name = input.name.trim();
     }
@@ -6380,7 +6520,11 @@ export class CoreService {
       lead.email = typeof input.email === "string" && input.email.trim() ? input.email.trim() : undefined;
     }
     if (input.stage !== undefined) {
-      lead.stage = sanitizeLeadStage(input.stage, lead.stage);
+      // Funnel move: accept ANY configured stage key; keep current on unknown.
+      lead.stage = sanitizeLeadStage(input.stage, config.stages, lead.stage);
+    }
+    if (input.source !== undefined) {
+      lead.source = sanitizeLeadSource(input.source, config.sources, lead.source);
     }
     if (input.assignedTo !== undefined) {
       lead.assignedTo =
@@ -6404,6 +6548,7 @@ export class CoreService {
 
   async convertLead(context: RequestContext, leadId: string, input: ConvertLeadInput) {
     const lead = this.ensureLead(context, leadId);
+    const config = await this.resolveLeadConfig(context);
     let patientSummary: PatientSummary;
     if (typeof input.patientId === "string" && input.patientId.trim()) {
       const patient = this.ensureKnownPatient(context, input.patientId.trim());
@@ -6417,7 +6562,9 @@ export class CoreService {
       });
       lead.convertedPatientId = patientSummary.id;
     }
-    lead.stage = "converted";
+    // Land on the configured "converted" stage when present, else keep the lead's
+    // current stage (tenants that removed it shouldn't get an orphaned key).
+    lead.stage = config.stages.some((s) => s.key === "converted") ? "converted" : lead.stage;
     lead.updatedAt = nowIso();
     await this.persistence.saveCollection("leads", this.data.leads);
     await this.audit(context, "lead.convert", "lead", lead.id, lead.convertedPatientId, {
@@ -6427,8 +6574,9 @@ export class CoreService {
   }
 
   async importLeads(context: RequestContext, input: ImportLeadsInput) {
+    const config = await this.resolveLeadConfig(context);
     const rows = Array.isArray(input.rows) ? input.rows : [];
-    const source = sanitizeLeadSource(input.source, "import");
+    const source = sanitizeLeadSource(input.source, config.sources, "import");
     const mapping = input.mapping ?? {};
     const nameKey = typeof mapping.name === "string" && mapping.name ? mapping.name : "name";
     const phoneKey = typeof mapping.phone === "string" && mapping.phone ? mapping.phone : "phone";
@@ -6455,7 +6603,7 @@ export class CoreService {
         email: email || undefined,
         source,
         formData: sanitizeStringMap(record)
-      });
+      }, config);
       this.data.leads.push(lead);
       created.push(lead);
     }
@@ -6571,15 +6719,22 @@ export class CoreService {
       throw new ApiError(400, "Form submission requires name and phone");
     }
     const timestamp = nowIso();
+    // Honour the form-tenant's configured funnel where present (this path has no
+    // RequestContext, so we read the stored config directly without provisioning):
+    // keep "form"/"new" defaults if the tenant removed those keys.
+    const config = this.tenantLeadConfig(form.tenantId);
+    const source = config && !config.sources.some((s) => s.key === "form") ? config.sources[0]?.key ?? "form" : "form";
+    const stage =
+      config && !config.stages.some((s) => s.key === "new") ? config.stages[0]?.key ?? "new" : "new";
     const lead: Lead = {
       id: createId("lead"),
       tenantId: form.tenantId,
       name,
       phone,
       email: values.email?.trim() || undefined,
-      source: "form",
+      source,
       sourceDetail: form.title,
-      stage: "new",
+      stage,
       branchId: form.branchId,
       formData: values,
       createdAt: timestamp,

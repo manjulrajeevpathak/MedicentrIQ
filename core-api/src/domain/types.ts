@@ -347,8 +347,29 @@ export type Call = {
 
 // ---- Leads & data sources (top of funnel) ---------------------------------
 
+/** Default lead-source keys. Tenants may add/remove their own via LeadConfig;
+ *  Lead.source is a free string of configured keys, not this closed union. */
 export type LeadSource = "camp" | "meta" | "referral" | "form" | "import" | "walk_in";
+/** Default funnel-stage keys. Tenants configure their own ordered set via LeadConfig;
+ *  Lead.stage is a free string of configured keys, not this closed union. */
 export type LeadStage = "new" | "contacted" | "qualified" | "booked" | "converted" | "lost";
+
+/** A tenant-configurable lead source (where a lead came from). */
+export type LeadSourceOption = { key: string; label: string };
+
+/** A tenant-configurable funnel stage. The ordered list IS the funnel order. */
+export type LeadFunnelStage = { key: string; label: string };
+
+/** Per-tenant CRM funnel configuration. recordId = tenantId (one per tenant). */
+export type LeadConfig = {
+  tenantId: string;
+  /** Where leads come from (order is display order). */
+  sources: LeadSourceOption[];
+  /** Funnel stages in funnel order (first = entry stage). */
+  stages: LeadFunnelStage[];
+  createdAt: string;
+  updatedAt: string;
+};
 
 /** A person who entered from marketing/top-of-funnel and may convert into a Patient. */
 export type Lead = {
@@ -357,10 +378,12 @@ export type Lead = {
   name: string;
   phone: string;
   email?: string;
-  source: LeadSource;
+  /** A configured LeadSource key (see LeadConfig.sources). */
+  source: string;
   /** e.g. campaign/camp name, form title. */
   sourceDetail?: string;
-  stage: LeadStage;
+  /** A configured LeadFunnelStage key (see LeadConfig.stages). */
+  stage: string;
   /** Staff user id the lead is assigned to. */
   assignedTo?: string;
   branchId?: string;
@@ -519,6 +542,7 @@ export type AuditEvent = {
     | "lead.update"
     | "lead.convert"
     | "lead.import"
+    | "lead_config.update"
     | "form.create"
     | "form.submit"
     | "campaign.create"

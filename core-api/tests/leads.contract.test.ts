@@ -45,6 +45,125 @@ describe("leads & data sources contract", () => {
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) }
     });
 
+  it("GET /tenant/lead-config returns ordered defaults", async () => {
+    const body = (await (await authed("/tenant/lead-config")).json()) as {
+      data: { sources: Array<{ key: string; label: string }>; stages: Array<{ key: string; label: string }> };
+    };
+    assert.deepEqual(
+      body.data.stages.map((s) => s.key),
+      ["new", "contacted", "qualified", "booked", "converted", "lost"]
+    );
+    assert.ok(body.data.sources.some((s) => s.key === "camp"));
+    assert.ok(body.data.sources.some((s) => s.key === "import"));
+  });
+
+  it("PATCH /tenant/lead-config adds a custom stage + source (reflected, ordered)", async () => {
+    const res = await authed("/tenant/lead-config", {
+      method: "PATCH",
+      body: JSON.stringify({
+        sources: [
+          { key: "camp", label: "Camp" },
+          { key: "form", label: "Web form" },
+          { key: "import", label: "Import" },
+          { key: "google_ads", label: "Google Ads" }
+        ],
+        stages: [
+          { key: "new", label: "New" },
+          { key: "contacted", label: "Contacted" },
+          { key: "nurture", label: "Nurturing" },
+          { key: "converted", label: "Converted" }
+        ]
+      })
+    });
+    const body = (await res.json()) as {
+      data: { sources: Array<{ key: string }>; stages: Array<{ key: string }> };
+    };
+    assert.equal(res.status, 200);
+    assert.deepEqual(body.data.stages.map((s) => s.key), ["new", "contacted", "nurture", "converted"]);
+    assert.ok(body.data.sources.some((s) => s.key === "google_ads"));
+
+    // A subsequent GET reflects the new config in the same order.
+    const after = (await (await authed("/tenant/lead-config")).json()) as { data: { stages: Array<{ key: string }> } };
+    assert.deepEqual(after.data.stages.map((s) => s.key), ["new", "contacted", "nurture", "converted"]);
+  });
+
+  it("rejects a lead-config entry with a blank label or duplicate key", async () => {
+    const blank = await authed("/tenant/lead-config", {
+      method: "PATCH",
+      body: JSON.stringify({ sources: [{ key: "camp", label: "" }] })
+    });
+    assert.equal(blank.status, 400);
+
+    const dup = await authed("/tenant/lead-config", {
+      method: "PATCH",
+      body: JSON.stringify({
+        stages: [
+          { key: "new", label: "New" },
+          { key: "new", label: "New Again" }
+        ]
+      })
+    });
+    assert.equal(dup.status, 400);
+  });
+
+  it("creates a lead with a custom source key", async () => {
+    const res = await authed("/leads", {
+      method: "POST",
+      body: JSON.stringify({ name: "Custom Source Lead", phone: "+919800000999", source: "google_ads" })
+    });
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    assert.equal(body.data.source, "google_ads");
+    // Default stage is the first configured stage.
+    assert.equal(body.data.stage, "new");
+  });
+
+  it("moves a lead to a custom funnel stage", async () => {
+    const created = (await (await authed("/leads", {
+      method: "POST",
+      body: JSON.stringify({ name: "Funnel Move", phone: "+919800000888", source: "camp" })
+    })).json()) as { data: JsonObject };
+    const id = String(created.data.id);
+    const res = await authed(`/leads/${id}`, { method: "PATCH", body: JSON.stringify({ stage: "nurture" }) });
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    assert.equal(body.data.stage, "nurture");
+  });
+
+  it("falls back to a safe value for an unknown source/stage key", async () => {
+    const create = await authed("/leads", {
+      method: "POST",
+      body: JSON.stringify({ name: "Bad Keys", phone: "+919800000777", source: "totally_unknown" })
+    });
+    const created = (await create.json()) as { data: JsonObject };
+    assert.equal(create.status, 200);
+    // Unknown source falls back to "import" (configured); unknown stage → first stage.
+    assert.equal(created.data.source, "import");
+    assert.equal(created.data.stage, "new");
+
+    // An unknown stage on update keeps the lead's current stage.
+    const patched = (await (await authed(`/leads/${String(created.data.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ stage: "no_such_stage" })
+    })).json()) as { data: JsonObject };
+    assert.equal(patched.data.stage, "new");
+  });
+
+  it("funnel summary counts per configured stage + source (with config echoed)", async () => {
+    const body = (await (await authed("/leads/funnel")).json()) as {
+      data: {
+        byStage: Record<string, number>;
+        bySource: Record<string, number>;
+        stages: Array<{ key: string }>;
+        sources: Array<{ key: string }>;
+      };
+    };
+    // Every configured stage has a count bucket (including the custom one).
+    assert.equal(typeof body.data.byStage.nurture, "number");
+    assert.equal(typeof body.data.bySource.google_ads, "number");
+    assert.deepEqual(body.data.stages.map((s) => s.key), ["new", "contacted", "nurture", "converted"]);
+  });
+
   it("creates a lead", async () => {
     const res = await authed("/leads", {
       method: "POST",

@@ -4,14 +4,16 @@ import { EmptyState } from "@/components/ui/empty";
 import { CampaignsWorkspace } from "@/components/campaigns/campaigns-workspace";
 import { fetchCampaigns, fetchConditionCatalog } from "@/lib/campaigns-api";
 import { fetchTemplates } from "@/lib/comms-api";
+import { fetchLeadConfig } from "@/lib/leads-api";
 
 export const dynamic = "force-dynamic";
 
 export default async function CampaignsPage() {
-  const [campaignsResult, conditionsResult, templates] = await Promise.all([
+  const [campaignsResult, conditionsResult, templates, leadConfig] = await Promise.all([
     fetchCampaigns(),
     fetchConditionCatalog(),
-    fetchTemplates()
+    fetchTemplates(),
+    fetchLeadConfig()
   ]);
 
   // Reusable free-text templates from the Templates library, offered as a campaign body.
@@ -47,6 +49,8 @@ export default async function CampaignsPage() {
       campaigns={campaignsResult.data}
       conditions={conditionsResult.ok ? conditionsResult.data : []}
       templates={templateOptions}
+      leadSources={leadConfig.sources.map((s) => ({ value: s.key, label: s.label }))}
+      leadStages={leadConfig.stages.map((s) => ({ value: s.key, label: s.label }))}
     />
   );
 }

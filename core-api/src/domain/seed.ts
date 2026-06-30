@@ -17,6 +17,7 @@ import type {
   JourneyTask,
   JourneyTemplate,
   Lead,
+  LeadConfig,
   LeadForm,
   LoginChallenge,
   MessageLog,
@@ -87,6 +88,7 @@ export type SeedData = {
   patientJourneys: PatientJourney[];
   journeyTasks: JourneyTask[];
   journeyEvents: JourneyEvent[];
+  leadConfigs: LeadConfig[];
   leads: Lead[];
   forms: LeadForm[];
   campaigns: Campaign[];
@@ -753,6 +755,29 @@ export const createSeedData = (): SeedData => ({
       occurredAt: daysFromNow(-1)
     }
   ],
+  leadConfigs: [
+    {
+      tenantId: DEMO_TENANT_ID,
+      sources: [
+        { key: "camp", label: "Camp" },
+        { key: "meta", label: "Meta / Ads" },
+        { key: "referral", label: "Referral" },
+        { key: "form", label: "Web form" },
+        { key: "walk_in", label: "Walk-in" },
+        { key: "import", label: "Import" }
+      ],
+      stages: [
+        { key: "new", label: "New" },
+        { key: "contacted", label: "Contacted" },
+        { key: "qualified", label: "Qualified" },
+        { key: "booked", label: "Booked" },
+        { key: "converted", label: "Converted" },
+        { key: "lost", label: "Lost" }
+      ],
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-30)
+    }
+  ],
   leads: [
     {
       id: "lead_demo_001",
@@ -1063,6 +1088,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     patientJourneys: withTenant(data.patientJourneys ?? []),
     journeyTasks: withTenant(data.journeyTasks ?? []),
     journeyEvents: withTenant(data.journeyEvents ?? []),
+    leadConfigs: data.leadConfigs?.length ? withTenant(data.leadConfigs) : seed.leadConfigs,
     leads: data.leads?.length ? withTenant(data.leads) : seed.leads,
     forms: data.forms?.length ? withTenant(data.forms) : seed.forms,
     campaigns: data.campaigns?.length ? withTenant(data.campaigns) : seed.campaigns,

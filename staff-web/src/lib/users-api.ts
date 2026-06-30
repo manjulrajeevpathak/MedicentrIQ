@@ -60,7 +60,7 @@ export async function fetchUsers(): Promise<ApiResult<UsersPayload>> {
 }
 
 type MePayload = {
-  context?: Record<string, unknown>;
+  context?: { roles?: string[] } & Record<string, unknown>;
   branches?: Branch[];
   entitlements?: Record<string, unknown>;
 };
@@ -69,6 +69,17 @@ export async function fetchBranches(): Promise<Branch[]> {
   const result = await coreApi<MePayload>("/auth/me");
   if (!result.ok) return [];
   return result.data.branches ?? [];
+}
+
+/** Roles that may edit tenant-level config (e.g. the lead funnel). */
+const ADMIN_ROLES = new Set(["org_admin", "department_admin", "platform_admin"]);
+
+/** True when the signed-in user can edit tenant config (funnel, etc.). */
+export async function fetchIsTenantAdmin(): Promise<boolean> {
+  const result = await coreApi<MePayload>("/auth/me");
+  if (!result.ok) return false;
+  const roles = result.data.context?.roles ?? [];
+  return roles.some((r) => ADMIN_ROLES.has(r));
 }
 
 /**

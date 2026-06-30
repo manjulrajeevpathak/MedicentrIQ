@@ -24,8 +24,6 @@ import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import {
   AUDIENCE_INCLUDE_OPTIONS,
-  AUDIENCE_LEAD_SOURCES,
-  AUDIENCE_LEAD_STAGES,
   AUDIENCE_PATIENT_STAGES,
   AUTOMATED_ON_OPTIONS,
   CHANNEL_OPTIONS,
@@ -62,13 +60,23 @@ const selectClass =
 /** Reusable text templates from the Templates library, usable as a campaign body. */
 export type CampaignTemplateOption = { id: string; name: string; body: string };
 
+type FilterOption = { value: string; label: string };
+
 type Props = {
   campaigns: Campaign[];
   conditions: ConditionCatalogEntry[];
   templates: CampaignTemplateOption[];
+  leadSources: FilterOption[];
+  leadStages: FilterOption[];
 };
 
-export function CampaignsWorkspace({ campaigns, conditions, templates }: Props) {
+export function CampaignsWorkspace({
+  campaigns,
+  conditions,
+  templates,
+  leadSources,
+  leadStages
+}: Props) {
   const [composerOpen, setComposerOpen] = useState(false);
 
   return (
@@ -111,6 +119,8 @@ export function CampaignsWorkspace({ campaigns, conditions, templates }: Props) 
         onClose={() => setComposerOpen(false)}
         conditions={conditions}
         templates={templates}
+        leadSources={leadSources}
+        leadStages={leadStages}
       />
     </div>
   );
@@ -257,12 +267,16 @@ function CampaignComposer({
   open,
   onClose,
   conditions,
-  templates
+  templates,
+  leadSources,
+  leadStages
 }: {
   open: boolean;
   onClose: () => void;
   conditions: ConditionCatalogEntry[];
   templates: CampaignTemplateOption[];
+  leadSources: FilterOption[];
+  leadStages: FilterOption[];
 }) {
   const { toast } = useToast();
   const [saving, startSaving] = useTransition();
@@ -488,7 +502,13 @@ function CampaignComposer({
           </div>
         )}
 
-        <AudienceBuilder value={audience} onChange={setAudience} conditions={conditions} />
+        <AudienceBuilder
+          value={audience}
+          onChange={setAudience}
+          conditions={conditions}
+          leadSources={leadSources}
+          leadStages={leadStages}
+        />
 
         <FormError message={error} />
       </div>
@@ -512,11 +532,15 @@ function CampaignComposer({
 function AudienceBuilder({
   value,
   onChange,
-  conditions
+  conditions,
+  leadSources,
+  leadStages
 }: {
   value: CampaignAudience;
   onChange: (next: CampaignAudience) => void;
   conditions: ConditionCatalogEntry[];
+  leadSources: FilterOption[];
+  leadStages: FilterOption[];
 }) {
   const showLeads = value.include === "leads" || value.include === "both";
   const showPatients = value.include === "patients" || value.include === "both";
@@ -562,13 +586,13 @@ function AudienceBuilder({
           <>
             <ChipGroup
               label="Lead stages"
-              options={AUDIENCE_LEAD_STAGES}
+              options={leadStages}
               selected={value.leadStages ?? []}
               onToggle={(v) => toggle("leadStages", v)}
             />
             <ChipGroup
               label="Lead sources"
-              options={AUDIENCE_LEAD_SOURCES}
+              options={leadSources}
               selected={value.leadSources ?? []}
               onToggle={(v) => toggle("leadSources", v)}
             />

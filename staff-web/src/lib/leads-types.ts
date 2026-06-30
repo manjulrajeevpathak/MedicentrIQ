@@ -41,6 +41,68 @@ export type LeadFunnel = {
   bySource: Record<string, number>;
 };
 
+// ---- Tenant-configured funnel (sources + ordered stages) -------------------
+
+/** A single configured funnel stage. The list order = funnel order. */
+export type LeadFunnelStage = { key: string; label: string };
+
+/** A single configured lead source. */
+export type LeadSourceOption = { key: string; label: string };
+
+/** Tenant lead config served by `GET /tenant/lead-config`. Stages are ORDERED. */
+export type LeadConfig = {
+  sources: LeadSourceOption[];
+  stages: LeadFunnelStage[];
+};
+
+/**
+ * Sensible defaults used when the tenant hasn't configured anything yet (or the
+ * config endpoint returns empty). Mirrors the legacy hardcoded lists so the
+ * board still renders before the backend lands.
+ */
+export const DEFAULT_LEAD_STAGES: LeadFunnelStage[] = [
+  { key: "new", label: "New" },
+  { key: "contacted", label: "Contacted" },
+  { key: "qualified", label: "Qualified" },
+  { key: "converted", label: "Converted" },
+  { key: "lost", label: "Lost" }
+];
+
+export const DEFAULT_LEAD_SOURCES: LeadSourceOption[] = [
+  { key: "camp", label: "Camp" },
+  { key: "web_form", label: "Web form" },
+  { key: "referral", label: "Referral" },
+  { key: "walk_in", label: "Walk-in" },
+  { key: "call", label: "Call" },
+  { key: "whatsapp", label: "WhatsApp" },
+  { key: "import", label: "Import" },
+  { key: "other", label: "Other" }
+];
+
+/** Normalise a possibly-empty/defaulted config into usable, non-empty lists. */
+export function resolveLeadConfig(config?: Partial<LeadConfig> | null): LeadConfig {
+  const stages = config?.stages?.length ? config.stages : DEFAULT_LEAD_STAGES;
+  const sources = config?.sources?.length ? config.sources : DEFAULT_LEAD_SOURCES;
+  return { stages, sources };
+}
+
+/** Slugify a label into a stable config key (lowercase, underscores). */
+export function slugifyConfigKey(label: string): string {
+  return label
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+/** Build a key→label lookup from a configured list, with a fallback formatter. */
+export function configLabel(
+  list: { key: string; label: string }[],
+  key: string
+): string {
+  return list.find((e) => e.key === key)?.label ?? key.replace(/_/g, " ");
+}
+
 // ---- Lead forms ------------------------------------------------------------
 
 export type LeadFieldType = "text" | "phone" | "email" | "number" | "select" | "multiselect" | "textarea";

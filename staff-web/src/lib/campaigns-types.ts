@@ -174,25 +174,10 @@ export const AUDIENCE_INCLUDE_OPTIONS: { value: AudienceInclude; label: string }
   { value: "both", label: "Both" }
 ];
 
-/** Lead stages available to the segment builder (matches core-api leads). */
-export const AUDIENCE_LEAD_STAGES: { value: string; label: string }[] = [
-  { value: "new", label: "New" },
-  { value: "contacted", label: "Contacted" },
-  { value: "qualified", label: "Qualified" },
-  { value: "booked", label: "Booked" },
-  { value: "converted", label: "Converted" },
-  { value: "lost", label: "Lost" }
-];
-
-/** Lead sources available to the segment builder. */
-export const AUDIENCE_LEAD_SOURCES: { value: string; label: string }[] = [
-  { value: "camp", label: "Camp" },
-  { value: "meta", label: "Meta" },
-  { value: "referral", label: "Referral" },
-  { value: "form", label: "Form" },
-  { value: "import", label: "Import" },
-  { value: "walk_in", label: "Walk-in" }
-];
+// Lead stages + sources for the segment builder are now read from the tenant's
+// configured funnel (GET /tenant/lead-config), threaded in via the Campaigns
+// page → CampaignsWorkspace → AudienceBuilder. The old hardcoded lists were
+// removed; see src/lib/leads-types.ts for the funnel config types.
 
 /** Patient lifecycle stages available to the segment builder. */
 export const AUDIENCE_PATIENT_STAGES: { value: string; label: string }[] = [
