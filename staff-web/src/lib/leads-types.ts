@@ -103,6 +103,167 @@ export function configLabel(
   return list.find((e) => e.key === key)?.label ?? key.replace(/_/g, " ");
 }
 
+// ---- Lead detail: notes, callbacks, timeline (CRM Phase 2) -----------------
+
+export type CallbackChannel = "whatsapp" | "call" | "manual";
+export type CallbackStatus = "open" | "done" | "cancelled";
+
+/** A free-text note logged against a lead. */
+export type LeadNote = {
+  id: string;
+  leadId: string;
+  body: string;
+  authorName?: string;
+  createdAt: string;
+};
+
+/** A scheduled callback ("call this patient back in 7 days"). */
+export type LeadCallback = {
+  id: string;
+  leadId: string;
+  title: string;
+  dueAt: string;
+  channel: CallbackChannel;
+  status: CallbackStatus;
+  assignedTo?: string;
+  note?: string;
+  createdAt: string;
+  completedAt?: string;
+};
+
+/** A callback enriched with its lead's name + phone for the Tasks view. */
+export type EnrichedCallback = LeadCallback & {
+  leadName?: string;
+  leadPhone?: string;
+};
+
+export type LeadTimelineType =
+  | "created"
+  | "note"
+  | "stage"
+  | "source"
+  | "callback_scheduled"
+  | "callback_done"
+  | "callback_cancelled"
+  | "converted"
+  | string;
+
+/** A single merged timeline entry (created / note / stage change / callback…). */
+export type LeadTimelineEntry = {
+  id: string;
+  type: LeadTimelineType;
+  at: string;
+  text: string;
+  by?: string;
+};
+
+/** The full lead-detail bundle served by `GET /leads/:leadId`. */
+export type LeadDetail = {
+  lead: Lead;
+  notes: LeadNote[];
+  callbacks: LeadCallback[];
+  timeline: LeadTimelineEntry[];
+};
+
+// ---- Callback channels (presentation) --------------------------------------
+
+export const CALLBACK_CHANNELS: { value: CallbackChannel; label: string }[] = [
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "call", label: "Call" },
+  { value: "manual", label: "Manual" }
+];
+
+export const CALLBACK_CHANNEL_LABELS: Record<string, string> = Object.fromEntries(
+  CALLBACK_CHANNELS.map((c) => [c.value, c.label])
+);
+
+export function callbackChannelLabel(channel: string): string {
+  return CALLBACK_CHANNEL_LABELS[channel] ?? channel.replace(/_/g, " ");
+}
+
+export const CALLBACK_CHANNEL_TONE: Record<string, LeadBadgeTone> = {
+  whatsapp: "good",
+  call: "brand",
+  manual: "neutral"
+};
+
+/**
+ * Quick-pick "when" options for scheduling a callback. `days`/`months` are added
+ * to "now" to compute the dueAt ISO. `custom` lets the user pick a date.
+ */
+export type CallbackWhenPreset = {
+  value: string;
+  label: string;
+  days?: number;
+  months?: number;
+  custom?: boolean;
+};
+
+export const CALLBACK_WHEN_PRESETS: CallbackWhenPreset[] = [
+  { value: "tomorrow", label: "Tomorrow", days: 1 },
+  { value: "in_3_days", label: "In 3 days", days: 3 },
+  { value: "in_7_days", label: "In 7 days", days: 7 },
+  { value: "in_1_month", label: "In 1 month", months: 1 },
+  { value: "in_6_months", label: "In 6 months", months: 6 },
+  { value: "custom", label: "Custom date", custom: true }
+];
+
+/**
+ * Compute a dueAt ISO string from a preset. For day/month offsets the callback
+ * is scheduled for ~10am local on the target day; for a custom date string
+ * (YYYY-MM-DD) it anchors to 10am local on that day.
+ */
+export function computeDueAt(preset: CallbackWhenPreset, customDate?: string): string | null {
+  if (preset.custom) {
+    if (!customDate) return null;
+    const d = new Date(`${customDate}T10:00:00`);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  }
+  const d = new Date();
+  if (preset.days) d.setDate(d.getDate() + preset.days);
+  if (preset.months) d.setMonth(d.getMonth() + preset.months);
+  d.setHours(10, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** Format a due date for display ("Tomorrow", "in 3 days", or an absolute date). */
+export function formatDueDate(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+/** Whether a due date is in the past (used to highlight overdue callbacks). */
+export function isOverdue(iso?: string): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getTime() < Date.now();
+}
+
+/** A short relative-time label like "2 days overdue" / "due in 5 days". */
+export function relativeDue(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const diffMs = d.getTime() - Date.now();
+  const overdue = diffMs < 0;
+  const absDays = Math.round(Math.abs(diffMs) / 86_400_000);
+  if (absDays === 0) {
+    return overdue ? "due earlier today" : "due today";
+  }
+  const unit = absDays === 1 ? "day" : "days";
+  return overdue ? `${absDays} ${unit} overdue` : `due in ${absDays} ${unit}`;
+}
+
 // ---- Lead forms ------------------------------------------------------------
 
 export type LeadFieldType = "text" | "phone" | "email" | "number" | "select" | "multiselect" | "textarea";

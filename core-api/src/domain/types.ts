@@ -423,6 +423,58 @@ export type LeadForm = {
   createdAt: string;
 };
 
+// ---- Lead CRM record (notes, callbacks, merged timeline) ------------------
+
+/** A free-text note logged against a lead by a staff member. */
+export type LeadNote = {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  body: string;
+  /** Staff user id who wrote the note (from request context). */
+  authorId?: string;
+  /** Display name of the author at write time. */
+  authorName?: string;
+  createdAt: string;
+};
+
+export type LeadCallbackChannel = "whatsapp" | "call" | "manual";
+export type LeadCallbackStatus = "open" | "done" | "cancelled";
+
+/** A scheduled "call back in N days / on a date" task against a lead. */
+export type LeadCallback = {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  title: string;
+  /** When the callback is due (ISO timestamp). */
+  dueAt: string;
+  channel: LeadCallbackChannel;
+  status: LeadCallbackStatus;
+  /** Staff user id the callback is assigned to. */
+  assignedTo?: string;
+  note?: string;
+  createdAt: string;
+  /** Set when the callback transitions to "done". */
+  completedAt?: string;
+};
+
+/** A single entry in a lead's merged activity timeline (newest-first). */
+export type LeadTimelineEntry = {
+  id: string;
+  type:
+    | "created"
+    | "note"
+    | "stage_change"
+    | "source_change"
+    | "callback_scheduled"
+    | "callback_done"
+    | "callback_cancelled";
+  at: string;
+  text: string;
+  by?: string;
+};
+
 // ---- Campaigns (segmented broadcasts over the channel layer) --------------
 
 export type CampaignChannelType = "transactional" | "marketing";
@@ -542,6 +594,9 @@ export type AuditEvent = {
     | "lead.update"
     | "lead.convert"
     | "lead.import"
+    | "lead_note.create"
+    | "lead_callback.create"
+    | "lead_callback.update"
     | "lead_config.update"
     | "form.create"
     | "form.submit"

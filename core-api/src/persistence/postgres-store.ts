@@ -37,6 +37,8 @@ const collections: CollectionName[] = [
   "journeyEvents",
   "leadConfigs",
   "leads",
+  "leadNotes",
+  "leadCallbacks",
   "forms",
   "campaigns",
   "visits",

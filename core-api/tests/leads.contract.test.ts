@@ -327,6 +327,113 @@ describe("leads & data sources contract", () => {
     assert.equal(lead?.sourceDetail, "Diabetes Screening Camp");
     assert.equal((lead?.formData as JsonObject)?.age, "60");
   });
+
+  describe("CRM record (notes, callbacks, timeline)", () => {
+    let crmLeadId: string;
+    let callbackId: string;
+
+    it("creates a lead for CRM, logs a note, schedules a callback, and surfaces them in the detail timeline", async () => {
+      const created = (await (await authed("/leads", {
+        method: "POST",
+        body: JSON.stringify({ name: "CRM Lead", phone: "+919766600001", source: "referral" })
+      })).json()) as { data: JsonObject };
+      crmLeadId = String(created.data.id);
+
+      // Move the stage so a stage-change shows up in the timeline (derived from audit).
+      await authed(`/leads/${crmLeadId}`, { method: "PATCH", body: JSON.stringify({ stage: "contacted" }) });
+
+      const noteRes = await authed(`/leads/${crmLeadId}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ body: "Called and left a voicemail." })
+      });
+      const note = (await noteRes.json()) as { data: JsonObject };
+      assert.equal(noteRes.status, 200);
+      assert.equal(note.data.body, "Called and left a voicemail.");
+      assert.ok(String(note.data.id).startsWith("lead_note_"));
+      assert.ok(note.data.authorId);
+
+      const dueAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+      const cbRes = await authed(`/leads/${crmLeadId}/callbacks`, {
+        method: "POST",
+        body: JSON.stringify({ title: "Call back in 2 days", dueAt, channel: "call", note: "ask about timing" })
+      });
+      const cb = (await cbRes.json()) as { data: JsonObject };
+      assert.equal(cbRes.status, 200);
+      callbackId = String(cb.data.id);
+      assert.equal(cb.data.status, "open");
+      assert.equal(cb.data.channel, "call");
+
+      const detail = (await (await authed(`/leads/${crmLeadId}`)).json()) as {
+        data: {
+          lead: JsonObject;
+          notes: JsonObject[];
+          callbacks: JsonObject[];
+          timeline: Array<{ type: string; text: string }>;
+        };
+      };
+      assert.equal(detail.data.lead.id, crmLeadId);
+      assert.equal(detail.data.notes.length, 1);
+      assert.equal(detail.data.callbacks.length, 1);
+      const types = detail.data.timeline.map((e) => e.type);
+      assert.ok(types.includes("created"));
+      assert.ok(types.includes("note"));
+      assert.ok(types.includes("callback_scheduled"));
+      assert.ok(types.includes("stage_change"));
+      // Newest-first: every entry's timestamp is >= the next one's.
+      const ats = detail.data.timeline.map((e) => (e as { at: string }).at);
+      for (let i = 1; i < ats.length; i += 1) {
+        assert.ok(ats[i - 1] >= ats[i]);
+      }
+    });
+
+    it("rejects a callback with an invalid channel or bad date", async () => {
+      const badChannel = await authed(`/leads/${crmLeadId}/callbacks`, {
+        method: "POST",
+        body: JSON.stringify({ title: "x", dueAt: new Date().toISOString(), channel: "carrier_pigeon" })
+      });
+      assert.equal(badChannel.status, 400);
+
+      const badDate = await authed(`/leads/${crmLeadId}/callbacks`, {
+        method: "POST",
+        body: JSON.stringify({ title: "x", dueAt: "not-a-date", channel: "call" })
+      });
+      assert.equal(badDate.status, 400);
+    });
+
+    it("lists open callbacks enriched with leadName + leadPhone", async () => {
+      const body = (await (await authed("/lead-callbacks?status=open")).json()) as {
+        data: Array<{ id: string; status: string; leadName?: string; leadPhone?: string }>;
+      };
+      const mine = body.data.find((entry) => entry.id === callbackId);
+      assert.ok(mine, "open callback should be listed");
+      assert.equal(mine?.status, "open");
+      assert.equal(mine?.leadName, "CRM Lead");
+      assert.equal(mine?.leadPhone, "+919766600001");
+      assert.ok(body.data.every((entry) => entry.status === "open"));
+    });
+
+    it("marks a callback done (sets completedAt) and drops it from the open list", async () => {
+      const res = await authed(`/lead-callbacks/${callbackId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "done" })
+      });
+      const body = (await res.json()) as { data: JsonObject };
+      assert.equal(res.status, 200);
+      assert.equal(body.data.status, "done");
+      assert.ok(body.data.completedAt, "completedAt should be set when done");
+
+      const open = (await (await authed("/lead-callbacks?status=open")).json()) as {
+        data: Array<{ id: string }>;
+      };
+      assert.ok(!open.data.some((entry) => entry.id === callbackId), "done callback drops from open list");
+
+      // The completed callback now appears in the lead's timeline.
+      const detail = (await (await authed(`/leads/${crmLeadId}`)).json()) as {
+        data: { timeline: Array<{ type: string }> };
+      };
+      assert.ok(detail.data.timeline.some((e) => e.type === "callback_done"));
+    });
+  });
 });
 
 function restoreEnv(values: Record<string, string | undefined>) {

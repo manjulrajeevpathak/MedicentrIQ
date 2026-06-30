@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -12,6 +12,8 @@ import {
   FileSpreadsheet,
   FileText,
   Filter,
+  ListChecks,
+  Phone,
   Plus,
   Settings2,
   Sprout,
@@ -33,12 +35,18 @@ import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import type { Branch } from "@/lib/users-types";
 import {
+  CALLBACK_CHANNEL_TONE,
   FORM_STATUS_TONE,
   LEAD_FIELD_TYPES,
   OPTION_FIELD_TYPES,
+  callbackChannelLabel,
   configLabel,
+  formatDueDate,
   formatLeadDate,
+  isOverdue,
+  relativeDue,
   slugifyConfigKey,
+  type EnrichedCallback,
   type Lead,
   type LeadFieldType,
   type LeadForm,
@@ -47,6 +55,7 @@ import {
   type LeadFunnelStage,
   type LeadSourceOption
 } from "@/lib/leads-types";
+import { LeadDetailDrawer } from "@/components/leads/lead-detail-drawer";
 import {
   convertLeadAction,
   createFormAction,
@@ -54,13 +63,15 @@ import {
   importLeadsAction,
   moveLeadStageAction,
   saveLeadConfigAction,
-  setFormStatusAction
+  setFormStatusAction,
+  updateCallbackAction
 } from "@/app/(app)/leads/actions";
+import { fetchOpenCallbacks } from "@/lib/leads-api";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
-type Tab = "board" | "leads" | "import" | "forms";
+type Tab = "board" | "leads" | "tasks" | "import" | "forms";
 
 type Props = {
   leads: Lead[];
@@ -84,6 +95,8 @@ export function LeadsWorkspace({
 }: Props) {
   const [tab, setTab] = useState<Tab>("board");
   const [manageOpen, setManageOpen] = useState(false);
+  // The lead whose 360 drawer is open (null = closed). Shared by Board, List and Tasks.
+  const [detailLeadId, setDetailLeadId] = useState<string | null>(null);
 
   return (
     <div className="space-y-5">
@@ -104,6 +117,7 @@ export function LeadsWorkspace({
             options={[
               { value: "board", label: "Board" },
               { value: "leads", label: "List", count: leads.length },
+              { value: "tasks", label: "Tasks" },
               { value: "import", label: "Import" },
               { value: "forms", label: "Forms", count: forms.length }
             ]}
@@ -124,11 +138,19 @@ export function LeadsWorkspace({
           stages={stages}
           sources={sources}
           branches={branches}
+          onOpenLead={setDetailLeadId}
         />
       ) : null}
       {tab === "leads" ? (
-        <LeadsTab leads={leads} branches={branches} sources={sources} stages={stages} />
+        <LeadsTab
+          leads={leads}
+          branches={branches}
+          sources={sources}
+          stages={stages}
+          onOpenLead={setDetailLeadId}
+        />
       ) : null}
+      {tab === "tasks" ? <TasksTab onOpenLead={setDetailLeadId} /> : null}
       {tab === "import" ? <ImportTab sources={sources} /> : null}
       {tab === "forms" ? <FormsTab forms={forms} branches={branches} origin={origin} /> : null}
 
@@ -138,6 +160,15 @@ export function LeadsWorkspace({
           onClose={() => setManageOpen(false)}
           sources={sources}
           stages={stages}
+        />
+      ) : null}
+
+      {detailLeadId ? (
+        <LeadDetailDrawer
+          leadId={detailLeadId}
+          stages={stages}
+          sources={sources}
+          onClose={() => setDetailLeadId(null)}
         />
       ) : null}
     </div>
@@ -152,12 +183,14 @@ function FunnelBoard({
   leads,
   stages,
   sources,
-  branches
+  branches,
+  onOpenLead
 }: {
   leads: Lead[];
   stages: LeadFunnelStage[];
   sources: LeadSourceOption[];
   branches: Branch[];
+  onOpenLead: (leadId: string) => void;
 }) {
   const [composerOpen, setComposerOpen] = useState(false);
 
@@ -235,7 +268,13 @@ function FunnelBoard({
                   <p className="px-1 py-3 text-center text-[11px] text-ink-faint">No leads</p>
                 ) : (
                   col.leads.map((lead) => (
-                    <LeadCard key={lead.id} lead={lead} stages={stages} sources={sources} />
+                    <LeadCard
+                      key={lead.id}
+                      lead={lead}
+                      stages={stages}
+                      sources={sources}
+                      onOpen={onOpenLead}
+                    />
                   ))
                 )}
               </div>
@@ -257,11 +296,13 @@ function FunnelBoard({
 function LeadCard({
   lead,
   stages,
-  sources
+  sources,
+  onOpen
 }: {
   lead: Lead;
   stages: LeadFunnelStage[];
   sources: LeadSourceOption[];
+  onOpen: (leadId: string) => void;
 }) {
   const { toast } = useToast();
   const [stage, setStage] = useState(lead.stage);
@@ -283,15 +324,21 @@ function LeadCard({
   }
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-2.5 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <span className="truncate text-xs font-semibold text-ink">{lead.name}</span>
-        <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
-      </div>
-      <p className="mt-0.5 truncate text-[11px] text-ink-muted">{lead.phone || "No phone"}</p>
-      {lead.assignedTo ? (
-        <p className="mt-0.5 truncate text-[11px] text-ink-faint">Owner: {lead.assignedTo}</p>
-      ) : null}
+    <div className="rounded-lg border border-line bg-surface p-2.5 shadow-sm transition hover:border-line-strong">
+      <button
+        type="button"
+        onClick={() => onOpen(lead.id)}
+        className="block w-full text-left"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <span className="truncate text-xs font-semibold text-ink">{lead.name}</span>
+          <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
+        </div>
+        <p className="mt-0.5 truncate text-[11px] text-ink-muted">{lead.phone || "No phone"}</p>
+        {lead.assignedTo ? (
+          <p className="mt-0.5 truncate text-[11px] text-ink-faint">Owner: {lead.assignedTo}</p>
+        ) : null}
+      </button>
       <div className="mt-2">
         <label className="sr-only" htmlFor={`move-${lead.id}`}>
           Move {lead.name} to a stage
@@ -325,12 +372,14 @@ function LeadsTab({
   leads,
   branches,
   sources,
-  stages
+  stages,
+  onOpenLead
 }: {
   leads: Lead[];
   branches: Branch[];
   sources: LeadSourceOption[];
   stages: LeadFunnelStage[];
+  onOpenLead: (leadId: string) => void;
 }) {
   const [stageFilter, setStageFilter] = useState<string>("");
   const [sourceFilter, setSourceFilter] = useState<string>("");
@@ -383,7 +432,13 @@ function LeadsTab({
         ) : (
           <ul className="divide-y divide-line">
             {filtered.map((lead) => (
-              <LeadRow key={lead.id} lead={lead} sources={sources} stages={stages} />
+              <LeadRow
+                key={lead.id}
+                lead={lead}
+                sources={sources}
+                stages={stages}
+                onOpen={onOpenLead}
+              />
             ))}
           </ul>
         )}
@@ -402,11 +457,13 @@ function LeadsTab({
 function LeadRow({
   lead,
   sources,
-  stages
+  stages,
+  onOpen
 }: {
   lead: Lead;
   sources: LeadSourceOption[];
   stages: LeadFunnelStage[];
+  onOpen: (leadId: string) => void;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -444,7 +501,11 @@ function LeadRow({
 
   return (
     <li className="flex flex-wrap items-center gap-3 px-4 py-3">
-      <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={() => onOpen(lead.id)}
+        className="min-w-0 flex-1 text-left"
+      >
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-semibold text-ink">{lead.name}</span>
           <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
@@ -457,7 +518,7 @@ function LeadRow({
           {" · "}
           {formatLeadDate(lead.createdAt)}
         </p>
-      </div>
+      </button>
 
       <div className="flex items-center gap-2">
         {converted && lead.convertedPatientId ? (
@@ -598,6 +659,139 @@ function NewLeadModal({
         </Button>
       </div>
     </Modal>
+  );
+}
+
+// ============================================================================
+// Tasks tab — open callbacks across every lead (due-soonest / most-overdue first)
+// ============================================================================
+
+function TasksTab({ onOpenLead }: { onOpenLead: (leadId: string) => void }) {
+  const [callbacks, setCallbacks] = useState<EnrichedCallback[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setCallbacks(null);
+    setError(null);
+    fetchOpenCallbacks().then((result) => {
+      if (!active) return;
+      if (result.ok) setCallbacks(result.data);
+      else setError(result.error ?? "Couldn't load tasks.");
+    });
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
+
+  function refresh() {
+    setReloadKey((k) => k + 1);
+  }
+
+  const overdueCount = (callbacks ?? []).filter((c) => isOverdue(c.dueAt)).length;
+
+  return (
+    <Panel padded={false}>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4">
+        <SectionTitle
+          icon={<ListChecks className="size-4" />}
+          title="Tasks"
+          subtitle={
+            callbacks === null
+              ? "Loading…"
+              : `${callbacks.length} open callback${callbacks.length === 1 ? "" : "s"}${
+                  overdueCount > 0 ? ` · ${overdueCount} overdue` : ""
+                }`
+          }
+        />
+        <Button variant="outline" size="sm" onClick={refresh}>
+          Refresh
+        </Button>
+      </div>
+
+      {error ? (
+        <EmptyState
+          icon={<ListChecks className="size-5" />}
+          title="Couldn't load tasks"
+          description={error}
+        />
+      ) : callbacks === null ? (
+        <p className="p-6 text-center text-sm text-ink-muted">Loading tasks…</p>
+      ) : callbacks.length === 0 ? (
+        <EmptyState
+          icon={<ListChecks className="size-5" />}
+          title="No open callbacks"
+          description="Scheduled callbacks across all leads show up here, most-overdue first."
+        />
+      ) : (
+        <ul className="divide-y divide-line">
+          {callbacks.map((cb) => (
+            <TaskRow key={cb.id} callback={cb} onOpenLead={onOpenLead} onChanged={refresh} />
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+function TaskRow({
+  callback,
+  onOpenLead,
+  onChanged
+}: {
+  callback: EnrichedCallback;
+  onOpenLead: (leadId: string) => void;
+  onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [pending, startTransition] = useTransition();
+  const overdue = isOverdue(callback.dueAt);
+
+  function markDone() {
+    startTransition(async () => {
+      const result = await updateCallbackAction(callback.id, "done");
+      if (!result.ok) {
+        toast(result.error ?? "Could not update the callback.", "error");
+        return;
+      }
+      toast(result.message ?? "Callback marked done.", "success");
+      onChanged();
+    });
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <button
+        type="button"
+        onClick={() => onOpenLead(callback.leadId)}
+        className="min-w-0 flex-1 text-left"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-semibold text-ink">
+            {callback.leadName ?? "Lead"}
+          </span>
+          {callback.leadPhone ? (
+            <span className="inline-flex items-center gap-1 text-xs text-ink-muted">
+              <Phone className="size-3" /> {callback.leadPhone}
+            </span>
+          ) : null}
+          <Badge tone={CALLBACK_CHANNEL_TONE[callback.channel] ?? "neutral"}>
+            {callbackChannelLabel(callback.channel)}
+          </Badge>
+        </div>
+        <p className="mt-0.5 truncate text-xs text-ink-soft">{callback.title}</p>
+        <p className="mt-0.5 text-[11px] text-ink-muted">
+          <span className={cn(overdue && "font-semibold text-[var(--color-critical)]")}>
+            {formatDueDate(callback.dueAt)} · {relativeDue(callback.dueAt)}
+          </span>
+        </p>
+      </button>
+
+      <Button variant="outline" size="sm" onClick={markDone} disabled={pending}>
+        <Check className="size-3.5" /> Mark done
+      </Button>
+    </li>
   );
 }
 

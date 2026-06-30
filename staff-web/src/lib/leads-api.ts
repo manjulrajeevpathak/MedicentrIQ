@@ -1,6 +1,13 @@
 import { coreApi } from "./users-api";
 import type { ApiResult } from "./users-types";
-import type { Lead, LeadConfig, LeadForm, LeadFunnel } from "./leads-types";
+import type {
+  EnrichedCallback,
+  Lead,
+  LeadConfig,
+  LeadDetail,
+  LeadForm,
+  LeadFunnel
+} from "./leads-types";
 import { resolveLeadConfig } from "./leads-types";
 
 /**
@@ -29,6 +36,22 @@ export async function fetchLeadFunnel(): Promise<ApiResult<LeadFunnel>> {
 
 export async function fetchForms(): Promise<ApiResult<LeadForm[]>> {
   return coreApi<LeadForm[]>("/forms");
+}
+
+/**
+ * Full lead-detail bundle (the lead + its notes, callbacks and merged timeline)
+ * served by `GET /leads/:leadId`. The arrays may be empty.
+ */
+export async function fetchLeadDetail(leadId: string): Promise<ApiResult<LeadDetail>> {
+  return coreApi<LeadDetail>(`/leads/${encodeURIComponent(leadId)}`);
+}
+
+/**
+ * All open callbacks across every lead, enriched with `leadName` + `leadPhone`
+ * and sorted most-overdue-first by the backend. Powers the Tasks subtab.
+ */
+export async function fetchOpenCallbacks(): Promise<ApiResult<EnrichedCallback[]>> {
+  return coreApi<EnrichedCallback[]>("/lead-callbacks?status=open");
 }
 
 /**

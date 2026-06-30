@@ -17,8 +17,10 @@ import type {
   JourneyTask,
   JourneyTemplate,
   Lead,
+  LeadCallback,
   LeadConfig,
   LeadForm,
+  LeadNote,
   LoginChallenge,
   MessageLog,
   MobileLinkSession,
@@ -90,6 +92,8 @@ export type SeedData = {
   journeyEvents: JourneyEvent[];
   leadConfigs: LeadConfig[];
   leads: Lead[];
+  leadNotes: LeadNote[];
+  leadCallbacks: LeadCallback[];
   forms: LeadForm[];
   campaigns: Campaign[];
   visits: Visit[];
@@ -839,6 +843,40 @@ export const createSeedData = (): SeedData => ({
       updatedAt: daysFromNow(-19)
     }
   ],
+  leadNotes: [
+    {
+      id: "lead_note_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      leadId: "lead_demo_002",
+      body: "Spoke to Imran — he's interested in a cataract consult but wants to confirm dates with family.",
+      authorId: DEMO_STAFF_USER_ID,
+      authorName: "Demo Coordinator",
+      createdAt: daysFromNow(-3)
+    },
+    {
+      id: "lead_note_demo_002",
+      tenantId: DEMO_TENANT_ID,
+      leadId: "lead_demo_002",
+      body: "Sent the Indiranagar clinic location + timings over WhatsApp.",
+      authorId: DEMO_STAFF_USER_ID,
+      authorName: "Demo Coordinator",
+      createdAt: daysFromNow(-2)
+    }
+  ],
+  leadCallbacks: [
+    {
+      id: "lead_callback_demo_001",
+      tenantId: DEMO_TENANT_ID,
+      leadId: "lead_demo_002",
+      title: "Follow up on cataract consult",
+      dueAt: daysFromNow(1),
+      channel: "call",
+      status: "open",
+      assignedTo: DEMO_STAFF_USER_ID,
+      note: "Confirm whether the family has picked a date.",
+      createdAt: daysFromNow(-2)
+    }
+  ],
   forms: [
     {
       id: "form_demo_eye_camp",
@@ -1090,6 +1128,8 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     journeyEvents: withTenant(data.journeyEvents ?? []),
     leadConfigs: data.leadConfigs?.length ? withTenant(data.leadConfigs) : seed.leadConfigs,
     leads: data.leads?.length ? withTenant(data.leads) : seed.leads,
+    leadNotes: data.leadNotes?.length ? withTenant(data.leadNotes) : seed.leadNotes,
+    leadCallbacks: data.leadCallbacks?.length ? withTenant(data.leadCallbacks) : seed.leadCallbacks,
     forms: data.forms?.length ? withTenant(data.forms) : seed.forms,
     campaigns: data.campaigns?.length ? withTenant(data.campaigns) : seed.campaigns,
     visits: data.visits?.length ? withTenant(data.visits) : seed.visits,

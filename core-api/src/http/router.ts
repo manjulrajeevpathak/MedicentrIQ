@@ -405,6 +405,14 @@ const createRoutes = (service: CoreService): Route[] => [
     }), "leads"
   ),
   route("GET", "/leads/funnel", "leads:read", ({ auth }) => service.getLeadFunnel(auth), "leads"),
+  // CRM tasks/callbacks list (tenant-wide). Registered before /leads/:leadId so the
+  // distinct prefix is unambiguous; status filter optional.
+  route("GET", "/lead-callbacks", "leads:read", ({ auth, query }) =>
+    service.listLeadCallbacks(auth, { status: query.get("status") ?? undefined }), "leads"
+  ),
+  route("PATCH", "/lead-callbacks/:callbackId", "leads:manage", ({ auth, params, body }) =>
+    service.updateLeadCallback(auth, params.callbackId, toRecord(body)), "leads"
+  ),
   route("POST", "/leads", "leads:manage", ({ auth, body }) => service.createLead(auth, toRecord(body)), "leads"),
   route("POST", "/leads/import", "leads:manage", ({ auth, body }) => service.importLeads(auth, toRecord(body)), "leads"),
   route("PATCH", "/leads/:leadId", "leads:manage", ({ auth, params, body }) =>
@@ -412,6 +420,16 @@ const createRoutes = (service: CoreService): Route[] => [
   ),
   route("POST", "/leads/:leadId/convert", "leads:manage", ({ auth, params, body }) =>
     service.convertLead(auth, params.leadId, toRecord(body)), "leads"
+  ),
+  // Lead CRM record: detail (lead + notes + callbacks + merged timeline), notes, callbacks.
+  route("GET", "/leads/:leadId", "leads:read", ({ auth, params }) =>
+    service.getLeadDetail(auth, params.leadId), "leads"
+  ),
+  route("POST", "/leads/:leadId/notes", "leads:manage", ({ auth, params, body }) =>
+    service.createLeadNote(auth, params.leadId, toRecord(body)), "leads"
+  ),
+  route("POST", "/leads/:leadId/callbacks", "leads:manage", ({ auth, params, body }) =>
+    service.createLeadCallback(auth, params.leadId, toRecord(body)), "leads"
   ),
 
   // Lead forms (camp registration). List uses leads:read; writes need forms:manage.

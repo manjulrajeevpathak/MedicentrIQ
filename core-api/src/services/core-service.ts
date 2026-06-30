@@ -52,9 +52,13 @@ import type {
   JourneyTaskStatus,
   JourneyTemplate,
   Lead,
+  LeadCallback,
+  LeadCallbackChannel,
   LeadConfig,
   LeadForm,
   LeadFormField,
+  LeadNote,
+  LeadTimelineEntry,
   LeadFunnelStage,
   LeadSourceOption,
   MobileLinkSession,
@@ -451,6 +455,27 @@ type ImportLeadsInput = {
   mapping?: { name?: string; phone?: string; email?: string };
 };
 
+type CreateLeadNoteInput = {
+  body?: string;
+};
+
+type CreateLeadCallbackInput = {
+  title?: string;
+  dueAt?: string;
+  channel?: string;
+  assignedTo?: string;
+  note?: string;
+};
+
+type UpdateLeadCallbackInput = {
+  status?: string;
+  title?: string;
+  dueAt?: string;
+  channel?: string;
+  assignedTo?: string | null;
+  note?: string;
+};
+
 type CreateFormInput = {
   title?: string;
   description?: string;
@@ -670,6 +695,7 @@ const DEFAULT_LEAD_STAGES: LeadFunnelStage[] = [
   { key: "lost", label: "Lost" }
 ];
 const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email", "number", "select", "multiselect", "textarea"]);
+const LEAD_CALLBACK_CHANNELS = new Set<LeadCallbackChannel>(["whatsapp", "call", "manual"]);
 
 const CAMPAIGN_AUTOMATED_ON: CampaignAutomatedOn[] = ["new_lead", "appointment_missed", "opd_done"];
 const CAMPAIGN_STATUSES: CampaignStatus[] = ["draft", "sending", "sent", "scheduled"];
@@ -775,6 +801,20 @@ const sanitizeLeadStage = (value: unknown, stages: LeadFunnelStage[], fallback?:
     return fallback;
   }
   return keys.includes("new") ? "new" : keys[0] ?? "new";
+};
+
+/** Sort lead callbacks: open first (most overdue = earliest dueAt first), then the
+ *  rest (done/cancelled) by most recent dueAt. */
+const compareCallbacks = (a: LeadCallback, b: LeadCallback): number => {
+  const aOpen = a.status === "open";
+  const bOpen = b.status === "open";
+  if (aOpen !== bOpen) {
+    return aOpen ? -1 : 1;
+  }
+  if (aOpen) {
+    return a.dueAt.localeCompare(b.dueAt);
+  }
+  return b.dueAt.localeCompare(a.dueAt);
 };
 
 /** Coerce an arbitrary object into a flat Record<string,string> (drops non-stringish values). */
@@ -6617,6 +6657,226 @@ export class CoreService {
       skipped
     });
     return { created: created.length, skipped };
+  }
+
+  // ---- Lead CRM record (notes, callbacks, merged timeline) -----------------
+
+  /** Full CRM record for a single lead: the lead, its notes (newest first),
+   *  callbacks (open first then by dueAt), and a merged activity timeline. */
+  getLeadDetail(context: RequestContext, leadId: string) {
+    const lead = this.ensureLead(context, leadId);
+    const notes = this.data.leadNotes
+      .filter((note) => note.tenantId === context.tenantId && note.leadId === leadId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const callbacks = this.data.leadCallbacks
+      .filter((cb) => cb.tenantId === context.tenantId && cb.leadId === leadId)
+      .sort(compareCallbacks);
+    const timeline = this.buildLeadTimeline(context, lead, notes, callbacks);
+    return { lead, notes, callbacks, timeline };
+  }
+
+  /** Merge the lead's lifecycle (created), notes, callbacks and any stage-change
+   *  history (derived from audit) into a single newest-first timeline. */
+  private buildLeadTimeline(
+    context: RequestContext,
+    lead: Lead,
+    notes: LeadNote[],
+    callbacks: LeadCallback[]
+  ): LeadTimelineEntry[] {
+    const entries: LeadTimelineEntry[] = [];
+
+    entries.push({
+      id: `created_${lead.id}`,
+      type: "created",
+      at: lead.createdAt,
+      text: `Lead created from ${lead.source}${lead.sourceDetail ? ` (${lead.sourceDetail})` : ""}.`
+    });
+
+    for (const note of notes) {
+      entries.push({
+        id: `note_${note.id}`,
+        type: "note",
+        at: note.createdAt,
+        text: note.body,
+        by: note.authorName ?? note.authorId
+      });
+    }
+
+    for (const cb of callbacks) {
+      entries.push({
+        id: `cb_sched_${cb.id}`,
+        type: "callback_scheduled",
+        at: cb.createdAt,
+        text: `Callback scheduled: ${cb.title} (due ${cb.dueAt}, via ${cb.channel}).`,
+        by: cb.assignedTo
+      });
+      if (cb.status === "done" && cb.completedAt) {
+        entries.push({
+          id: `cb_done_${cb.id}`,
+          type: "callback_done",
+          at: cb.completedAt,
+          text: `Callback completed: ${cb.title}.`,
+          by: cb.assignedTo
+        });
+      } else if (cb.status === "cancelled") {
+        entries.push({
+          id: `cb_cancelled_${cb.id}`,
+          // completedAt is not set on cancel; fall back to createdAt for ordering.
+          type: "callback_cancelled",
+          at: cb.completedAt ?? cb.createdAt,
+          text: `Callback cancelled: ${cb.title}.`,
+          by: cb.assignedTo
+        });
+      }
+    }
+
+    // Stage-change history is derived from this lead's `lead.update` audit events,
+    // each of which records the resulting stage in details.stage. We emit an entry
+    // whenever the stage value changes between consecutive updates. NOTE: existing
+    // audit data does not capture the source value, so source_change history is not
+    // derivable here — only stage changes are reconstructed.
+    const updates = this.data.auditEvents
+      .filter(
+        (event) =>
+          event.tenantId === context.tenantId &&
+          event.resourceType === "lead" &&
+          event.resourceId === lead.id &&
+          event.action === "lead.update"
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    let lastStage: string | undefined;
+    for (const event of updates) {
+      const stage = typeof event.details?.stage === "string" ? event.details.stage : undefined;
+      if (!stage || stage === lastStage) {
+        continue;
+      }
+      lastStage = stage;
+      entries.push({
+        id: `stage_${event.id}`,
+        type: "stage_change",
+        at: event.createdAt,
+        text: `Stage changed to ${stage}.`,
+        by: event.actorDisplayName
+      });
+    }
+
+    return entries.sort((a, b) => b.at.localeCompare(a.at));
+  }
+
+  async createLeadNote(context: RequestContext, leadId: string, input: CreateLeadNoteInput) {
+    this.ensureLead(context, leadId);
+    const body = ensureString(input.body, "body");
+    const note: LeadNote = {
+      id: createId("lead_note"),
+      tenantId: context.tenantId,
+      leadId,
+      body,
+      authorId: context.actorId,
+      authorName: context.displayName,
+      createdAt: nowIso()
+    };
+    this.data.leadNotes.push(note);
+    await this.persistence.saveCollection("leadNotes", this.data.leadNotes);
+    await this.audit(context, "lead_note.create", "lead", leadId, undefined, { noteId: note.id });
+    return note;
+  }
+
+  async createLeadCallback(context: RequestContext, leadId: string, input: CreateLeadCallbackInput) {
+    this.ensureLead(context, leadId);
+    const title = ensureString(input.title, "title");
+    const dueAt = ensureString(input.dueAt, "dueAt");
+    if (Number.isNaN(Date.parse(dueAt))) {
+      throw new ApiError(400, "dueAt must be a valid ISO date");
+    }
+    const channel = typeof input.channel === "string" ? input.channel : "";
+    if (!LEAD_CALLBACK_CHANNELS.has(channel as LeadCallbackChannel)) {
+      throw new ApiError(400, `Invalid callback channel: ${channel || "(missing)"}`);
+    }
+    const callback: LeadCallback = {
+      id: createId("lead_callback"),
+      tenantId: context.tenantId,
+      leadId,
+      title,
+      dueAt: new Date(dueAt).toISOString(),
+      channel: channel as LeadCallbackChannel,
+      status: "open",
+      assignedTo:
+        typeof input.assignedTo === "string" && input.assignedTo.trim() ? input.assignedTo.trim() : undefined,
+      note: typeof input.note === "string" && input.note.trim() ? input.note.trim() : undefined,
+      createdAt: nowIso()
+    };
+    this.data.leadCallbacks.push(callback);
+    await this.persistence.saveCollection("leadCallbacks", this.data.leadCallbacks);
+    await this.audit(context, "lead_callback.create", "lead", leadId, undefined, {
+      callbackId: callback.id,
+      channel: callback.channel
+    });
+    return callback;
+  }
+
+  async updateLeadCallback(context: RequestContext, callbackId: string, input: UpdateLeadCallbackInput) {
+    const callback = this.data.leadCallbacks.find(
+      (entry) => entry.id === callbackId && entry.tenantId === context.tenantId
+    );
+    if (!callback) {
+      throw new ApiError(404, `Lead callback not found: ${callbackId}`);
+    }
+    if (input.status !== undefined) {
+      if (input.status !== "open" && input.status !== "done" && input.status !== "cancelled") {
+        throw new ApiError(400, `Invalid callback status: ${input.status}`);
+      }
+      callback.status = input.status;
+      // Stamp completion when moving to done; clear it otherwise.
+      callback.completedAt = input.status === "done" ? nowIso() : undefined;
+    }
+    if (typeof input.title === "string" && input.title.trim()) {
+      callback.title = input.title.trim();
+    }
+    if (input.dueAt !== undefined) {
+      if (typeof input.dueAt !== "string" || Number.isNaN(Date.parse(input.dueAt))) {
+        throw new ApiError(400, "dueAt must be a valid ISO date");
+      }
+      callback.dueAt = new Date(input.dueAt).toISOString();
+    }
+    if (input.channel !== undefined) {
+      if (!LEAD_CALLBACK_CHANNELS.has(input.channel as LeadCallbackChannel)) {
+        throw new ApiError(400, `Invalid callback channel: ${input.channel}`);
+      }
+      callback.channel = input.channel as LeadCallbackChannel;
+    }
+    if (input.assignedTo !== undefined) {
+      callback.assignedTo =
+        typeof input.assignedTo === "string" && input.assignedTo.trim() ? input.assignedTo.trim() : undefined;
+    }
+    if (input.note !== undefined) {
+      callback.note = typeof input.note === "string" && input.note.trim() ? input.note.trim() : undefined;
+    }
+    await this.persistence.saveCollection("leadCallbacks", this.data.leadCallbacks);
+    await this.audit(context, "lead_callback.update", "lead", callback.leadId, undefined, {
+      callbackId: callback.id,
+      status: callback.status
+    });
+    return callback;
+  }
+
+  /** Tenant-wide callbacks, optionally filtered by status, each enriched with the
+   *  lead's name + phone so the staff "Tasks" view renders without N+1 lookups.
+   *  Sort: open by dueAt asc (most overdue first), then the rest. */
+  listLeadCallbacks(context: RequestContext, filters: { status?: string } = {}) {
+    return this.data.leadCallbacks
+      .filter((cb) => cb.tenantId === context.tenantId)
+      .filter((cb) => (filters.status ? cb.status === filters.status : true))
+      .sort(compareCallbacks)
+      .map((cb) => {
+        const lead = this.data.leads.find(
+          (entry) => entry.id === cb.leadId && entry.tenantId === context.tenantId
+        );
+        return {
+          ...cb,
+          leadName: lead?.name,
+          leadPhone: lead?.phone
+        };
+      });
   }
 
   // ---- Lead forms (camp registration) --------------------------------------

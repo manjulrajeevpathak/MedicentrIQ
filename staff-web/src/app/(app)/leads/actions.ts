@@ -3,11 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { coreApi } from "@/lib/users-api";
 import type {
+  CallbackChannel,
+  CallbackStatus,
   Lead,
+  LeadCallback,
   LeadConfig,
   LeadForm,
   LeadFormField,
   LeadFunnelStage,
+  LeadNote,
   LeadSourceOption
 } from "@/lib/leads-types";
 
@@ -109,6 +113,85 @@ export async function changeLeadSourceAction(
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the source." };
   revalidatePath("/leads");
   return { ok: true, data: result.data, message: "Source updated." };
+}
+
+// ---- Lead detail: notes + callbacks (CRM Phase 2) --------------------------
+
+/** Logs a free-text note against a lead: `POST /leads/:leadId/notes {body}`. */
+export async function addLeadNoteAction(
+  leadId: string,
+  body: string
+): Promise<ActionState<LeadNote>> {
+  if (!leadId) return { ok: false, error: "Missing lead." };
+  const text = body.trim();
+  if (!text) return { ok: false, error: "Write a note first." };
+
+  const result = await coreApi<LeadNote>(`/leads/${encodeURIComponent(leadId)}/notes`, {
+    method: "POST",
+    body: { body: text }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not add the note." };
+  revalidatePath("/leads");
+  return { ok: true, data: result.data, message: "Note added." };
+}
+
+/**
+ * Schedules a callback for a lead: `POST /leads/:leadId/callbacks`. `dueAt` is a
+ * pre-computed ISO string (see computeDueAt for the "in N days/months" picks).
+ */
+export async function scheduleCallbackAction(
+  leadId: string,
+  input: {
+    title: string;
+    dueAt: string;
+    channel: CallbackChannel;
+    assignedTo?: string;
+    note?: string;
+  }
+): Promise<ActionState<LeadCallback>> {
+  if (!leadId) return { ok: false, error: "Missing lead." };
+  const title = input.title.trim();
+  if (!title) return { ok: false, error: "Give the callback a title." };
+  if (!input.dueAt) return { ok: false, error: "Pick when to call back." };
+
+  const result = await coreApi<LeadCallback>(`/leads/${encodeURIComponent(leadId)}/callbacks`, {
+    method: "POST",
+    body: {
+      title,
+      dueAt: input.dueAt,
+      channel: input.channel,
+      ...(input.assignedTo?.trim() ? { assignedTo: input.assignedTo.trim() } : {}),
+      ...(input.note?.trim() ? { note: input.note.trim() } : {})
+    }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not schedule the callback." };
+  revalidatePath("/leads");
+  return { ok: true, data: result.data, message: "Callback scheduled." };
+}
+
+/**
+ * Marks a callback done or cancelled: `PATCH /lead-callbacks/:callbackId {status}`.
+ */
+export async function updateCallbackAction(
+  callbackId: string,
+  status: Extract<CallbackStatus, "done" | "cancelled">
+): Promise<ActionState<LeadCallback>> {
+  if (!callbackId) return { ok: false, error: "Missing callback." };
+  if (status !== "done" && status !== "cancelled") {
+    return { ok: false, error: "Unsupported callback update." };
+  }
+
+  const result = await coreApi<LeadCallback>(`/lead-callbacks/${encodeURIComponent(callbackId)}`, {
+    method: "PATCH",
+    body: { status }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not update the callback." };
+  revalidatePath("/leads");
+  return {
+    ok: true,
+    data: result.data,
+    message: status === "done" ? "Callback marked done." : "Callback cancelled."
+  };
 }
 
 // ---- Convert lead → patient ------------------------------------------------
