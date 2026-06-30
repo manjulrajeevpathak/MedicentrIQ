@@ -5,9 +5,11 @@ import { coreApi } from "@/lib/users-api";
 import type {
   CallbackChannel,
   CallbackStatus,
+  EnrichedCallback,
   Lead,
   LeadCallback,
   LeadConfig,
+  LeadDetail,
   LeadForm,
   LeadFormField,
   LeadFunnelStage,
@@ -16,6 +18,17 @@ import type {
   LeadSheetMapping,
   LeadSourceOption
 } from "@/lib/leads-types";
+
+// ---- Client-callable loaders (wrap the server-only fetchers so "use client"
+// components never import the next/headers-bound data layer) -----------------
+
+export async function loadLeadDetailAction(leadId: string) {
+  return coreApi<LeadDetail>(`/leads/${encodeURIComponent(leadId)}`);
+}
+
+export async function loadOpenCallbacksAction() {
+  return coreApi<EnrichedCallback[]>(`/lead-callbacks?status=open`);
+}
 
 /**
  * Leads / Growth server actions. Each reads the session bearer (via `coreApi`),

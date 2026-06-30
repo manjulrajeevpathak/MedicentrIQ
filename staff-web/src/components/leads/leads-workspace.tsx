@@ -64,6 +64,7 @@ import {
   createFormAction,
   createLeadAction,
   importLeadsAction,
+  loadOpenCallbacksAction,
   moveLeadStageAction,
   saveLeadConfigAction,
   saveLeadSheetConfigAction,
@@ -71,7 +72,6 @@ import {
   syncLeadSheetAction,
   updateCallbackAction
 } from "@/app/(app)/leads/actions";
-import { fetchOpenCallbacks } from "@/lib/leads-api";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
@@ -684,7 +684,7 @@ function TasksTab({ onOpenLead }: { onOpenLead: (leadId: string) => void }) {
     let active = true;
     setCallbacks(null);
     setError(null);
-    fetchOpenCallbacks().then((result) => {
+    loadOpenCallbacksAction().then((result) => {
       if (!active) return;
       if (result.ok) setCallbacks(result.data);
       else setError(result.error ?? "Couldn't load tasks.");

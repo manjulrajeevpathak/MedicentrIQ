@@ -41,9 +41,9 @@ import {
   type LeadSourceOption,
   type LeadTimelineEntry
 } from "@/lib/leads-types";
-import { fetchLeadDetail } from "@/lib/leads-api";
 import {
   addLeadNoteAction,
+  loadLeadDetailAction,
   moveLeadStageAction,
   scheduleCallbackAction,
   updateCallbackAction
@@ -78,7 +78,7 @@ export function LeadDetailDrawer({
   useEffect(() => {
     let active = true;
     setLoading(true);
-    fetchLeadDetail(leadId).then((result) => {
+    loadLeadDetailAction(leadId).then((result) => {
       if (!active) return;
       if (result.ok) {
         setDetail(result.data);
