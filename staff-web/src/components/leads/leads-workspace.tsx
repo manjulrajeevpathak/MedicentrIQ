@@ -77,7 +77,7 @@ import {
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
-type Tab = "board" | "leads" | "tasks" | "import" | "forms";
+type Tab = "board" | "leads" | "tasks" | "sources";
 
 type Props = {
   leads: Lead[];
@@ -103,6 +103,9 @@ export function LeadsWorkspace({
 }: Props) {
   const [tab, setTab] = useState<Tab>("board");
   const [manageOpen, setManageOpen] = useState(false);
+  // New-lead composer lives at the workspace level so the header button works
+  // from any tab.
+  const [newLeadOpen, setNewLeadOpen] = useState(false);
   // The lead whose 360 drawer is open (null = closed). Shared by Board, List and Tasks.
   const [detailLeadId, setDetailLeadId] = useState<string | null>(null);
 
@@ -120,39 +123,31 @@ export function LeadsWorkspace({
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Pipeline = manage the lifecycle of leads */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">Pipeline</span>
-            <Segmented
-              options={
-                [
-                  { value: "board", label: "Board" },
-                  { value: "leads", label: "List", count: leads.length },
-                  { value: "tasks", label: "Tasks" }
-                ] as { value: Tab; label: string; count?: number }[]
-              }
-              value={tab}
-              onChange={setTab}
-            />
-          </div>
-          {/* Intake = how leads come in */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">Intake</span>
-            <Segmented
-              options={
-                [
-                  { value: "import", label: "Import" },
-                  { value: "forms", label: "Forms", count: forms.length }
-                ] as { value: Tab; label: string; count?: number }[]
-              }
-              value={tab}
-              onChange={setTab}
-            />
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            options={
+              [
+                { value: "board", label: "Board" },
+                { value: "leads", label: "List", count: leads.length },
+                { value: "tasks", label: "Tasks" },
+                { value: "sources", label: "Sources" }
+              ] as { value: Tab; label: string; count?: number }[]
+            }
+            value={tab}
+            onChange={setTab}
+          />
+          <Button size="sm" onClick={() => setNewLeadOpen(true)}>
+            <UserPlus className="size-3.5" /> New lead
+          </Button>
           {isAdmin ? (
-            <Button variant="outline" size="sm" onClick={() => setManageOpen(true)}>
-              <Settings2 className="size-3.5" /> Manage funnel
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setManageOpen(true)}
+              title="Manage funnel"
+              aria-label="Manage funnel"
+            >
+              <Settings2 className="size-4" />
             </Button>
           ) : null}
         </div>
@@ -163,7 +158,6 @@ export function LeadsWorkspace({
           leads={leads}
           stages={stages}
           sources={sources}
-          branches={branches}
           onOpenLead={setDetailLeadId}
         />
       ) : null}
@@ -177,10 +171,23 @@ export function LeadsWorkspace({
         />
       ) : null}
       {tab === "tasks" ? <TasksTab onOpenLead={setDetailLeadId} /> : null}
-      {tab === "import" ? (
-        <ImportTab sources={sources} sheetConfig={sheetConfig} isAdmin={isAdmin} />
+      {tab === "sources" ? (
+        <SourcesTab
+          forms={forms}
+          branches={branches}
+          origin={origin}
+          sources={sources}
+          sheetConfig={sheetConfig}
+          isAdmin={isAdmin}
+        />
       ) : null}
-      {tab === "forms" ? <FormsTab forms={forms} branches={branches} origin={origin} /> : null}
+
+      <NewLeadModal
+        open={newLeadOpen}
+        onClose={() => setNewLeadOpen(false)}
+        branches={branches}
+        sources={sources}
+      />
 
       {isAdmin && manageOpen ? (
         <ManageFunnelModal
@@ -211,17 +218,13 @@ function FunnelBoard({
   leads,
   stages,
   sources,
-  branches,
   onOpenLead
 }: {
   leads: Lead[];
   stages: LeadFunnelStage[];
   sources: LeadSourceOption[];
-  branches: Branch[];
   onOpenLead: (leadId: string) => void;
 }) {
-  const [composerOpen, setComposerOpen] = useState(false);
-
   // Group leads by their configured stage. Leads whose stage isn't in the
   // configured list fall into a synthetic "Unsorted" column so nothing is lost.
   const byStage = useMemo(() => {
@@ -259,17 +262,6 @@ function FunnelBoard({
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionTitle
-          icon={<Filter className="size-4" />}
-          title="Funnel board"
-          subtitle={stages.map((s) => s.label).join(" → ")}
-        />
-        <Button size="sm" onClick={() => setComposerOpen(true)}>
-          <UserPlus className="size-3.5" /> New lead
-        </Button>
-      </div>
-
       {leads.length === 0 ? (
         <Panel>
           <EmptyState
@@ -310,13 +302,6 @@ function FunnelBoard({
           ))}
         </div>
       )}
-
-      <NewLeadModal
-        open={composerOpen}
-        onClose={() => setComposerOpen(false)}
-        branches={branches}
-        sources={sources}
-      />
     </>
   );
 }
@@ -1161,37 +1146,59 @@ function downloadLeadsTemplate() {
   XLSX.writeFile(wb, "healthcareos-leads-template.xlsx");
 }
 
-type ImportMode = "file" | "sheet";
+// ============================================================================
+// Sources tab — one hub for every way leads come in: web forms, file import,
+// and a connected Google Sheet. A small sub-toggle switches between them so the
+// (often long) sections don't all stack at once.
+// ============================================================================
 
-function ImportTab({
+type SourcesView = "forms" | "file" | "sheet";
+
+function SourcesTab({
+  forms,
+  branches,
+  origin,
   sources,
   sheetConfig,
   isAdmin
 }: {
+  forms: LeadForm[];
+  branches: Branch[];
+  origin: string;
   sources: LeadSourceOption[];
   sheetConfig: LeadSheetConfig;
   isAdmin: boolean;
 }) {
-  // A sub-toggle splits the Import area into the existing Excel/CSV paste import
-  // and the (admin-only) Google Sheet connect. Both are about getting leads in.
-  const [mode, setMode] = useState<ImportMode>("file");
+  const [view, setView] = useState<SourcesView>("forms");
+
+  const blurb: Record<SourcesView, string> = {
+    forms: "Capture leads from camps and the web with shareable public forms.",
+    file: "Bring in a batch of leads from an Excel or CSV file.",
+    sheet: "Sync rows from a published Google Sheet straight into your leads."
+  };
 
   return (
     <div className="space-y-4">
-      <Segmented
-        size="sm"
-        options={[
-          { value: "file", label: "Excel / CSV" },
-          { value: "sheet", label: "Google Sheet" }
-        ]}
-        value={mode}
-        onChange={setMode}
-      />
-      {mode === "file" ? (
-        <FileImport sources={sources} />
-      ) : (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Segmented
+          options={
+            [
+              { value: "forms", label: "Web forms", count: forms.length },
+              { value: "file", label: "Import a file" },
+              { value: "sheet", label: "Google Sheet" }
+            ] as { value: SourcesView; label: string; count?: number }[]
+          }
+          value={view}
+          onChange={setView}
+        />
+        <p className="text-xs text-ink-muted">{blurb[view]}</p>
+      </div>
+
+      {view === "forms" ? <FormsTab forms={forms} branches={branches} origin={origin} /> : null}
+      {view === "file" ? <FileImport sources={sources} /> : null}
+      {view === "sheet" ? (
         <GoogleSheetConnect sources={sources} config={sheetConfig} isAdmin={isAdmin} />
-      )}
+      ) : null}
     </div>
   );
 }
