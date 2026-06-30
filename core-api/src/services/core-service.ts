@@ -694,11 +694,6 @@ const sanitizeStringArray = (value: unknown): string[] | undefined => {
 /** First word of a display name (falls back to "there"). */
 const firstName = (name: string): string => name.trim().split(/\s+/)[0] || "there";
 
-/** Replace the {{name}} token with the recipient's first name (whole string falls back to "there"). */
-const personalize = (body: string, name: string): string => {
-  return body.replace(/\{\{\s*name\s*\}\}/gi, firstName(name));
-};
-
 /**
  * Default appointment-lifecycle message bodies — the verbatim bodies the retired
  * fixed notification path used, now cloned per-tenant by the workflow runtime's
@@ -6808,15 +6803,33 @@ export class CoreService {
     // Effective delivery provider — explicit, else derived from the category.
     const provider: ChannelProvider = campaign.provider ?? (campaign.channelType === "marketing" ? "aisensy" : "ultramsg");
 
+    // Tenant-level tokens for the body (a campaign has no appointment context, so
+    // branch info comes from the tenant's primary branch). Recipient name fills
+    // every name alias so library templates ({{name}} OR {{patientName}}) work.
+    const branch =
+      this.data.branches.find((b) => b.tenantId === context.tenantId && b.status === "active") ??
+      this.data.branches.find((b) => b.tenantId === context.tenantId);
+    const baseTokens: Record<string, string> = {
+      branch: branch?.displayName ?? "",
+      address: branch?.address ?? "",
+      mapLink: branch?.mapUrl ?? "",
+      clinicPhone: branch?.phone ?? ""
+    };
+
     let sent = 0;
     let failed = 0;
     for (const recipient of recipients) {
       try {
+        const name = firstName(recipient.name);
+        const renderedBody =
+          provider === "ultramsg" && campaign.body
+            ? this.renderTemplate(campaign.body, { ...baseTokens, name, patientName: name, firstName: name })
+            : undefined;
         const result = await this.sendMessage(context, {
           to: recipient.phone,
           type: campaign.channelType,
           provider,
-          body: provider === "ultramsg" && campaign.body ? personalize(campaign.body, recipient.name) : undefined,
+          body: renderedBody,
           campaign: provider === "aisensy" ? campaign.aisensyCampaign : undefined,
           userName: recipient.name,
           params: provider === "aisensy" ? campaign.templateParams : undefined
