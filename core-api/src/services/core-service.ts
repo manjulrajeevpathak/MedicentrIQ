@@ -55,6 +55,7 @@ import type {
   LeadCallback,
   LeadCallbackChannel,
   LeadConfig,
+  LeadIntake,
   LeadSheetConfig,
   LeadSheetMapping,
   LeadForm,
@@ -422,6 +423,7 @@ type CreateLeadInput = {
   phone?: string;
   email?: string;
   source?: string;
+  intake?: string;
   sourceDetail?: string;
   stage?: string;
   assignedTo?: string;
@@ -689,14 +691,27 @@ const sanitizeModuleOverrides = (value: unknown): Partial<Record<ModuleKey, bool
 
 /** Default CRM funnel config, used to lazy-provision a tenant that has none. The
  *  source/stage keys here are the platform defaults (LeadSource / LeadStage unions). */
+// Marketing/attribution sources ONLY — how a lead is classified for campaigns &
+// ROI, NOT how it was imported (form/excel/sheet = intake mechanism, see LeadIntake).
 const DEFAULT_LEAD_SOURCES: LeadSourceOption[] = [
-  { key: "camp", label: "Camp" },
-  { key: "meta", label: "Meta / Ads" },
-  { key: "referral", label: "Referral" },
-  { key: "form", label: "Web form" },
+  { key: "meta_ads", label: "Meta Ads" },
+  { key: "google_ads", label: "Google Ads" },
+  { key: "doctor_referral", label: "Doctor Referral" },
+  { key: "camp_self", label: "Camp – Self" },
+  { key: "camp_outsourced", label: "Camp – Outsourced" },
   { key: "walk_in", label: "Walk-in" },
-  { key: "import", label: "Import" }
+  { key: "website", label: "Website" }
 ];
+
+// The legacy default that mixed marketing sources with import mechanisms. A tenant
+// whose sources still EXACTLY match this never curated them, so it's safe to
+// auto-upgrade them to the clean marketing-only defaults above.
+const LEGACY_DEFAULT_SOURCE_KEYS = ["camp", "meta", "referral", "form", "walk_in", "import"];
+
+const validLeadIntake = (value: unknown): LeadIntake | undefined => {
+  const allowed: LeadIntake[] = ["manual", "web_form", "excel_import", "google_sheet", "walk_in", "api"];
+  return typeof value === "string" && (allowed as string[]).includes(value) ? (value as LeadIntake) : undefined;
+};
 const DEFAULT_LEAD_STAGES: LeadFunnelStage[] = [
   { key: "new", label: "New" },
   { key: "contacted", label: "Contacted" },
@@ -6490,6 +6505,15 @@ export class CoreService {
       };
       this.data.leadConfigs.push(config);
       await this.persistence.saveCollection("leadConfigs", this.data.leadConfigs);
+    } else if (
+      // Auto-upgrade tenants still on the legacy default (which mixed marketing
+      // sources with import mechanisms) to the clean marketing-only defaults.
+      config.sources.length === LEGACY_DEFAULT_SOURCE_KEYS.length &&
+      config.sources.every((s) => LEGACY_DEFAULT_SOURCE_KEYS.includes(s.key))
+    ) {
+      config.sources = DEFAULT_LEAD_SOURCES.map((s) => ({ ...s }));
+      config.updatedAt = nowIso();
+      await this.persistence.saveCollection("leadConfigs", this.data.leadConfigs);
     }
     return config;
   }
@@ -6677,7 +6701,7 @@ export class CoreService {
     rows: string[][]
   ): Promise<{ imported: number; skipped: number; total: number }> {
     const leadConfig = await this.resolveLeadConfig(context);
-    const source = sanitizeLeadSource(config.sourceKey, leadConfig.sources, "import");
+    const source = sanitizeLeadSource(config.sourceKey, leadConfig.sources, leadConfig.sources[0]?.key);
     const header = rows[0] ?? [];
     const dataRows = rows.slice(1);
     const total = dataRows.length;
@@ -6711,7 +6735,7 @@ export class CoreService {
       const email = cell(cols, emailIdx);
       const lead = this.buildLead(
         context,
-        { name, phone: phoneRaw, email: email || undefined, source },
+        { name, phone: phoneRaw, email: email || undefined, source, intake: "google_sheet" },
         leadConfig
       );
       this.data.leads.push(lead);
@@ -6811,6 +6835,7 @@ export class CoreService {
       phone,
       email: typeof input.email === "string" && input.email.trim() ? input.email.trim() : undefined,
       source: sanitizeLeadSource(input.source, config.sources),
+      intake: validLeadIntake(input.intake) ?? "manual",
       sourceDetail: typeof input.sourceDetail === "string" && input.sourceDetail.trim() ? input.sourceDetail.trim() : undefined,
       // Default to the first configured stage (funnel entry) when none given.
       stage: sanitizeLeadStage(input.stage, config.stages, config.stages[0]?.key),
@@ -6915,7 +6940,9 @@ export class CoreService {
   async importLeads(context: RequestContext, input: ImportLeadsInput) {
     const config = await this.resolveLeadConfig(context);
     const rows = Array.isArray(input.rows) ? input.rows : [];
-    const source = sanitizeLeadSource(input.source, config.sources, "import");
+    // The marketing source the operator tags this file's leads with (default the
+    // first configured source). The mechanism ("excel_import") is recorded as intake.
+    const source = sanitizeLeadSource(input.source, config.sources, config.sources[0]?.key);
     const mapping = input.mapping ?? {};
     const nameKey = typeof mapping.name === "string" && mapping.name ? mapping.name : "name";
     const phoneKey = typeof mapping.phone === "string" && mapping.phone ? mapping.phone : "phone";
@@ -6941,6 +6968,7 @@ export class CoreService {
         phone: phoneRaw,
         email: email || undefined,
         source,
+        intake: "excel_import",
         formData: sanitizeStringMap(record)
       }, config);
       this.data.leads.push(lead);
@@ -7308,6 +7336,7 @@ export class CoreService {
       phone,
       email: values.email?.trim() || undefined,
       source,
+      intake: "web_form",
       sourceDetail: form.title,
       stage,
       branchId: form.branchId,

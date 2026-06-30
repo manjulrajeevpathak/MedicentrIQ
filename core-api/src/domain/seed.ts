@@ -764,13 +764,15 @@ export const createSeedData = (): SeedData => ({
   leadConfigs: [
     {
       tenantId: DEMO_TENANT_ID,
+      // Marketing/attribution sources only (NOT import mechanisms).
       sources: [
-        { key: "camp", label: "Camp" },
-        { key: "meta", label: "Meta / Ads" },
-        { key: "referral", label: "Referral" },
-        { key: "form", label: "Web form" },
+        { key: "meta_ads", label: "Meta Ads" },
+        { key: "google_ads", label: "Google Ads" },
+        { key: "doctor_referral", label: "Doctor Referral" },
+        { key: "camp_self", label: "Camp – Self" },
+        { key: "camp_outsourced", label: "Camp – Outsourced" },
         { key: "walk_in", label: "Walk-in" },
-        { key: "import", label: "Import" }
+        { key: "website", label: "Website" }
       ],
       stages: [
         { key: "new", label: "New" },
@@ -801,7 +803,8 @@ export const createSeedData = (): SeedData => ({
       name: "Sunita Reddy",
       phone: "+919845012345",
       email: "sunita.reddy@example.com",
-      source: "camp",
+      source: "camp_self",
+      intake: "walk_in",
       sourceDetail: "Free Eye Camp - Indiranagar",
       stage: "new",
       branchId: DEMO_BRANCH_IND,
@@ -815,7 +818,8 @@ export const createSeedData = (): SeedData => ({
       tenantId: DEMO_TENANT_ID,
       name: "Imran Khan",
       phone: "+919845067890",
-      source: "meta",
+      source: "meta_ads",
+      intake: "web_form",
       sourceDetail: "Cataract awareness - Meta lead form",
       stage: "contacted",
       assignedTo: DEMO_STAFF_USER_ID,
@@ -830,7 +834,8 @@ export const createSeedData = (): SeedData => ({
       name: "Lakshmi Narayan",
       phone: "+919845099111",
       email: "lakshmi.n@example.com",
-      source: "referral",
+      source: "doctor_referral",
+      intake: "manual",
       sourceDetail: "Referred by Dr. Vikram Iyer",
       stage: "qualified",
       assignedTo: "user_demo_coordinator",
@@ -845,6 +850,7 @@ export const createSeedData = (): SeedData => ({
       name: "Anita Sharma",
       phone: "+919876543210",
       source: "walk_in",
+      intake: "walk_in",
       sourceDetail: "Front desk walk-in",
       stage: "converted",
       branchId: DEMO_BRANCH_IND,
@@ -904,6 +910,7 @@ export const createSeedData = (): SeedData => ({
       ],
       status: "active",
       branchId: DEMO_BRANCH_IND,
+      source: "camp_self",
       submissions: 0,
       createdAt: daysFromNow(-10)
     }
@@ -917,7 +924,7 @@ export const createSeedData = (): SeedData => ({
       audience: {
         include: "both",
         leadStages: ["new", "contacted"],
-        leadSources: ["camp"],
+        leadSources: ["camp_self"],
         patientStages: [],
         conditionCodes: [],
         tags: ["cataract"]

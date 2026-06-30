@@ -394,14 +394,21 @@ export type LeadSheetConfig = {
 };
 
 /** A person who entered from marketing/top-of-funnel and may convert into a Patient. */
+/** HOW a lead entered the system (the import mechanism) — distinct from its
+ *  marketing `source`. System-defined, auto-captured, NOT tenant-configurable. */
+export type LeadIntake = "manual" | "web_form" | "excel_import" | "google_sheet" | "walk_in" | "api";
+
 export type Lead = {
   id: string;
   tenantId: string;
   name: string;
   phone: string;
   email?: string;
-  /** A configured LeadSource key (see LeadConfig.sources). */
+  /** Marketing attribution — a configured LeadSource key (see LeadConfig.sources):
+   *  e.g. Meta Ads, Google Ads, Doctor Referral, Camp – Self. */
   source: string;
+  /** The import mechanism this lead arrived through (web form, Excel, Sheet, …). */
+  intake?: LeadIntake;
   /** e.g. campaign/camp name, form title. */
   sourceDetail?: string;
   /** A configured LeadFunnelStage key (see LeadConfig.stages). */

@@ -59,7 +59,7 @@ describe("lead-sheet ingest contract (CRM Phase 3)", () => {
         enabled: true,
         csvUrl: "https://docs.google.com/spreadsheets/d/abc/pub?output=csv",
         mapping: { name: "Full Name", phone: "Mobile", email: "Email" },
-        sourceKey: "import"
+        sourceKey: "camp_self"
       })
     });
     assert.equal(res.status, 200);
@@ -67,7 +67,7 @@ describe("lead-sheet ingest contract (CRM Phase 3)", () => {
     assert.equal(reflected.data.enabled, true);
     assert.equal(reflected.data.csvUrl, "https://docs.google.com/spreadsheets/d/abc/pub?output=csv");
     assert.deepEqual(reflected.data.mapping, { name: "Full Name", phone: "Mobile", email: "Email" });
-    assert.equal(reflected.data.sourceKey, "import");
+    assert.equal(reflected.data.sourceKey, "camp_self");
   });
 
   it("PATCH /tenant/lead-sheet rejects a non-http csvUrl", async () => {
@@ -103,7 +103,7 @@ describe("lead-sheet ingest contract (CRM Phase 3)", () => {
       enabled: true,
       csvUrl: "https://example.test/pub?output=csv",
       mapping,
-      sourceKey: "import",
+      sourceKey: "camp_self",
       importedKeys: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -127,7 +127,8 @@ describe("lead-sheet ingest contract (CRM Phase 3)", () => {
     const created = leads.filter((l) => l.email === "asha@example.com" || l.email === "bilal@example.com");
     assert.equal(created.length, 2);
     for (const lead of created) {
-      assert.equal(lead.source, "import");
+      assert.equal(lead.source, "camp_self");
+      assert.equal(lead.intake, "google_sheet");
     }
     // importedKeys now carries the two normalized phones.
     assert.equal(config.importedKeys.length, 2);

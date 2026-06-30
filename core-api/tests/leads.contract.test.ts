@@ -53,8 +53,10 @@ describe("leads & data sources contract", () => {
       body.data.stages.map((s) => s.key),
       ["new", "contacted", "qualified", "booked", "converted", "lost"]
     );
-    assert.ok(body.data.sources.some((s) => s.key === "camp"));
-    assert.ok(body.data.sources.some((s) => s.key === "import"));
+    // Sources are marketing/attribution only (import mechanisms live on Lead.intake).
+    assert.ok(body.data.sources.some((s) => s.key === "camp_self"));
+    assert.ok(body.data.sources.some((s) => s.key === "meta_ads"));
+    assert.ok(!body.data.sources.some((s) => s.key === "import" || s.key === "form"));
   });
 
   it("PATCH /tenant/lead-config adds a custom stage + source (reflected, ordered)", async () => {
