@@ -314,6 +314,7 @@ export async function createFormAction(input: {
   description?: string;
   fields: LeadFormField[];
   branchId?: string;
+  source?: string;
 }): Promise<ActionState<LeadForm>> {
   const title = input.title.trim();
   if (!title) return { ok: false, error: "Enter a form title." };
@@ -325,7 +326,8 @@ export async function createFormAction(input: {
       title,
       ...(input.description?.trim() ? { description: input.description.trim() } : {}),
       fields: input.fields,
-      ...(input.branchId ? { branchId: input.branchId } : {})
+      ...(input.branchId ? { branchId: input.branchId } : {}),
+      ...(input.source ? { source: input.source } : {})
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the form." };

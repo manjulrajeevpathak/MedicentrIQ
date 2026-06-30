@@ -491,6 +491,7 @@ type CreateFormInput = {
   fields?: unknown;
   status?: string;
   branchId?: string;
+  source?: string;
 };
 
 type UpdateFormInput = {
@@ -499,6 +500,7 @@ type UpdateFormInput = {
   fields?: unknown;
   status?: string;
   branchId?: string;
+  source?: string;
 };
 
 type PublicFormSubmitInput = {
@@ -7186,6 +7188,10 @@ export class CoreService {
 
   async createForm(context: RequestContext, input: CreateFormInput) {
     const title = ensureString(input.title, "title");
+    // The lead source tagged on this form's submissions — from the tenant's
+    // configured sources (default "form").
+    const leadConfig = await this.getLeadConfig(context);
+    const source = sanitizeLeadSource(input.source, leadConfig.sources, "form");
     const form: LeadForm = {
       id: createId("form"),
       tenantId: context.tenantId,
@@ -7195,6 +7201,7 @@ export class CoreService {
       fields: sanitizeFormFields(input.fields),
       status: input.status === "inactive" ? "inactive" : "active",
       branchId: typeof input.branchId === "string" && input.branchId.trim() ? input.branchId.trim() : undefined,
+      source,
       submissions: 0,
       createdAt: nowIso()
     };
@@ -7224,6 +7231,10 @@ export class CoreService {
     }
     if (input.branchId !== undefined) {
       form.branchId = typeof input.branchId === "string" && input.branchId.trim() ? input.branchId.trim() : undefined;
+    }
+    if (typeof input.source === "string") {
+      const leadConfig = await this.getLeadConfig(context);
+      form.source = sanitizeLeadSource(input.source, leadConfig.sources, form.source ?? "form");
     }
     await this.persistence.saveCollection("forms", this.data.forms);
     await this.audit(context, "form.create", "form", form.id, undefined, { slug: form.slug, updated: true });
@@ -7280,7 +7291,14 @@ export class CoreService {
     // RequestContext, so we read the stored config directly without provisioning):
     // keep "form"/"new" defaults if the tenant removed those keys.
     const config = this.tenantLeadConfig(form.tenantId);
-    const source = config && !config.sources.some((s) => s.key === "form") ? config.sources[0]?.key ?? "form" : "form";
+    const sources = config?.sources ?? [];
+    // Tag with the form's configured source; fall back to "form" (or the first
+    // configured source if "form" was removed).
+    const source = sanitizeLeadSource(
+      form.source,
+      sources,
+      sources.some((s) => s.key === "form") ? "form" : sources[0]?.key ?? "form"
+    );
     const stage =
       config && !config.stages.some((s) => s.key === "new") ? config.stages[0]?.key ?? "new" : "new";
     const lead: Lead = {

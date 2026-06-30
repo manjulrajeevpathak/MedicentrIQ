@@ -441,6 +441,8 @@ export type LeadForm = {
   fields: LeadFormField[];
   status: "active" | "inactive";
   branchId?: string;
+  /** Configured lead source key tagged on every submission from this form. */
+  source?: string;
   submissions: number;
   createdAt: string;
 };

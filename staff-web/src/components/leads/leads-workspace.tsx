@@ -1194,7 +1194,7 @@ function SourcesTab({
         <p className="text-xs text-ink-muted">{blurb[view]}</p>
       </div>
 
-      {view === "forms" ? <FormsTab forms={forms} branches={branches} origin={origin} /> : null}
+      {view === "forms" ? <FormsTab forms={forms} branches={branches} origin={origin} sources={sources} /> : null}
       {view === "file" ? <FileImport sources={sources} /> : null}
       {view === "sheet" ? (
         <GoogleSheetConnect sources={sources} config={sheetConfig} isAdmin={isAdmin} />
@@ -1614,11 +1614,13 @@ function GoogleSheetConnect({
 function FormsTab({
   forms,
   branches,
-  origin
+  origin,
+  sources
 }: {
   forms: LeadForm[];
   branches: Branch[];
   origin: string;
+  sources: LeadSourceOption[];
 }) {
   const [builderOpen, setBuilderOpen] = useState(false);
 
@@ -1651,7 +1653,7 @@ function FormsTab({
         )}
       </Panel>
 
-      <FormBuilderModal open={builderOpen} onClose={() => setBuilderOpen(false)} branches={branches} />
+      <FormBuilderModal open={builderOpen} onClose={() => setBuilderOpen(false)} branches={branches} sources={sources} />
     </>
   );
 }
@@ -1731,16 +1733,20 @@ function slugifyKey(label: string, fallback: number): string {
 function FormBuilderModal({
   open,
   onClose,
-  branches
+  branches,
+  sources
 }: {
   open: boolean;
   onClose: () => void;
   branches: Branch[];
+  sources: LeadSourceOption[];
 }) {
   const { toast } = useToast();
+  const defaultFormSource = sources[0]?.key ?? "";
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [branchId, setBranchId] = useState("");
+  const [source, setSource] = useState<string>(defaultFormSource);
   const [fields, setFields] = useState<BuilderField[]>(() => [
     { _id: ++fieldCounter, key: "name", label: "Full name", type: "text", required: true, optionsText: "" },
     { _id: ++fieldCounter, key: "phone", label: "Phone", type: "phone", required: true, optionsText: "" }
@@ -1752,6 +1758,7 @@ function FormBuilderModal({
     setTitle("");
     setDescription("");
     setBranchId("");
+    setSource(defaultFormSource);
     setFields([
       { _id: ++fieldCounter, key: "name", label: "Full name", type: "text", required: true, optionsText: "" },
       { _id: ++fieldCounter, key: "phone", label: "Phone", type: "phone", required: true, optionsText: "" }
@@ -1802,7 +1809,8 @@ function FormBuilderModal({
         title,
         description: description || undefined,
         fields: built,
-        branchId: branchId || undefined
+        branchId: branchId || undefined,
+        source: source || undefined
       });
       if (!result.ok) {
         setError(result.error ?? "Could not create the form.");
@@ -1830,6 +1838,19 @@ function FormBuilderModal({
         <Field label="Description (optional)" htmlFor="fb-desc">
           <Input id="fb-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Shown above the form" />
         </Field>
+        {sources.length > 0 ? (
+          <Field
+            label="Tag leads as"
+            htmlFor="fb-source"
+            hint="The lead source applied to everyone who submits this form — so you can target them in campaigns."
+          >
+            <select id="fb-source" value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
+              {sources.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
         {branches.length > 0 ? (
           <Field label="Branch (optional)" htmlFor="fb-branch">
             <select id="fb-branch" value={branchId} onChange={(e) => setBranchId(e.target.value)} className={selectClass}>

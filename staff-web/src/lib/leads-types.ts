@@ -330,6 +330,8 @@ export type LeadForm = {
   slug: string;
   fields: LeadFormField[];
   status: LeadFormStatus | string;
+  /** Configured lead source tagged on this form's submissions. */
+  source?: string;
   submissions: number;
   createdAt: string;
 };
