@@ -7,6 +7,7 @@ import {
   ArrowRight,
   ArrowUp,
   Check,
+  ChevronRight,
   Copy,
   Download,
   FileSpreadsheet,
@@ -119,18 +120,36 @@ export function LeadsWorkspace({
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Segmented
-            options={[
-              { value: "board", label: "Board" },
-              { value: "leads", label: "List", count: leads.length },
-              { value: "tasks", label: "Tasks" },
-              { value: "import", label: "Import" },
-              { value: "forms", label: "Forms", count: forms.length }
-            ]}
-            value={tab}
-            onChange={setTab}
-          />
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Pipeline = manage the lifecycle of leads */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">Pipeline</span>
+            <Segmented
+              options={
+                [
+                  { value: "board", label: "Board" },
+                  { value: "leads", label: "List", count: leads.length },
+                  { value: "tasks", label: "Tasks" }
+                ] as { value: Tab; label: string; count?: number }[]
+              }
+              value={tab}
+              onChange={setTab}
+            />
+          </div>
+          {/* Intake = how leads come in */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">Intake</span>
+            <Segmented
+              options={
+                [
+                  { value: "import", label: "Import" },
+                  { value: "forms", label: "Forms", count: forms.length }
+                ] as { value: Tab; label: string; count?: number }[]
+              }
+              value={tab}
+              onChange={setTab}
+            />
+          </div>
           {isAdmin ? (
             <Button variant="outline" size="sm" onClick={() => setManageOpen(true)}>
               <Settings2 className="size-3.5" /> Manage funnel
@@ -333,15 +352,19 @@ function LeadCard({
   }
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-2.5 shadow-sm transition hover:border-line-strong">
+    <div className="rounded-lg border border-line bg-surface p-2.5 shadow-sm transition hover:border-brand-200 hover:shadow-md">
       <button
         type="button"
         onClick={() => onOpen(lead.id)}
-        className="block w-full text-left"
+        className="group/lead block w-full cursor-pointer text-left"
+        title={`Open ${lead.name}'s details`}
       >
-        <div className="flex items-start justify-between gap-2">
-          <span className="truncate text-xs font-semibold text-ink">{lead.name}</span>
-          <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
+        <div className="flex items-start justify-between gap-1.5">
+          <span className="truncate text-xs font-semibold text-ink group-hover/lead:text-brand-700">{lead.name}</span>
+          <div className="flex shrink-0 items-center gap-1">
+            <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
+            <ChevronRight className="size-3.5 text-ink-faint transition group-hover/lead:text-brand-600" />
+          </div>
         </div>
         <p className="mt-0.5 truncate text-[11px] text-ink-muted">{lead.phone || "No phone"}</p>
         {lead.assignedTo ? (
