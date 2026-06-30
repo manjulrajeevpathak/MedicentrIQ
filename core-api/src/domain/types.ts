@@ -371,6 +371,28 @@ export type LeadConfig = {
   updatedAt: string;
 };
 
+/** Maps CSV column headers (values) to lead fields (keys) for Google-Sheet import. */
+export type LeadSheetMapping = { name?: string; phone?: string; email?: string };
+
+/** Per-tenant Google-Sheet lead ingest config (CRM Phase 3). recordId = tenantId.
+ *  The sheet is published to the web as CSV (no OAuth); we fetch + parse that public
+ *  URL and create a lead per NEW row, deduped by normalized phone. */
+export type LeadSheetConfig = {
+  tenantId: string;
+  enabled: boolean;
+  /** Public "Publish to web → CSV" URL of the Google Sheet. */
+  csvUrl?: string;
+  mapping: LeadSheetMapping;
+  /** Which configured lead source to tag imported leads with (default "import"). */
+  sourceKey?: string;
+  /** Normalized phones already imported (dedup across syncs). */
+  importedKeys: string[];
+  lastSyncedAt?: string;
+  lastResult?: { imported: number; skipped: number; total: number; error?: string; at: string };
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** A person who entered from marketing/top-of-funnel and may convert into a Patient. */
 export type Lead = {
   id: string;
@@ -598,6 +620,8 @@ export type AuditEvent = {
     | "lead_callback.create"
     | "lead_callback.update"
     | "lead_config.update"
+    | "lead_sheet.update"
+    | "lead_sheet.sync"
     | "form.create"
     | "form.submit"
     | "campaign.create"

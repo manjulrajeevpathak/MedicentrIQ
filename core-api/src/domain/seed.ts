@@ -19,6 +19,7 @@ import type {
   Lead,
   LeadCallback,
   LeadConfig,
+  LeadSheetConfig,
   LeadForm,
   LeadNote,
   LoginChallenge,
@@ -91,6 +92,7 @@ export type SeedData = {
   journeyTasks: JourneyTask[];
   journeyEvents: JourneyEvent[];
   leadConfigs: LeadConfig[];
+  leadSheetConfigs: LeadSheetConfig[];
   leads: Lead[];
   leadNotes: LeadNote[];
   leadCallbacks: LeadCallback[];
@@ -782,6 +784,16 @@ export const createSeedData = (): SeedData => ({
       updatedAt: daysFromNow(-30)
     }
   ],
+  leadSheetConfigs: [
+    {
+      tenantId: DEMO_TENANT_ID,
+      enabled: false,
+      mapping: {},
+      importedKeys: [],
+      createdAt: daysFromNow(-30),
+      updatedAt: daysFromNow(-30)
+    }
+  ],
   leads: [
     {
       id: "lead_demo_001",
@@ -1127,6 +1139,7 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     journeyTasks: withTenant(data.journeyTasks ?? []),
     journeyEvents: withTenant(data.journeyEvents ?? []),
     leadConfigs: data.leadConfigs?.length ? withTenant(data.leadConfigs) : seed.leadConfigs,
+    leadSheetConfigs: data.leadSheetConfigs?.length ? withTenant(data.leadSheetConfigs) : seed.leadSheetConfigs,
     leads: data.leads?.length ? withTenant(data.leads) : seed.leads,
     leadNotes: data.leadNotes?.length ? withTenant(data.leadNotes) : seed.leadNotes,
     leadCallbacks: data.leadCallbacks?.length ? withTenant(data.leadCallbacks) : seed.leadCallbacks,

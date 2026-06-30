@@ -25,3 +25,19 @@ const runScheduler = async () => {
 };
 setTimeout(runScheduler, 15_000);
 setInterval(runScheduler, 10 * 60_000);
+
+// Lead-sheet ingest poll (CRM Phase 3): pull NEW rows from each tenant's connected
+// Google-Sheet published CSV. Best-effort and non-blocking — failures are recorded
+// per-tenant and never crash the process. Runs ~30s after boot, then every 15 min.
+const runLeadSheetPoll = async () => {
+  try {
+    const tally = await service.runLeadSheetPoll();
+    if (tally.imported > 0) {
+      console.log(`[lead-sheet] tenants=${tally.tenants} imported=${tally.imported}`);
+    }
+  } catch (error) {
+    console.error("[lead-sheet] poll failed", error);
+  }
+};
+setTimeout(runLeadSheetPoll, 30_000);
+setInterval(runLeadSheetPoll, 15 * 60_000);

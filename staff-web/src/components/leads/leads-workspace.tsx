@@ -15,7 +15,9 @@ import {
   ListChecks,
   Phone,
   Plus,
+  RefreshCw,
   Settings2,
+  Sheet,
   Sprout,
   Trash2,
   Upload,
@@ -53,6 +55,7 @@ import {
   type LeadFormField,
   type LeadFunnel,
   type LeadFunnelStage,
+  type LeadSheetConfig,
   type LeadSourceOption
 } from "@/lib/leads-types";
 import { LeadDetailDrawer } from "@/components/leads/lead-detail-drawer";
@@ -63,7 +66,9 @@ import {
   importLeadsAction,
   moveLeadStageAction,
   saveLeadConfigAction,
+  saveLeadSheetConfigAction,
   setFormStatusAction,
+  syncLeadSheetAction,
   updateCallbackAction
 } from "@/app/(app)/leads/actions";
 import { fetchOpenCallbacks } from "@/lib/leads-api";
@@ -80,6 +85,7 @@ type Props = {
   branches: Branch[];
   sources: LeadSourceOption[];
   stages: LeadFunnelStage[];
+  sheetConfig: LeadSheetConfig;
   isAdmin: boolean;
   origin: string;
 };
@@ -90,6 +96,7 @@ export function LeadsWorkspace({
   branches,
   sources,
   stages,
+  sheetConfig,
   isAdmin,
   origin
 }: Props) {
@@ -151,7 +158,9 @@ export function LeadsWorkspace({
         />
       ) : null}
       {tab === "tasks" ? <TasksTab onOpenLead={setDetailLeadId} /> : null}
-      {tab === "import" ? <ImportTab sources={sources} /> : null}
+      {tab === "import" ? (
+        <ImportTab sources={sources} sheetConfig={sheetConfig} isAdmin={isAdmin} />
+      ) : null}
       {tab === "forms" ? <FormsTab forms={forms} branches={branches} origin={origin} /> : null}
 
       {isAdmin && manageOpen ? (
@@ -1129,7 +1138,42 @@ function downloadLeadsTemplate() {
   XLSX.writeFile(wb, "healthcareos-leads-template.xlsx");
 }
 
-function ImportTab({ sources }: { sources: LeadSourceOption[] }) {
+type ImportMode = "file" | "sheet";
+
+function ImportTab({
+  sources,
+  sheetConfig,
+  isAdmin
+}: {
+  sources: LeadSourceOption[];
+  sheetConfig: LeadSheetConfig;
+  isAdmin: boolean;
+}) {
+  // A sub-toggle splits the Import area into the existing Excel/CSV paste import
+  // and the (admin-only) Google Sheet connect. Both are about getting leads in.
+  const [mode, setMode] = useState<ImportMode>("file");
+
+  return (
+    <div className="space-y-4">
+      <Segmented
+        size="sm"
+        options={[
+          { value: "file", label: "Excel / CSV" },
+          { value: "sheet", label: "Google Sheet" }
+        ]}
+        value={mode}
+        onChange={setMode}
+      />
+      {mode === "file" ? (
+        <FileImport sources={sources} />
+      ) : (
+        <GoogleSheetConnect sources={sources} config={sheetConfig} isAdmin={isAdmin} />
+      )}
+    </div>
+  );
+}
+
+function FileImport({ sources }: { sources: LeadSourceOption[] }) {
   const { toast } = useToast();
   const defaultSource = sources[0]?.key ?? "import";
   const [raw, setRaw] = useState("");
@@ -1339,6 +1383,195 @@ function ImportTab({ sources }: { sources: LeadSourceOption[] }) {
             <span className="font-semibold text-ink">{result.skipped}</span>.
           </div>
         ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+// ============================================================================
+// Google Sheet connect (CRM Phase 3) — admin only
+// ============================================================================
+
+function GoogleSheetConnect({
+  sources,
+  config,
+  isAdmin
+}: {
+  sources: LeadSourceOption[];
+  config: LeadSheetConfig;
+  isAdmin: boolean;
+}) {
+  const { toast } = useToast();
+  const [enabled, setEnabled] = useState(config.enabled);
+  const [csvUrl, setCsvUrl] = useState(config.csvUrl ?? "");
+  const [nameCol, setNameCol] = useState(config.mapping.name ?? "");
+  const [phoneCol, setPhoneCol] = useState(config.mapping.phone ?? "");
+  const [emailCol, setEmailCol] = useState(config.mapping.email ?? "");
+  const [sourceKey, setSourceKey] = useState(config.sourceKey ?? sources[0]?.key ?? "");
+  // Locally-tracked "last synced"/result so a Sync now reflects immediately
+  // (the server-rendered config also refreshes via revalidatePath).
+  const [lastSyncedAt, setLastSyncedAt] = useState(config.lastSyncedAt);
+  const [lastResult, setLastResult] = useState(config.lastResult);
+  const [saving, startSaving] = useTransition();
+  const [syncing, startSync] = useTransition();
+
+  if (!isAdmin) {
+    return (
+      <Panel>
+        <EmptyState
+          icon={<Sheet className="size-5" />}
+          title="Google Sheet sync"
+          description="Connecting a Google Sheet is an admin-only setting. Ask an admin to set it up."
+        />
+      </Panel>
+    );
+  }
+
+  function save() {
+    if (csvUrl.trim() && !phoneCol.trim()) {
+      toast("Map the Phone column — it's required to import rows.", "error");
+      return;
+    }
+    startSaving(async () => {
+      const result = await saveLeadSheetConfigAction({
+        enabled,
+        csvUrl: csvUrl.trim(),
+        mapping: { name: nameCol, phone: phoneCol, email: emailCol },
+        sourceKey
+      });
+      if (!result.ok) {
+        toast(result.error ?? "Could not save the connection.", "error");
+        return;
+      }
+      toast(result.message ?? "Saved.", "success");
+    });
+  }
+
+  function sync() {
+    if (!csvUrl.trim()) {
+      toast("Paste the published CSV URL and Save first.", "error");
+      return;
+    }
+    startSync(async () => {
+      const result = await syncLeadSheetAction();
+      if (!result.ok || !result.data) {
+        toast(result.error ?? "Could not sync the sheet.", "error");
+        return;
+      }
+      const at = new Date().toISOString();
+      setLastSyncedAt(at);
+      setLastResult({ ...result.data, at });
+      toast(result.message ?? "Synced.", "success");
+    });
+  }
+
+  return (
+    <Panel>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <SectionTitle
+          icon={<Sheet className="size-4" />}
+          title="Connect a Google Sheet"
+          subtitle="Sync rows from a published Google Sheet straight into your leads."
+        />
+        <label className="inline-flex items-center gap-2 text-xs font-medium text-ink-soft">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="size-4 rounded border-line-strong text-brand-600 focus:ring-brand-200"
+          />
+          Enabled
+          <Badge tone={enabled ? "good" : "neutral"} dot>
+            {enabled ? "On" : "Off"}
+          </Badge>
+        </label>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-line bg-surface-muted px-3.5 py-3 text-xs leading-relaxed text-ink-soft">
+        <p className="mb-1 font-semibold text-ink">How to publish your sheet as CSV</p>
+        <p>
+          In Google Sheets, open <span className="font-medium text-ink">File → Share → Publish to web</span>.
+          Under <span className="font-medium text-ink">Link</span>, choose the specific sheet (tab) you want,
+          then change the format dropdown from <span className="font-medium text-ink">Web page</span> to{" "}
+          <span className="font-medium text-ink">Comma-separated values (.csv)</span>. Click{" "}
+          <span className="font-medium text-ink">Publish</span>, copy the URL it gives you, and paste it below.
+        </p>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <Field
+          label="Published CSV URL"
+          htmlFor="gs-url"
+          hint="Should look like https://docs.google.com/spreadsheets/d/e/…/pub?gid=0&single=true&output=csv"
+        >
+          <Input
+            id="gs-url"
+            value={csvUrl}
+            onChange={(e) => setCsvUrl(e.target.value)}
+            placeholder="https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"
+            inputMode="url"
+            className="font-mono text-xs"
+          />
+        </Field>
+
+        <div>
+          <p className="mb-1.5 text-xs font-medium text-ink-soft">Column mapping</p>
+          <p className="mb-2 text-[11px] text-ink-muted">
+            Type the exact CSV header names from your sheet&apos;s first row. Phone is required; rows without a
+            phone are skipped.
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Name column" htmlFor="gs-name">
+              <Input id="gs-name" value={nameCol} onChange={(e) => setNameCol(e.target.value)} placeholder="e.g. Full Name" />
+            </Field>
+            <Field label="Phone column" htmlFor="gs-phone">
+              <Input id="gs-phone" value={phoneCol} onChange={(e) => setPhoneCol(e.target.value)} placeholder="e.g. Mobile" />
+            </Field>
+            <Field label="Email column (optional)" htmlFor="gs-email">
+              <Input id="gs-email" value={emailCol} onChange={(e) => setEmailCol(e.target.value)} placeholder="e.g. Email" />
+            </Field>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Source" htmlFor="gs-source" hint="Imported leads are tagged with this source.">
+            <select id="gs-source" value={sourceKey} onChange={(e) => setSourceKey(e.target.value)} className={selectClass}>
+              {sources.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={save} disabled={saving}>
+            <Check className="size-3.5" /> {saving ? "Saving…" : "Save"}
+          </Button>
+          <Button variant="outline" onClick={sync} disabled={syncing}>
+            <RefreshCw className={cn("size-3.5", syncing && "animate-spin")} /> {syncing ? "Syncing…" : "Sync now"}
+          </Button>
+        </div>
+
+        {lastSyncedAt ? (
+          <div className="rounded-xl border border-line bg-surface-muted px-3.5 py-2.5 text-xs text-ink-soft">
+            <p>
+              Last synced <span className="font-medium text-ink">{formatDueDate(lastSyncedAt)}</span>
+            </p>
+            {lastResult ? (
+              lastResult.error ? (
+                <p className="mt-1 font-medium text-[var(--color-critical)]">{lastResult.error}</p>
+              ) : (
+                <p className="mt-1">
+                  Imported <span className="font-semibold text-ink">{lastResult.imported}</span> new
+                  {" · "}skipped <span className="font-semibold text-ink">{lastResult.skipped}</span>
+                  {" · "}{lastResult.total} row{lastResult.total === 1 ? "" : "s"} read
+                </p>
+              )
+            ) : null}
+          </div>
+        ) : (
+          <p className="text-[11px] text-ink-muted">Not synced yet. Save the connection, then Sync now.</p>
+        )}
       </div>
     </Panel>
   );

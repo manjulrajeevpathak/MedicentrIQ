@@ -55,6 +55,8 @@ import type {
   LeadCallback,
   LeadCallbackChannel,
   LeadConfig,
+  LeadSheetConfig,
+  LeadSheetMapping,
   LeadForm,
   LeadFormField,
   LeadNote,
@@ -445,6 +447,13 @@ type LeadConfigInput = {
   stages?: unknown;
 };
 
+type LeadSheetConfigInput = {
+  enabled?: unknown;
+  csvUrl?: unknown;
+  mapping?: unknown;
+  sourceKey?: unknown;
+};
+
 type ConvertLeadInput = {
   patientId?: string;
 };
@@ -768,6 +777,98 @@ const NOTIFICATION_DEFAULTS = {
       "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. {{mapLink}}"
   }
 } as const;
+
+/**
+ * Minimal, dependency-free RFC-4180-ish CSV parser. Returns a 2D array of cell
+ * strings (rows × columns). Handles quoted fields, embedded commas/quotes (""),
+ * embedded newlines inside quotes, and CRLF/CR/LF line endings. A trailing blank
+ * line is dropped. Pure (no I/O) so it's unit-testable without a live fetch.
+ */
+export const parseCsv = (text: string): string[][] => {
+  const rows: string[][] = [];
+  let field = "";
+  let row: string[] = [];
+  let inQuotes = false;
+  let i = 0;
+  const n = text.length;
+  const pushField = () => {
+    row.push(field);
+    field = "";
+  };
+  const pushRow = () => {
+    pushField();
+    rows.push(row);
+    row = [];
+  };
+  while (i < n) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      field += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    if (ch === ",") {
+      pushField();
+      i += 1;
+      continue;
+    }
+    if (ch === "\r") {
+      // Treat CRLF and lone CR as one line break.
+      pushRow();
+      i += text[i + 1] === "\n" ? 2 : 1;
+      continue;
+    }
+    if (ch === "\n") {
+      pushRow();
+      i += 1;
+      continue;
+    }
+    field += ch;
+    i += 1;
+  }
+  // Flush the final field/row unless the input ended exactly on a line break with
+  // nothing buffered (avoids a trailing empty row from a terminal newline).
+  if (field.length > 0 || row.length > 0) {
+    pushRow();
+  }
+  return rows;
+};
+
+/** True when `value` parses as an absolute http(s) URL. */
+const isHttpUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
+/** Normalise an incoming lead-sheet column mapping to {name?,phone?,email?} of
+ *  trimmed non-empty CSV header strings. */
+const sanitizeSheetMapping = (value: unknown): LeadSheetMapping => {
+  const record = isPlainRecord(value) ? value : {};
+  const pick = (key: "name" | "phone" | "email"): string | undefined => {
+    const raw = record[key];
+    return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+  };
+  return { name: pick("name"), phone: pick("phone"), email: pick("email") };
+};
 
 /** Slugify a key candidate the same way the rest of the platform does. */
 const slugifyKey = (value: string): string =>
@@ -6448,7 +6549,203 @@ export class CoreService {
     return parsed;
   }
 
+  // ---- Lead-sheet ingest (CRM Phase 3: Google Sheet published CSV) ----------
+
+  private tenantLeadSheetConfig(tenantId: string): LeadSheetConfig | undefined {
+    return this.data.leadSheetConfigs.find((entry) => entry.tenantId === tenantId);
+  }
+
+  /** Resolve a tenant's Google-Sheet ingest config, lazily provisioning a disabled
+   *  default (empty mapping, no importedKeys) the first time it's needed. Mirrors
+   *  resolveLeadConfig / the channel-config getter. */
+  private async resolveLeadSheetConfig(context: RequestContext): Promise<LeadSheetConfig> {
+    let config = this.tenantLeadSheetConfig(context.tenantId);
+    if (!config) {
+      const now = nowIso();
+      config = {
+        tenantId: context.tenantId,
+        enabled: false,
+        mapping: {},
+        importedKeys: [],
+        createdAt: now,
+        updatedAt: now
+      };
+      this.data.leadSheetConfigs.push(config);
+      await this.persistence.saveCollection("leadSheetConfigs", this.data.leadSheetConfigs);
+    }
+    return config;
+  }
+
+  /** GET /tenant/lead-sheet — resolved config for the active tenant. */
+  async getLeadSheetConfig(context: RequestContext) {
+    return this.resolveLeadSheetConfig(context);
+  }
+
+  /** PATCH /tenant/lead-sheet — connect/disconnect a published-CSV sheet, set the
+   *  column mapping + source. Validates csvUrl is an http(s) URL when provided and
+   *  that sourceKey (when given) is one of the tenant's configured lead sources. */
+  async updateLeadSheetConfig(context: RequestContext, input: LeadSheetConfigInput) {
+    const config = await this.resolveLeadSheetConfig(context);
+    if (input.enabled !== undefined) {
+      config.enabled = input.enabled === true;
+    }
+    if (input.csvUrl !== undefined) {
+      if (input.csvUrl === null || input.csvUrl === "") {
+        config.csvUrl = undefined;
+      } else {
+        const url = typeof input.csvUrl === "string" ? input.csvUrl.trim() : "";
+        if (!isHttpUrl(url)) {
+          throw new ApiError(400, "csvUrl must be a valid http(s) URL.");
+        }
+        config.csvUrl = url;
+      }
+    }
+    if (input.mapping !== undefined) {
+      config.mapping = sanitizeSheetMapping(input.mapping);
+    }
+    if (input.sourceKey !== undefined) {
+      if (input.sourceKey === null || input.sourceKey === "") {
+        config.sourceKey = undefined;
+      } else {
+        const leadConfig = await this.resolveLeadConfig(context);
+        const key = typeof input.sourceKey === "string" ? input.sourceKey.trim() : "";
+        if (!leadConfig.sources.some((s) => s.key === key)) {
+          throw new ApiError(400, `Unknown lead source: ${key}`);
+        }
+        config.sourceKey = key;
+      }
+    }
+    config.updatedAt = nowIso();
+    await this.persistence.saveCollection("leadSheetConfigs", this.data.leadSheetConfigs);
+    await this.audit(context, "lead_sheet.update", "lead_sheet", context.tenantId, undefined, {
+      enabled: config.enabled,
+      connected: Boolean(config.csvUrl)
+    });
+    return config;
+  }
+
+  /** POST /tenant/lead-sheet/sync — fetch the published CSV, parse it, and create a
+   *  lead per NEW row (deduped by normalized phone via importedKeys). Network/parse
+   *  failures are recorded in lastResult.error and returned gracefully (no throw),
+   *  except the not-connected guard which is a 400. */
+  async syncLeadSheet(context: RequestContext): Promise<{ imported: number; skipped: number; total: number }> {
+    const config = await this.resolveLeadSheetConfig(context);
+    if (!config.enabled || !config.csvUrl) {
+      throw new ApiError(400, "Google Sheet is not connected.");
+    }
+    const at = nowIso();
+    let text: string;
+    try {
+      const res = await fetch(config.csvUrl);
+      if (!res.ok) {
+        throw new Error(`Sheet responded ${res.status}`);
+      }
+      text = await res.text();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fetch sheet.";
+      config.lastSyncedAt = at;
+      config.lastResult = { imported: 0, skipped: 0, total: 0, error: message, at };
+      config.updatedAt = at;
+      await this.persistence.saveCollection("leadSheetConfigs", this.data.leadSheetConfigs);
+      await this.audit(context, "lead_sheet.sync", "lead_sheet", context.tenantId, undefined, { error: message });
+      return { imported: 0, skipped: 0, total: 0 };
+    }
+    const rows = parseCsv(text);
+    const result = await this.ingestSheetRows(context, config, rows);
+    config.lastSyncedAt = at;
+    config.lastResult = { ...result, at };
+    config.updatedAt = at;
+    await this.persistence.saveCollection("leadSheetConfigs", this.data.leadSheetConfigs);
+    await this.audit(context, "lead_sheet.sync", "lead_sheet", context.tenantId, undefined, result);
+    return result;
+  }
+
+  /**
+   * Core row→lead ingest, isolated from the fetch wrapper so it's testable without
+   * a live network call. Takes already-parsed CSV rows (header row + data rows),
+   * resolves column indexes from the config's mapping, and for each data row:
+   * normalizes the phone, skips blanks/dupes (already in importedKeys), else creates
+   * a Lead (source = config.sourceKey resolved to a configured source else "import")
+   * and records the phone. Persists created leads + the updated importedKeys.
+   * Returns { imported, skipped, total } where total = data-row count.
+   */
+  async ingestSheetRows(
+    context: RequestContext,
+    config: LeadSheetConfig,
+    rows: string[][]
+  ): Promise<{ imported: number; skipped: number; total: number }> {
+    const leadConfig = await this.resolveLeadConfig(context);
+    const source = sanitizeLeadSource(config.sourceKey, leadConfig.sources, "import");
+    const header = rows[0] ?? [];
+    const dataRows = rows.slice(1);
+    const total = dataRows.length;
+
+    const headerIndex = (label?: string): number => {
+      if (!label) {
+        return -1;
+      }
+      const target = label.trim().toLowerCase();
+      return header.findIndex((h) => h.trim().toLowerCase() === target);
+    };
+    const nameIdx = headerIndex(config.mapping.name);
+    const phoneIdx = headerIndex(config.mapping.phone);
+    const emailIdx = headerIndex(config.mapping.email);
+
+    const cell = (cols: string[], idx: number): string => (idx >= 0 && idx < cols.length ? cols[idx].trim() : "");
+    const imported = new Set(config.importedKeys);
+    const created: Lead[] = [];
+    let skipped = 0;
+
+    for (const cols of dataRows) {
+      const phoneRaw = cell(cols, phoneIdx);
+      const normalized = normalizePhone(phoneRaw);
+      // Phone is required to import a row; skip blanks and already-imported phones.
+      if (!normalized || imported.has(normalized)) {
+        skipped += 1;
+        continue;
+      }
+      imported.add(normalized);
+      const name = cell(cols, nameIdx) || phoneRaw;
+      const email = cell(cols, emailIdx);
+      const lead = this.buildLead(
+        context,
+        { name, phone: phoneRaw, email: email || undefined, source },
+        leadConfig
+      );
+      this.data.leads.push(lead);
+      created.push(lead);
+    }
+
+    if (created.length > 0) {
+      config.importedKeys = Array.from(imported);
+      await this.persistence.saveCollection("leads", this.data.leads);
+      await this.persistence.saveCollection("leadSheetConfigs", this.data.leadSheetConfigs);
+    }
+    return { imported: created.length, skipped, total };
+  }
+
+  /**
+   * Best-effort periodic poll: sync every tenant that has lead-sheet ingest enabled
+   * with a connected csvUrl. Wired from main.ts on an interval. Per-tenant failures
+   * are swallowed (syncLeadSheet records them in lastResult) so one bad sheet never
+   * stalls the others. Returns a per-tenant tally for logging.
+   */
+  async runLeadSheetPoll(): Promise<{ tenants: number; imported: number }> {
+    const enabled = this.data.leadSheetConfigs.filter((c) => c.enabled && c.csvUrl);
+    let imported = 0;
+    for (const config of enabled) {
+      try {
+        const result = await this.syncLeadSheet(this.systemContext(config.tenantId));
+        imported += result.imported;
+      } catch {
+        // not-connected/race — skip; non-fatal.
+      }
+    }
+    return { tenants: enabled.length, imported };
+  }
+
   // ---- Leads & data sources ------------------------------------------------
+
 
   listLeads(context: RequestContext, filters: { stage?: string; source?: string; assignedTo?: string } = {}) {
     return this.data.leads

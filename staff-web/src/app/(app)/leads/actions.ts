@@ -12,6 +12,8 @@ import type {
   LeadFormField,
   LeadFunnelStage,
   LeadNote,
+  LeadSheetConfig,
+  LeadSheetMapping,
   LeadSourceOption
 } from "@/lib/leads-types";
 
@@ -234,6 +236,61 @@ export async function importLeadsAction(input: {
     ok: true,
     data: result.data,
     message: `Imported ${result.data.created} lead${result.data.created === 1 ? "" : "s"}.`
+  };
+}
+
+// ---- Google Sheet → Leads sync (CRM Phase 3) -------------------------------
+
+/**
+ * Persists the tenant's Google Sheet connection: `PATCH /tenant/lead-sheet`.
+ * Any field may be omitted to leave it as-is. The mapping's column names are the
+ * exact CSV headers the user typed; phone is the required field at sync time.
+ */
+export async function saveLeadSheetConfigAction(input: {
+  enabled?: boolean;
+  csvUrl?: string;
+  mapping?: LeadSheetMapping;
+  sourceKey?: string;
+}): Promise<ActionState<LeadSheetConfig>> {
+  const body: Record<string, unknown> = {};
+  if (typeof input.enabled === "boolean") body.enabled = input.enabled;
+  if (typeof input.csvUrl === "string") body.csvUrl = input.csvUrl.trim();
+  if (input.mapping) {
+    body.mapping = {
+      ...(input.mapping.name?.trim() ? { name: input.mapping.name.trim() } : {}),
+      ...(input.mapping.phone?.trim() ? { phone: input.mapping.phone.trim() } : {}),
+      ...(input.mapping.email?.trim() ? { email: input.mapping.email.trim() } : {})
+    };
+  }
+  if (typeof input.sourceKey === "string") body.sourceKey = input.sourceKey;
+  if (Object.keys(body).length === 0) return { ok: false, error: "Nothing to save." };
+
+  const result = await coreApi<LeadSheetConfig>("/tenant/lead-sheet", { method: "PATCH", body });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not save the sheet connection." };
+  revalidatePath("/leads");
+  return { ok: true, data: result.data, message: "Sheet connection saved." };
+}
+
+/**
+ * Triggers an immediate pull of the connected sheet's rows into Leads:
+ * `POST /tenant/lead-sheet/sync`. Returns the run's counts (or an envelope error
+ * if the URL is unreachable / mapping is incomplete).
+ */
+export async function syncLeadSheetAction(): Promise<
+  ActionState<{ imported: number; skipped: number; total: number }>
+> {
+  const result = await coreApi<{ imported: number; skipped: number; total: number }>(
+    "/tenant/lead-sheet/sync",
+    { method: "POST", body: {} }
+  );
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not sync the sheet." };
+  revalidatePath("/leads");
+  return {
+    ok: true,
+    data: result.data,
+    message: `Imported ${result.data.imported} new lead${
+      result.data.imported === 1 ? "" : "s"
+    }, skipped ${result.data.skipped}.`
   };
 }
 

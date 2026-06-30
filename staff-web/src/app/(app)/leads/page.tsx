@@ -4,21 +4,36 @@ import { Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty";
 import { LeadsWorkspace } from "@/components/leads/leads-workspace";
 import { fetchBranches, fetchIsTenantAdmin } from "@/lib/users-api";
-import { fetchForms, fetchLeadConfig, fetchLeadFunnel, fetchLeads } from "@/lib/leads-api";
+import {
+  fetchForms,
+  fetchLeadConfig,
+  fetchLeadFunnel,
+  fetchLeadSheetConfig,
+  fetchLeads
+} from "@/lib/leads-api";
 
 export const dynamic = "force-dynamic";
 
 export default async function LeadsPage() {
-  const [leadsResult, funnelResult, formsResult, branches, leadConfig, isAdmin, headerList] =
-    await Promise.all([
-      fetchLeads(),
-      fetchLeadFunnel(),
-      fetchForms(),
-      fetchBranches(),
-      fetchLeadConfig(),
-      fetchIsTenantAdmin(),
-      headers()
-    ]);
+  const [
+    leadsResult,
+    funnelResult,
+    formsResult,
+    branches,
+    leadConfig,
+    sheetConfig,
+    isAdmin,
+    headerList
+  ] = await Promise.all([
+    fetchLeads(),
+    fetchLeadFunnel(),
+    fetchForms(),
+    fetchBranches(),
+    fetchLeadConfig(),
+    fetchLeadSheetConfig(),
+    fetchIsTenantAdmin(),
+    headers()
+  ]);
 
   if (!leadsResult.ok) {
     if (leadsResult.status === 401) {
@@ -56,6 +71,7 @@ export default async function LeadsPage() {
       branches={branches}
       sources={leadConfig.sources}
       stages={leadConfig.stages}
+      sheetConfig={sheetConfig}
       isAdmin={isAdmin}
       origin={origin}
     />

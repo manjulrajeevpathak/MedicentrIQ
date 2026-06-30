@@ -103,6 +103,51 @@ export function configLabel(
   return list.find((e) => e.key === key)?.label ?? key.replace(/_/g, " ");
 }
 
+// ---- Google Sheet → Leads sync (CRM Phase 3) -------------------------------
+
+/** Maps CSV header names to lead fields. Phone is required to import a row. */
+export type LeadSheetMapping = { name?: string; phone?: string; email?: string };
+
+/** The outcome of the last sync run, surfaced in the connect UI. */
+export type LeadSheetResult = {
+  imported: number;
+  skipped: number;
+  total: number;
+  error?: string;
+  at: string;
+};
+
+/**
+ * Tenant's Google Sheet connection served by `GET /tenant/lead-sheet`. The sheet
+ * is a "Publish to web" CSV URL whose rows sync into Leads (tagged `sourceKey`).
+ */
+export type LeadSheetConfig = {
+  enabled: boolean;
+  csvUrl?: string;
+  mapping: LeadSheetMapping;
+  sourceKey?: string;
+  lastSyncedAt?: string;
+  lastResult?: LeadSheetResult;
+};
+
+/** A blank config so the connect form renders before anything is saved. */
+export const EMPTY_LEAD_SHEET_CONFIG: LeadSheetConfig = {
+  enabled: false,
+  mapping: {}
+};
+
+/** Normalise a possibly-empty/partial sheet config into a usable shape. */
+export function resolveLeadSheetConfig(config?: Partial<LeadSheetConfig> | null): LeadSheetConfig {
+  return {
+    enabled: Boolean(config?.enabled),
+    csvUrl: config?.csvUrl,
+    mapping: config?.mapping ?? {},
+    sourceKey: config?.sourceKey,
+    lastSyncedAt: config?.lastSyncedAt,
+    lastResult: config?.lastResult
+  };
+}
+
 // ---- Lead detail: notes, callbacks, timeline (CRM Phase 2) -----------------
 
 export type CallbackChannel = "whatsapp" | "call" | "manual";

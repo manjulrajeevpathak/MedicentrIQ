@@ -108,6 +108,14 @@ const createRoutes = (service: CoreService): Route[] => [
   route("PATCH", "/tenant/lead-config", "tenant:settings:manage", ({ auth, body }) =>
     service.updateLeadConfig(auth, toRecord(body))
   ),
+
+  // Lead-sheet ingest (CRM Phase 3): connect a Google Sheet "Publish to web → CSV"
+  // URL and pull leads from it (deduped by normalized phone).
+  route("GET", "/tenant/lead-sheet", "tenant:settings:manage", ({ auth }) => service.getLeadSheetConfig(auth)),
+  route("PATCH", "/tenant/lead-sheet", "tenant:settings:manage", ({ auth, body }) =>
+    service.updateLeadSheetConfig(auth, toRecord(body))
+  ),
+  route("POST", "/tenant/lead-sheet/sync", "tenant:settings:manage", ({ auth }) => service.syncLeadSheet(auth)),
   route("POST", "/messages/send", "messages:send", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
   route("POST", "/messages/test", "tenant:settings:manage", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
   route("GET", "/messages", "tenant:settings:manage", ({ auth, query }) =>

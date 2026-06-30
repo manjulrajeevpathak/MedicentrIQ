@@ -6,9 +6,10 @@ import type {
   LeadConfig,
   LeadDetail,
   LeadForm,
-  LeadFunnel
+  LeadFunnel,
+  LeadSheetConfig
 } from "./leads-types";
-import { resolveLeadConfig } from "./leads-types";
+import { resolveLeadConfig, resolveLeadSheetConfig } from "./leads-types";
 
 /**
  * Server-only fetch helpers for the Leads / Growth surface. Each reuses the
@@ -62,4 +63,15 @@ export async function fetchOpenCallbacks(): Promise<ApiResult<EnrichedCallback[]
 export async function fetchLeadConfig(): Promise<LeadConfig> {
   const result = await coreApi<Partial<LeadConfig>>("/tenant/lead-config");
   return resolveLeadConfig(result.ok ? result.data : null);
+}
+
+/**
+ * Tenant's Google Sheet → Leads connection served by `GET /tenant/lead-sheet`.
+ * Always resolves to a usable shape: if the endpoint is unavailable (e.g. not
+ * yet configured), it falls back to an empty/disabled config so the connect
+ * form still renders with its instructions.
+ */
+export async function fetchLeadSheetConfig(): Promise<LeadSheetConfig> {
+  const result = await coreApi<Partial<LeadSheetConfig>>("/tenant/lead-sheet");
+  return resolveLeadSheetConfig(result.ok ? result.data : null);
 }
