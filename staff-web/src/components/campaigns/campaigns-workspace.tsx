@@ -6,7 +6,9 @@ import {
   CheckCircle2,
   Megaphone,
   MessageCircle,
+  BarChart3,
   ChevronDown,
+  Pencil,
   Plus,
   RefreshCw,
   Repeat,
@@ -48,17 +50,22 @@ import {
   type Campaign,
   type CampaignAudience,
   type CampaignChannel,
+  type CampaignDetail,
+  type CampaignInput,
   type CampaignProvider,
   type CampaignRecipientsPreview,
   type CampaignTrigger,
+  type LabelCount,
   type RecipientPreviewRow,
   type ConditionCatalogEntry
 } from "@/lib/campaigns-types";
 import {
   createCampaignAction,
+  getCampaignDetailAction,
   previewAudienceAction,
   previewCampaignRecipientsAction,
-  sendCampaignAction
+  sendCampaignAction,
+  updateCampaignAction
 } from "@/app/(app)/campaigns/actions";
 
 const selectClass =
@@ -85,6 +92,18 @@ export function CampaignsWorkspace({
   leadStages
 }: Props) {
   const [composerOpen, setComposerOpen] = useState(false);
+  const [editing, setEditing] = useState<Campaign | null>(null);
+  const [detailCampaign, setDetailCampaign] = useState<Campaign | null>(null);
+
+  function openNew() {
+    setEditing(null);
+    setComposerOpen(true);
+  }
+  function openEdit(campaign: Campaign) {
+    setDetailCampaign(null);
+    setEditing(campaign);
+    setComposerOpen(true);
+  }
 
   return (
     <div className="space-y-5">
@@ -100,7 +119,7 @@ export function CampaignsWorkspace({
             </p>
           </div>
         </div>
-        <Button size="sm" onClick={() => setComposerOpen(true)}>
+        <Button size="sm" onClick={openNew}>
           <Plus className="size-3.5" /> New campaign
         </Button>
       </div>
@@ -116,18 +135,33 @@ export function CampaignsWorkspace({
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {campaigns.map((campaign) => (
-            <CampaignCard key={campaign.id} campaign={campaign} />
+            <CampaignCard
+              key={campaign.id}
+              campaign={campaign}
+              onOpenDetail={() => setDetailCampaign(campaign)}
+              onEdit={() => openEdit(campaign)}
+            />
           ))}
         </div>
       )}
 
       <CampaignComposer
         open={composerOpen}
-        onClose={() => setComposerOpen(false)}
+        editing={editing}
+        onClose={() => {
+          setComposerOpen(false);
+          setEditing(null);
+        }}
         conditions={conditions}
         templates={templates}
         leadSources={leadSources}
         leadStages={leadStages}
+      />
+
+      <CampaignDetailDrawer
+        campaign={detailCampaign}
+        onClose={() => setDetailCampaign(null)}
+        onEdit={openEdit}
       />
     </div>
   );
@@ -137,7 +171,15 @@ export function CampaignsWorkspace({
 // Campaign card
 // ============================================================================
 
-function CampaignCard({ campaign }: { campaign: Campaign }) {
+function CampaignCard({
+  campaign,
+  onOpenDetail,
+  onEdit
+}: {
+  campaign: Campaign;
+  onOpenDetail: () => void;
+  onEdit: () => void;
+}) {
   const { toast } = useToast();
   const [sending, startSending] = useTransition();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -180,7 +222,14 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
       <div className="flex items-start justify-between gap-3 p-4 pb-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-ink">{campaign.name}</h3>
+            <button
+              type="button"
+              onClick={onOpenDetail}
+              className="truncate text-left text-sm font-semibold text-ink transition hover:text-brand-700 hover:underline"
+              title="View campaign details"
+            >
+              {campaign.name}
+            </button>
             <Badge tone={STATUS_TONE[campaign.status]} dot>
               {STATUS_LABELS[campaign.status]}
             </Badge>
@@ -213,14 +262,14 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
             ) : null}
           </div>
         </div>
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={send}
-          disabled={sending}
-        >
-          <Send className="size-3.5" /> {sending ? "Sending…" : "Send now"}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button size="sm" variant="ghost" onClick={onEdit} title="Edit campaign">
+            <Pencil className="size-3.5" /> Edit
+          </Button>
+          <Button size="sm" variant="primary" onClick={send} disabled={sending}>
+            <Send className="size-3.5" /> {sending ? "Sending…" : "Send now"}
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-3 text-[11px] text-ink-muted">
@@ -384,6 +433,230 @@ function RecipientPreview({
   );
 }
 
+/**
+ * Right-side drawer: full campaign detail + effectiveness. Fetches the detail
+ * bundle + live recipient preview on open; offers Edit and Send now.
+ */
+function CampaignDetailDrawer({
+  campaign,
+  onClose,
+  onEdit
+}: {
+  campaign: Campaign | null;
+  onClose: () => void;
+  onEdit: (c: Campaign) => void;
+}) {
+  const { toast } = useToast();
+  const [detail, setDetail] = useState<CampaignDetail | null>(null);
+  const [recipients, setRecipients] = useState<CampaignRecipientsPreview | null>(null);
+  const [loading, startLoad] = useTransition();
+  const [sending, startSending] = useTransition();
+
+  const reload = (id: string) =>
+    startLoad(async () => {
+      const [d, r] = await Promise.all([
+        getCampaignDetailAction(id),
+        previewCampaignRecipientsAction(id)
+      ]);
+      if (d.ok) setDetail(d.data ?? null);
+      if (r.ok) setRecipients(r.data ?? null);
+    });
+
+  useEffect(() => {
+    if (!campaign) {
+      setDetail(null);
+      setRecipients(null);
+      return;
+    }
+    reload(campaign.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaign?.id]);
+
+  function send() {
+    if (!campaign) return;
+    startSending(async () => {
+      const result = await sendCampaignAction(campaign.id);
+      if (!result.ok) {
+        toast(result.error ?? "Could not send the campaign.", "error");
+        return;
+      }
+      toast(result.message ?? "Campaign sent.", "success");
+      reload(campaign.id);
+    });
+  }
+
+  if (!campaign) return null;
+  const c = detail?.campaign ?? campaign;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex justify-end">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Campaign detail"
+        className="animate-in relative flex h-full w-full max-w-xl flex-col overflow-hidden border-l border-line bg-surface shadow-pop"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-line p-5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-base font-semibold tracking-tight text-ink">{c.name}</h2>
+              <Badge tone={STATUS_TONE[c.status]} dot>
+                {STATUS_LABELS[c.status]}
+              </Badge>
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <Badge tone={CHANNEL_TONE[c.channelType]}>{CHANNEL_LABELS[c.channelType]}</Badge>
+              <Badge tone="neutral">via {PROVIDER_LABELS[campaignProvider(c)]}</Badge>
+              <Badge tone="neutral">
+                {c.trigger === "automated" ? <Zap className="size-3" /> : <Send className="size-3" />}
+                {TRIGGER_LABELS[c.trigger]}
+                {c.trigger === "automated" && c.automatedOn ? ` · ${automatedOnLabel(c.automatedOn)}` : ""}
+              </Badge>
+              {c.schedule?.enabled ? (
+                <Badge tone="brand">
+                  <Repeat className="size-3" /> Every {c.schedule.everyDays}d
+                </Badge>
+              ) : null}
+              {c.sendOncePerContact ? (
+                <Badge tone="neutral">
+                  <UserCheck className="size-3" /> Once per contact
+                </Badge>
+              ) : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-md p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-5">
+          {loading && !detail ? (
+            <p className="text-xs text-ink-muted">Loading campaign…</p>
+          ) : detail ? (
+            <>
+              <section>
+                <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-ink">
+                  <BarChart3 className="size-3.5 text-brand-600" /> Effectiveness
+                </h3>
+                <div className="grid grid-cols-3 gap-2">
+                  <MetricCell
+                    label="Delivered"
+                    value={detail.delivery.deliveryRate == null ? "—" : `${Math.round(detail.delivery.deliveryRate * 100)}%`}
+                    hint={`${detail.delivery.sent} sent · ${detail.delivery.failed} failed`}
+                  />
+                  <MetricCell
+                    label="Reached"
+                    value={detail.reach.contacted}
+                    hint={detail.reach.sendOncePerContact ? "unique contacts" : "last run"}
+                  />
+                  <MetricCell
+                    label="Converted"
+                    value={detail.conversion.rate == null ? "—" : `${Math.round(detail.conversion.rate * 100)}%`}
+                    hint={`${detail.conversion.converted} of ${detail.conversion.leads} leads`}
+                  />
+                </div>
+                {detail.delivery.skipped ? (
+                  <p className="mt-1.5 text-[10px] text-ink-faint">
+                    {detail.delivery.skipped} skipped last run (already contacted).
+                  </p>
+                ) : null}
+                <p className="mt-1 text-[10px] text-ink-faint">
+                  {detail.delivery.lastRunAt
+                    ? `Last run ${formatCampaignDateTime(detail.delivery.lastRunAt)}`
+                    : "Not sent yet."}
+                </p>
+              </section>
+
+              <section>
+                <h3 className="mb-1 text-xs font-semibold text-ink">
+                  Audience now — {detail.audience.size} {detail.audience.size === 1 ? "recipient" : "recipients"}
+                </h3>
+                <p className="text-[11px] text-ink-muted">
+                  {detail.audience.leads} lead{detail.audience.leads !== 1 ? "s" : ""}
+                  {detail.audience.patients ? ` · ${detail.audience.patients} patient${detail.audience.patients !== 1 ? "s" : ""}` : ""}
+                </p>
+                {detail.audience.byStage.length ? <BreakdownRow title="By stage" items={detail.audience.byStage} /> : null}
+                {detail.audience.bySource.length ? <BreakdownRow title="By source" items={detail.audience.bySource} /> : null}
+              </section>
+
+              {campaignProvider(c) === "ultramsg" && c.body ? (
+                <section>
+                  <h3 className="mb-1.5 text-xs font-semibold text-ink">Message</h3>
+                  <p className="rounded-lg bg-surface-muted px-3 py-2 text-xs text-ink-soft">{c.body}</p>
+                </section>
+              ) : campaignProvider(c) === "aisensy" && c.aisensyCampaign ? (
+                <section>
+                  <h3 className="mb-1.5 text-xs font-semibold text-ink">AISensy template</h3>
+                  <p className="text-xs text-ink-soft">
+                    {c.aisensyCampaign}
+                    {c.templateParams?.length ? ` · params: ${c.templateParams.join(", ")}` : ""}
+                  </p>
+                </section>
+              ) : null}
+
+              {recipients ? (
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold text-ink">Recipients</h3>
+                  <RecipientPreview
+                    preview={recipients}
+                    loading={loading}
+                    onRefresh={() => campaign && reload(campaign.id)}
+                  />
+                </section>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-xs text-ink-muted">Couldn&apos;t load campaign detail.</p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-line p-4">
+          <Button variant="outline" onClick={() => onEdit(c)}>
+            <Pencil className="size-3.5" /> Edit
+          </Button>
+          <Button onClick={send} disabled={sending}>
+            <Send className="size-3.5" /> {sending ? "Sending…" : "Send now"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricCell({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-line bg-canvas px-2.5 py-2 text-center">
+      <p className="text-base font-semibold text-ink">{value}</p>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">{label}</p>
+      {hint ? <p className="mt-0.5 text-[10px] leading-tight text-ink-muted">{hint}</p> : null}
+    </div>
+  );
+}
+
+function BreakdownRow({ title, items }: { title: string; items: LabelCount[] }) {
+  return (
+    <div className="mt-2">
+      <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint">{title}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((it) => (
+          <span
+            key={it.label}
+            className="inline-flex items-center gap-1 rounded-full border border-line bg-canvas px-2 py-0.5 text-[11px] text-ink-soft"
+          >
+            {it.label} <span className="font-semibold text-ink">{it.count}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StatCell({
   label,
   value,
@@ -431,7 +704,8 @@ function CampaignComposer({
   conditions,
   templates,
   leadSources,
-  leadStages
+  leadStages,
+  editing
 }: {
   open: boolean;
   onClose: () => void;
@@ -439,6 +713,8 @@ function CampaignComposer({
   templates: CampaignTemplateOption[];
   leadSources: FilterOption[];
   leadStages: FilterOption[];
+  /** When set, the composer edits this campaign (PATCH) instead of creating one. */
+  editing?: Campaign | null;
 }) {
   const { toast } = useToast();
   const [saving, startSaving] = useTransition();
@@ -480,6 +756,30 @@ function CampaignComposer({
     setError(null);
   }
 
+  // When opened for editing, prefill every field from the campaign; when opened
+  // for a new campaign, start from a clean slate.
+  useEffect(() => {
+    if (!open) return;
+    if (editing) {
+      setName(editing.name);
+      setChannelType(editing.channelType);
+      setProvider(campaignProvider(editing));
+      setTrigger(editing.trigger);
+      setAutomatedOn(editing.automatedOn ?? AUTOMATED_ON_OPTIONS[0].value);
+      setSendOnce(Boolean(editing.sendOncePerContact));
+      setRepeat(Boolean(editing.schedule?.enabled));
+      setEveryDays(editing.schedule?.everyDays ?? 7);
+      setBody(editing.body ?? "");
+      setAisensyCampaign(editing.aisensyCampaign ?? "");
+      setTemplateParams((editing.templateParams ?? []).join(", "));
+      setAudience(editing.audience);
+      setError(null);
+    } else {
+      reset();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing?.id]);
+
   function submit() {
     if (!name.trim()) return setError("Enter a campaign name.");
     if (provider === "ultramsg" && !body.trim())
@@ -493,35 +793,43 @@ function CampaignComposer({
       .map((p) => p.trim())
       .filter(Boolean);
 
-    startSaving(async () => {
-      const result = await createCampaignAction({
-        name,
-        channelType,
-        provider,
-        trigger,
-        automatedOn: trigger === "automated" ? automatedOn : undefined,
-        audience,
-        body: provider === "ultramsg" ? body : undefined,
-        aisensyCampaign: provider === "aisensy" ? aisensyCampaign : undefined,
-        templateParams: provider === "aisensy" && params.length ? params : undefined,
-        sendOncePerContact: sendOnce || undefined,
-        schedule: repeat
-          ? {
-              everyDays: Math.max(1, Math.floor(everyDays) || 1),
-              enabled: true,
-              // First automated run after one interval; operator can Send now for an
-              // immediate first send.
-              nextRunAt: new Date(Date.now() + Math.max(1, Math.floor(everyDays) || 1) * 86_400_000).toISOString()
-            }
+    const days = Math.max(1, Math.floor(everyDays) || 1);
+    const input: CampaignInput = {
+      name,
+      channelType,
+      provider,
+      trigger,
+      automatedOn: trigger === "automated" ? automatedOn : undefined,
+      audience,
+      body: provider === "ultramsg" ? body : undefined,
+      aisensyCampaign: provider === "aisensy" ? aisensyCampaign : undefined,
+      templateParams: provider === "aisensy" && params.length ? params : undefined,
+      sendOncePerContact: sendOnce,
+      schedule: repeat
+        ? {
+            everyDays: days,
+            enabled: true,
+            // First automated run after one interval; operator can Send now for an
+            // immediate first send.
+            nextRunAt: new Date(Date.now() + days * 86_400_000).toISOString()
+          }
+        : editing
+          ? // Editing with repeat off — explicitly disable any existing schedule.
+            { everyDays: days, enabled: false, nextRunAt: new Date(Date.now() + days * 86_400_000).toISOString() }
           : undefined
-      });
+    };
+
+    startSaving(async () => {
+      const result = editing
+        ? await updateCampaignAction(editing.id, input)
+        : await createCampaignAction(input);
       if (!result.ok) {
-        setError(result.error ?? "Could not create the campaign.");
+        setError(result.error ?? `Could not ${editing ? "update" : "create"} the campaign.`);
         return;
       }
       reset();
       onClose();
-      toast(result.message ?? "Campaign saved as a draft.", "success");
+      toast(result.message ?? "Campaign saved.", "success");
     });
   }
 
@@ -534,7 +842,7 @@ function CampaignComposer({
           id="new-campaign-title"
           className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink"
         >
-          <Megaphone className="size-4 text-brand-600" /> New campaign
+          <Megaphone className="size-4 text-brand-600" /> {editing ? "Edit campaign" : "New campaign"}
         </h2>
         <p className="mt-1 text-xs text-ink-muted">
           Sends use the hospital&apos;s configured WhatsApp channels (Admin → Integrations).
@@ -748,7 +1056,7 @@ function CampaignComposer({
           Cancel
         </Button>
         <Button onClick={submit} disabled={saving}>
-          <Plus className="size-3.5" /> {saving ? "Saving…" : "Save draft"}
+          <Plus className="size-3.5" /> {saving ? "Saving…" : editing ? "Save changes" : "Save draft"}
         </Button>
       </div>
     </Modal>

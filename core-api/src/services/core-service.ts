@@ -7519,6 +7519,58 @@ export class CoreService {
     };
   }
 
+  /**
+   * Full campaign detail + effectiveness for the detail view: the campaign itself,
+   * last-run delivery (sent/failed/skipped + rate), cumulative reach, the live
+   * audience broken down by lead stage + source, and a conversion proxy (how many
+   * targeted leads have since become patients). Read-only.
+   */
+  async getCampaignDetail(context: RequestContext, campaignId: string) {
+    const campaign = this.ensureCampaign(context, campaignId);
+    const leadConfig = await this.resolveLeadConfig(context);
+    const humanize = (key: string) => key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const stageLabel = (key: string) => leadConfig.stages.find((s) => s.key === key)?.label ?? humanize(key);
+    const sourceLabel = (key: string) => leadConfig.sources.find((s) => s.key === key)?.label ?? humanize(key);
+
+    const resolved = this.resolveCampaignAudience(context, campaign.audience);
+    const leadRows = resolved
+      .filter((r) => r.kind === "lead")
+      .map((r) => this.data.leads.find((l) => l.id === r.id && l.tenantId === context.tenantId))
+      .filter((l): l is Lead => Boolean(l));
+    const patients = resolved.length - leadRows.length;
+
+    const tally = (rows: Lead[], keyFn: (l: Lead) => string, labelFn: (k: string) => string) => {
+      const counts = new Map<string, number>();
+      for (const row of rows) {
+        const key = keyFn(row);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      return Array.from(counts.entries())
+        .map(([key, count]) => ({ label: labelFn(key), count }))
+        .sort((a, b) => b.count - a.count);
+    };
+
+    const converted = leadRows.filter((l) => l.convertedPatientId).length;
+    const matchedPatient = leadRows.filter((l) => l.matchedPatientId || l.convertedPatientId).length;
+
+    const stats = campaign.stats;
+    const sent = stats?.sent ?? 0;
+    const failed = stats?.failed ?? 0;
+    const skipped = stats?.skipped ?? 0;
+    const deliveryRate = sent + failed > 0 ? sent / (sent + failed) : null;
+
+    return {
+      campaign,
+      delivery: { lastRunAt: stats?.lastRunAt, sent, failed, skipped, audienceSize: stats?.audienceSize ?? null, deliveryRate },
+      reach: {
+        contacted: campaign.sendOncePerContact ? campaign.contactedPhones?.length ?? 0 : sent,
+        sendOncePerContact: Boolean(campaign.sendOncePerContact)
+      },
+      audience: { size: resolved.length, leads: leadRows.length, patients, byStage: tally(leadRows, (l) => l.stage, stageLabel), bySource: tally(leadRows, (l) => l.source, sourceLabel) },
+      conversion: { leads: leadRows.length, converted, matchedPatient, rate: leadRows.length ? converted / leadRows.length : null }
+    };
+  }
+
   /** Build (but do not persist) a tenant-scoped Campaign from raw input. */
   private buildCampaign(context: RequestContext, input: UpsertCampaignInput): Campaign {
     const timestamp = nowIso();

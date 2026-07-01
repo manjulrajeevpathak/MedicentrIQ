@@ -163,6 +163,28 @@ describe("campaigns contract", () => {
     assert.ok((body.data.sample as JsonObject[]).every((r) => typeof r.name === "string" && "alreadyContacted" in r));
   });
 
+  it("returns campaign detail with effectiveness metrics", async () => {
+    const res = await authed(`/campaigns/${campaignId}/detail`);
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    const d = body.data;
+    assert.equal((d.campaign as JsonObject).id, campaignId);
+    // delivery reflects the earlier failed send (no channel configured).
+    const delivery = d.delivery as JsonObject;
+    assert.ok((delivery.failed as number) > 0);
+    assert.equal(delivery.sent, 0);
+    assert.equal(delivery.deliveryRate, 0); // 0 / (0 + failed)
+    // audience is broken down by lead stage/source.
+    const audience = d.audience as JsonObject;
+    assert.ok((audience.size as number) >= 2);
+    assert.ok(Array.isArray(audience.byStage));
+    assert.ok(Array.isArray(audience.bySource));
+    // conversion proxy is present.
+    const conversion = d.conversion as JsonObject;
+    assert.ok(typeof conversion.leads === "number");
+    assert.ok(typeof conversion.converted === "number");
+  });
+
   it("creates a recurring campaign with a contact-once ledger", async () => {
     const res = await authed("/campaigns", {
       method: "POST",

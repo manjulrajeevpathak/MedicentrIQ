@@ -6,6 +6,7 @@ import type {
   AudiencePreview,
   Campaign,
   CampaignAudience,
+  CampaignDetail,
   CampaignInput,
   CampaignRecipientsPreview,
   SendResult
@@ -105,8 +106,11 @@ export async function updateCampaignAction(
   if (typeof patch.body === "string") body.body = patch.body;
   if (typeof patch.aisensyCampaign === "string") body.aisensyCampaign = patch.aisensyCampaign;
   if (patch.templateParams) body.templateParams = patch.templateParams;
+  if (patch.provider) body.provider = patch.provider;
   if (patch.trigger) body.trigger = patch.trigger;
   if (typeof patch.automatedOn === "string") body.automatedOn = patch.automatedOn;
+  if (typeof patch.sendOncePerContact === "boolean") body.sendOncePerContact = patch.sendOncePerContact;
+  if (patch.schedule !== undefined) body.schedule = patch.schedule;
   if (Object.keys(body).length === 0) return { ok: false, error: "Nothing to update." };
 
   const result = await coreApi<Campaign>(`/campaigns/${encodeURIComponent(id)}`, {
@@ -143,6 +147,14 @@ export async function previewCampaignRecipientsAction(
     `/campaigns/${encodeURIComponent(id)}/recipients`
   );
   if (!result.ok) return { ok: false, error: result.error ?? "Could not load recipients." };
+  return { ok: true, data: result.data };
+}
+
+/** Full campaign detail + effectiveness for the detail drawer. Read-only. */
+export async function getCampaignDetailAction(id: string): Promise<ActionState<CampaignDetail>> {
+  if (!id) return { ok: false, error: "Missing campaign." };
+  const result = await coreApi<CampaignDetail>(`/campaigns/${encodeURIComponent(id)}/detail`);
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not load campaign." };
   return { ok: true, data: result.data };
 }
 

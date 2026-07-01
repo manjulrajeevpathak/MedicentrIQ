@@ -456,6 +456,9 @@ const createRoutes = (service: CoreService): Route[] => [
   route("GET", "/campaigns/:campaignId/recipients", "campaigns:read", ({ auth, params }) =>
     service.previewCampaignRecipients(auth, params.campaignId), "campaigns"
   ),
+  route("GET", "/campaigns/:campaignId/detail", "campaigns:read", ({ auth, params }) =>
+    service.getCampaignDetail(auth, params.campaignId), "campaigns"
+  ),
   route("PATCH", "/campaigns/:campaignId", "campaigns:manage", ({ auth, params, body }) =>
     service.updateCampaign(auth, params.campaignId, toRecord(body)), "campaigns"
   ),

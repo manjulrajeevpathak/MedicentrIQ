@@ -70,6 +70,25 @@ export type CampaignRecipientsPreview = {
   sample: RecipientPreviewRow[];
 };
 
+/** A labelled count used in audience breakdowns. */
+export type LabelCount = { label: string; count: number };
+
+/** Full campaign detail + effectiveness for the detail view. */
+export type CampaignDetail = {
+  campaign: Campaign;
+  delivery: {
+    lastRunAt?: string;
+    sent: number;
+    failed: number;
+    skipped: number;
+    audienceSize: number | null;
+    deliveryRate: number | null;
+  };
+  reach: { contacted: number; sendOncePerContact: boolean };
+  audience: { size: number; leads: number; patients: number; byStage: LabelCount[]; bySource: LabelCount[] };
+  conversion: { leads: number; converted: number; matchedPatient: number; rate: number | null };
+};
+
 // ---- Campaign --------------------------------------------------------------
 
 export type CampaignStats = {
