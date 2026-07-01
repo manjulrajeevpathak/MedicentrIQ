@@ -7476,17 +7476,39 @@ export class CoreService {
    * receive the next run (eligible/new) vs who's already been contacted. Powers the
    * "who will this go to?" panel on the campaign card so a send is never blind.
    */
-  previewCampaignRecipients(context: RequestContext, campaignId: string) {
+  async previewCampaignRecipients(context: RequestContext, campaignId: string) {
     const campaign = this.ensureCampaign(context, campaignId);
     const resolved = this.resolveCampaignAudience(context, campaign.audience);
     const { eligible, skipped } = this.eligibleRecipients(campaign, resolved);
     const contacted = new Set((campaign.contactedPhones ?? []).map((p) => normalizePhone(p)).filter(Boolean));
-    const sample = resolved.slice(0, 20).map((r) => ({
-      name: r.name,
-      phone: r.phone,
-      kind: r.kind,
-      alreadyContacted: campaign.sendOncePerContact ? contacted.has(normalizePhone(r.phone)) : false
-    }));
+    // Human labels for each recipient's "bucket": lead funnel stage + source, or
+    // patient lifecycle stage — so a name in the list actually signifies something.
+    const leadConfig = await this.resolveLeadConfig(context);
+    const humanize = (key: string) => key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const stageLabel = (key: string) => leadConfig.stages.find((s) => s.key === key)?.label ?? humanize(key);
+    const sourceLabel = (key: string) => leadConfig.sources.find((s) => s.key === key)?.label ?? humanize(key);
+    const sample = resolved.slice(0, 20).map((r) => {
+      let stage: string | undefined;
+      let source: string | undefined;
+      if (r.kind === "lead") {
+        const lead = this.data.leads.find((l) => l.id === r.id && l.tenantId === context.tenantId);
+        if (lead) {
+          stage = stageLabel(lead.stage);
+          source = sourceLabel(lead.source);
+        }
+      } else {
+        const patient = this.data.patients.find((p) => p.id === r.id && p.tenantId === context.tenantId);
+        if (patient) stage = humanize(this.patientLifecycle(context, patient.id).stage);
+      }
+      return {
+        name: r.name,
+        phone: r.phone,
+        kind: r.kind,
+        stage,
+        source,
+        alreadyContacted: campaign.sendOncePerContact ? contacted.has(normalizePhone(r.phone)) : false
+      };
+    });
     return {
       audienceSize: resolved.length,
       eligible: eligible.length,

@@ -49,6 +49,10 @@ export type RecipientPreviewRow = {
   name: string;
   phone: string;
   kind: "lead" | "patient" | string;
+  /** Bucket the recipient sits in: lead funnel stage, or patient lifecycle stage (label). */
+  stage?: string;
+  /** Marketing source label — leads only. */
+  source?: string;
   alreadyContacted: boolean;
 };
 

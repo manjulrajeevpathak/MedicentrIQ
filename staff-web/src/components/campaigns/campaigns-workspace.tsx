@@ -51,6 +51,7 @@ import {
   type CampaignProvider,
   type CampaignRecipientsPreview,
   type CampaignTrigger,
+  type RecipientPreviewRow,
   type ConditionCatalogEntry
 } from "@/lib/campaigns-types";
 import {
@@ -294,6 +295,13 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
   );
 }
 
+/** A short "which bucket" line for a recipient: Lead · Stage · Source, or Patient · Stage. */
+function recipientBucket(r: RecipientPreviewRow): string {
+  const kind = r.kind === "patient" ? "Patient" : "Lead";
+  const parts = [kind, r.stage, r.kind === "lead" ? r.source : undefined].filter(Boolean);
+  return parts.join(" · ");
+}
+
 /** Lightly mask a phone for the recipient list (staff tool — still recognisable). */
 function maskPhone(phone: string): string {
   const p = phone.trim();
@@ -348,7 +356,10 @@ function RecipientPreview({
         <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
           {sample.map((r, i) => (
             <li key={`${r.phone}-${i}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-              <span className="min-w-0 truncate text-xs text-ink">{r.name || "Unnamed"}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-xs text-ink">{r.name || "Unnamed"}</span>
+                <span className="block truncate text-[10px] text-ink-faint">{recipientBucket(r)}</span>
+              </span>
               <span className="flex shrink-0 items-center gap-1.5">
                 <span className="text-[11px] text-ink-faint">{maskPhone(r.phone)}</span>
                 {r.alreadyContacted ? (
