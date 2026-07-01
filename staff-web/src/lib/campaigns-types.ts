@@ -50,7 +50,16 @@ export type CampaignStats = {
   audienceSize?: number;
   sent: number;
   failed: number;
+  /** Recipients skipped this run because the contact-once ledger already covered them. */
+  skipped?: number;
   lastRunAt?: string;
+};
+
+/** Recurring send schedule — the scheduler re-runs the campaign every `everyDays`. */
+export type CampaignSchedule = {
+  everyDays: number;
+  nextRunAt: string;
+  enabled: boolean;
 };
 
 export type Campaign = {
@@ -64,6 +73,12 @@ export type Campaign = {
   templateParams?: string[];
   trigger: CampaignTrigger;
   automatedOn?: AutomatedOn;
+  /** When true, each contact is messaged at most once across every run. */
+  sendOncePerContact?: boolean;
+  /** Normalized phones already messaged by this campaign (contact-once ledger). */
+  contactedPhones?: string[];
+  /** Recurring schedule (present when the campaign repeats). */
+  schedule?: CampaignSchedule;
   status: CampaignStatus;
   stats?: CampaignStats;
   createdAt: string;
@@ -80,6 +95,8 @@ export type CampaignInput = {
   templateParams?: string[];
   trigger: CampaignTrigger;
   automatedOn?: AutomatedOn;
+  sendOncePerContact?: boolean;
+  schedule?: CampaignSchedule;
 };
 
 /** Resolve a campaign's effective delivery provider (explicit, else from category). */

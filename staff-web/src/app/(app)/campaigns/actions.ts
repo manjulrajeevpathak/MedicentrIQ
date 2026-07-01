@@ -67,11 +67,27 @@ export async function createCampaignAction(input: CampaignInput): Promise<Action
   if (input.trigger === "automated" && input.automatedOn) {
     body.automatedOn = input.automatedOn;
   }
+  if (input.sendOncePerContact) {
+    body.sendOncePerContact = true;
+  }
+  if (input.schedule && input.schedule.everyDays >= 1) {
+    body.schedule = {
+      everyDays: Math.floor(input.schedule.everyDays),
+      enabled: input.schedule.enabled !== false,
+      nextRunAt: input.schedule.nextRunAt
+    };
+  }
 
   const result = await coreApi<Campaign>("/campaigns", { method: "POST", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the campaign." };
   revalidatePath("/campaigns");
-  return { ok: true, data: result.data, message: "Campaign saved as a draft." };
+  const message =
+    input.trigger === "automated"
+      ? "Automated campaign armed."
+      : input.schedule
+        ? "Recurring campaign scheduled."
+        : "Campaign saved as a draft.";
+  return { ok: true, data: result.data, message };
 }
 
 // ---- Update campaign -------------------------------------------------------

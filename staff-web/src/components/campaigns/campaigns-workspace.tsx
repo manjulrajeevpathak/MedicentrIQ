@@ -7,8 +7,10 @@ import {
   Megaphone,
   MessageCircle,
   Plus,
+  Repeat,
   Send,
   Sparkles,
+  UserCheck,
   Users,
   X,
   Zap
@@ -172,6 +174,16 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
             {campaign.trigger === "automated" && campaign.automatedOn ? (
               <span className="text-[11px] text-ink-muted">{automatedOnLabel(campaign.automatedOn)}</span>
             ) : null}
+            {campaign.schedule?.enabled ? (
+              <Badge tone="brand">
+                <Repeat className="size-3" /> Every {campaign.schedule.everyDays}d
+              </Badge>
+            ) : null}
+            {campaign.sendOncePerContact ? (
+              <Badge tone="neutral">
+                <UserCheck className="size-3" /> Once per contact
+              </Badge>
+            ) : null}
           </div>
         </div>
         <Button
@@ -212,9 +224,19 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
         ) : (
           <p className="text-center text-[11px] text-ink-muted">Not sent yet.</p>
         )}
-        {stats?.lastRunAt ? (
+        {stats?.skipped ? (
           <p className="mt-2 text-center text-[10px] text-ink-faint">
+            {stats.skipped} already contacted · skipped
+          </p>
+        ) : null}
+        {stats?.lastRunAt ? (
+          <p className="mt-1 text-center text-[10px] text-ink-faint">
             Last run {formatCampaignDateTime(stats.lastRunAt)}
+          </p>
+        ) : null}
+        {campaign.schedule?.enabled ? (
+          <p className="mt-1 text-center text-[10px] text-ink-faint">
+            Next run {formatCampaignDateTime(campaign.schedule.nextRunAt)}
           </p>
         ) : null}
       </div>
@@ -288,6 +310,11 @@ function CampaignComposer({
   const [trigger, setTrigger] = useState<CampaignTrigger>("manual");
   const [automatedOn, setAutomatedOn] = useState(AUTOMATED_ON_OPTIONS[0].value);
 
+  // delivery rules
+  const [sendOnce, setSendOnce] = useState(false);
+  const [repeat, setRepeat] = useState(false);
+  const [everyDays, setEveryDays] = useState(7);
+
   // transactional
   const [body, setBody] = useState("");
   // marketing
@@ -303,6 +330,9 @@ function CampaignComposer({
     setProvider("ultramsg");
     setTrigger("manual");
     setAutomatedOn(AUTOMATED_ON_OPTIONS[0].value);
+    setSendOnce(false);
+    setRepeat(false);
+    setEveryDays(7);
     setBody("");
     setAisensyCampaign("");
     setTemplateParams("");
@@ -333,7 +363,17 @@ function CampaignComposer({
         audience,
         body: provider === "ultramsg" ? body : undefined,
         aisensyCampaign: provider === "aisensy" ? aisensyCampaign : undefined,
-        templateParams: provider === "aisensy" && params.length ? params : undefined
+        templateParams: provider === "aisensy" && params.length ? params : undefined,
+        sendOncePerContact: sendOnce || undefined,
+        schedule: repeat
+          ? {
+              everyDays: Math.max(1, Math.floor(everyDays) || 1),
+              enabled: true,
+              // First automated run after one interval; operator can Send now for an
+              // immediate first send.
+              nextRunAt: new Date(Date.now() + Math.max(1, Math.floor(everyDays) || 1) * 86_400_000).toISOString()
+            }
+          : undefined
       });
       if (!result.ok) {
         setError(result.error ?? "Could not create the campaign.");
@@ -432,8 +472,58 @@ function CampaignComposer({
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-[11px] text-ink-muted">
+              A matching lead is messaged automatically the moment it&apos;s added (from any source —
+              form, import, Google Sheet or manual).
+            </p>
           </Field>
         ) : null}
+
+        <div className="space-y-3 rounded-lg border border-line bg-canvas p-3">
+          <p className="text-xs font-medium text-ink-soft">Delivery rules</p>
+          <label className="flex cursor-pointer items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={sendOnce}
+              onChange={(e) => setSendOnce(e.target.checked)}
+              className="mt-0.5 size-4 rounded border-line-strong text-brand-600 focus:ring-brand-200"
+            />
+            <span className="text-xs text-ink">
+              Contact each recipient only once
+              <span className="mt-0.5 block text-[11px] text-ink-muted">
+                Remembers who&apos;s already been messaged, so re-sends and repeats only reach{" "}
+                <em>new</em> matching leads — never spams the same people again.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={repeat}
+              onChange={(e) => setRepeat(e.target.checked)}
+              className="mt-0.5 size-4 rounded border-line-strong text-brand-600 focus:ring-brand-200"
+            />
+            <span className="text-xs text-ink">
+              Repeat automatically
+              <span className="mt-0.5 block text-[11px] text-ink-muted">
+                Re-runs on a schedule, picking up leads added since the last run.
+              </span>
+            </span>
+          </label>
+          {repeat ? (
+            <div className="flex items-center gap-2 pl-6">
+              <span className="text-xs text-ink-muted">Every</span>
+              <Input
+                type="number"
+                min={1}
+                value={everyDays}
+                onChange={(e) => setEveryDays(Number(e.target.value))}
+                className="h-8 w-20"
+              />
+              <span className="text-xs text-ink-muted">days</span>
+            </div>
+          ) : null}
+        </div>
 
         {provider === "ultramsg" ? (
           <>
