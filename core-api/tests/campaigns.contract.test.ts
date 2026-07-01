@@ -149,6 +149,20 @@ describe("campaigns contract", () => {
     assert.ok(typeof stats.lastRunAt === "string");
   });
 
+  it("previews an existing campaign's live recipients (ledger-aware)", async () => {
+    const res = await authed(`/campaigns/${campaignId}/recipients`);
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    // The "New leads welcome" campaign targets new/contacted leads → matches seeded leads.
+    assert.ok((body.data.audienceSize as number) >= 2);
+    // Not a once-per-contact campaign, so everyone is eligible and nobody is skipped.
+    assert.equal(body.data.sendOncePerContact, false);
+    assert.equal(body.data.eligible, body.data.audienceSize);
+    assert.equal(body.data.alreadyContacted, 0);
+    assert.ok(Array.isArray(body.data.sample));
+    assert.ok((body.data.sample as JsonObject[]).every((r) => typeof r.name === "string" && "alreadyContacted" in r));
+  });
+
   it("creates a recurring campaign with a contact-once ledger", async () => {
     const res = await authed("/campaigns", {
       method: "POST",

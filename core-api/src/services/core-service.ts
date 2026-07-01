@@ -7470,6 +7470,33 @@ export class CoreService {
     return { size: recipients.length, sample: recipients.slice(0, 5) };
   }
 
+  /**
+   * Ledger-aware recipient preview for an EXISTING campaign: resolves the live
+   * audience and, when sendOncePerContact is on, splits it into who would actually
+   * receive the next run (eligible/new) vs who's already been contacted. Powers the
+   * "who will this go to?" panel on the campaign card so a send is never blind.
+   */
+  previewCampaignRecipients(context: RequestContext, campaignId: string) {
+    const campaign = this.ensureCampaign(context, campaignId);
+    const resolved = this.resolveCampaignAudience(context, campaign.audience);
+    const { eligible, skipped } = this.eligibleRecipients(campaign, resolved);
+    const contacted = new Set((campaign.contactedPhones ?? []).map((p) => normalizePhone(p)).filter(Boolean));
+    const sample = resolved.slice(0, 20).map((r) => ({
+      name: r.name,
+      phone: r.phone,
+      kind: r.kind,
+      alreadyContacted: campaign.sendOncePerContact ? contacted.has(normalizePhone(r.phone)) : false
+    }));
+    return {
+      audienceSize: resolved.length,
+      eligible: eligible.length,
+      alreadyContacted: skipped,
+      sendOncePerContact: Boolean(campaign.sendOncePerContact),
+      generatedAt: nowIso(),
+      sample
+    };
+  }
+
   /** Build (but do not persist) a tenant-scoped Campaign from raw input. */
   private buildCampaign(context: RequestContext, input: UpsertCampaignInput): Campaign {
     const timestamp = nowIso();

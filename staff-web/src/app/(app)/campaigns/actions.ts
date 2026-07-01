@@ -7,6 +7,7 @@ import type {
   Campaign,
   CampaignAudience,
   CampaignInput,
+  CampaignRecipientsPreview,
   SendResult
 } from "@/lib/campaigns-types";
 
@@ -127,6 +128,21 @@ export async function previewAudienceAction(
     body: { audience: cleanAudience(audience) }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not preview the audience." };
+  return { ok: true, data: result.data };
+}
+
+/**
+ * Ledger-aware recipient preview for an existing campaign — who's in the segment
+ * right now and who would actually receive the next send. Read-only.
+ */
+export async function previewCampaignRecipientsAction(
+  id: string
+): Promise<ActionState<CampaignRecipientsPreview>> {
+  if (!id) return { ok: false, error: "Missing campaign." };
+  const result = await coreApi<CampaignRecipientsPreview>(
+    `/campaigns/${encodeURIComponent(id)}/recipients`
+  );
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not load recipients." };
   return { ok: true, data: result.data };
 }
 

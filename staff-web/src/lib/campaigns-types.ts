@@ -44,6 +44,28 @@ export type AudiencePreview = {
   sample: AudienceSample[];
 };
 
+/** One recipient in a campaign's live recipient preview. */
+export type RecipientPreviewRow = {
+  name: string;
+  phone: string;
+  kind: "lead" | "patient" | string;
+  alreadyContacted: boolean;
+};
+
+/**
+ * Ledger-aware recipient preview for an existing campaign: who's in the segment
+ * right now, how many would actually receive the next run (eligible/new) vs are
+ * already contacted. Powers the "who will this go to?" panel on the card.
+ */
+export type CampaignRecipientsPreview = {
+  audienceSize: number;
+  eligible: number;
+  alreadyContacted: number;
+  sendOncePerContact: boolean;
+  generatedAt: string;
+  sample: RecipientPreviewRow[];
+};
+
 // ---- Campaign --------------------------------------------------------------
 
 export type CampaignStats = {

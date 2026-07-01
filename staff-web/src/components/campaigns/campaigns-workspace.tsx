@@ -6,7 +6,9 @@ import {
   CheckCircle2,
   Megaphone,
   MessageCircle,
+  ChevronDown,
   Plus,
+  RefreshCw,
   Repeat,
   Send,
   Sparkles,
@@ -47,12 +49,14 @@ import {
   type CampaignAudience,
   type CampaignChannel,
   type CampaignProvider,
+  type CampaignRecipientsPreview,
   type CampaignTrigger,
   type ConditionCatalogEntry
 } from "@/lib/campaigns-types";
 import {
   createCampaignAction,
   previewAudienceAction,
+  previewCampaignRecipientsAction,
   sendCampaignAction
 } from "@/app/(app)/campaigns/actions";
 
@@ -135,7 +139,27 @@ export function CampaignsWorkspace({
 function CampaignCard({ campaign }: { campaign: Campaign }) {
   const { toast } = useToast();
   const [sending, startSending] = useTransition();
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [preview, setPreview] = useState<CampaignRecipientsPreview | null>(null);
+  const [loadingPreview, startPreview] = useTransition();
   const stats = campaign.stats;
+
+  function loadPreview() {
+    startPreview(async () => {
+      const result = await previewCampaignRecipientsAction(campaign.id);
+      if (!result.ok) {
+        toast(result.error ?? "Could not load recipients.", "error");
+        return;
+      }
+      setPreview(result.data ?? null);
+    });
+  }
+
+  function togglePreview() {
+    const next = !previewOpen;
+    setPreviewOpen(next);
+    if (next && !preview) loadPreview();
+  }
 
   function send() {
     startSending(async () => {
@@ -145,6 +169,8 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
         return;
       }
       toast(result.message ?? "Campaign sent.", "success");
+      // Refresh the recipient panel if it's open, so the ledger reflects the send.
+      if (previewOpen) loadPreview();
     });
   }
 
@@ -214,6 +240,30 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
         </p>
       ) : null}
 
+      <div className="border-t border-line">
+        <button
+          type="button"
+          onClick={togglePreview}
+          className="flex w-full items-center justify-between px-4 py-2.5 text-xs font-medium text-ink-soft transition hover:bg-surface-muted"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Users className="size-3.5 text-brand-600" /> Who will this go to?
+          </span>
+          <ChevronDown className={cn("size-4 text-ink-faint transition", previewOpen && "rotate-180")} />
+        </button>
+        {previewOpen ? (
+          <div className="px-4 pb-3">
+            {loadingPreview && !preview ? (
+              <p className="py-2 text-[11px] text-ink-muted">Resolving the live segment…</p>
+            ) : preview ? (
+              <RecipientPreview preview={preview} loading={loadingPreview} onRefresh={loadPreview} />
+            ) : (
+              <p className="py-2 text-[11px] text-ink-muted">Couldn&apos;t load recipients.</p>
+            )}
+          </div>
+        ) : null}
+      </div>
+
       <div className="border-t border-line px-4 py-3">
         {stats ? (
           <div className="grid grid-cols-3 gap-2 text-center">
@@ -241,6 +291,85 @@ function CampaignCard({ campaign }: { campaign: Campaign }) {
         ) : null}
       </div>
     </Panel>
+  );
+}
+
+/** Lightly mask a phone for the recipient list (staff tool — still recognisable). */
+function maskPhone(phone: string): string {
+  const p = phone.trim();
+  if (p.length <= 6) return p;
+  return `${p.slice(0, 4)}••••${p.slice(-2)}`;
+}
+
+/**
+ * The "who will this go to?" panel: a live, ledger-aware read of the segment —
+ * how many will actually receive the next send vs are already contacted, plus a
+ * sample of names so a send is never blind.
+ */
+function RecipientPreview({
+  preview,
+  loading,
+  onRefresh
+}: {
+  preview: CampaignRecipientsPreview;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const { audienceSize, eligible, alreadyContacted, sendOncePerContact, sample } = preview;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] leading-relaxed text-ink-soft">
+          {audienceSize === 0 ? (
+            "No one matches this segment yet — add or re-tag leads and refresh."
+          ) : sendOncePerContact ? (
+            <>
+              <span className="font-semibold text-ink">{eligible}</span> will receive on the next send
+              {alreadyContacted > 0 ? <> · {alreadyContacted} already contacted</> : null}
+              <span className="text-ink-faint"> · {audienceSize} in segment</span>
+            </>
+          ) : (
+            <>
+              <span className="font-semibold text-ink">{audienceSize}</span> will receive — everyone in the
+              segment (each send)
+            </>
+          )}
+        </p>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-ink-muted transition hover:bg-surface-muted disabled:opacity-50"
+        >
+          <RefreshCw className={cn("size-3", loading && "animate-spin")} /> Refresh
+        </button>
+      </div>
+      {sample.length > 0 ? (
+        <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+          {sample.map((r, i) => (
+            <li key={`${r.phone}-${i}`} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+              <span className="min-w-0 truncate text-xs text-ink">{r.name || "Unnamed"}</span>
+              <span className="flex shrink-0 items-center gap-1.5">
+                <span className="text-[11px] text-ink-faint">{maskPhone(r.phone)}</span>
+                {r.alreadyContacted ? (
+                  <Badge tone="neutral">contacted</Badge>
+                ) : sendOncePerContact ? (
+                  <Badge tone="good">new</Badge>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {audienceSize > sample.length ? (
+        <p className="text-[10px] text-ink-faint">
+          Showing {sample.length} of {audienceSize}.
+        </p>
+      ) : null}
+      <p className="text-[10px] text-ink-faint">
+        Re-resolved live · as of {formatCampaignDateTime(preview.generatedAt)}
+      </p>
+    </div>
   );
 }
 
