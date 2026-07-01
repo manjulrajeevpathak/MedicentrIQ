@@ -44,6 +44,7 @@ import {
   OPTION_FIELD_TYPES,
   callbackChannelLabel,
   configLabel,
+  leadIntakeLabel,
   formatDueDate,
   formatLeadDate,
   isOverdue,
@@ -306,6 +307,21 @@ function FunnelBoard({
   );
 }
 
+/**
+ * A light, secondary chip showing HOW a lead was captured (intake / import
+ * mechanism) — deliberately quieter than the marketing source Badge so the two
+ * never read as the same thing.
+ */
+function IntakeChip({ intake }: { intake: string }) {
+  const label = leadIntakeLabel(intake);
+  if (!label) return null;
+  return (
+    <span className="inline-flex items-center rounded-full bg-canvas px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint ring-1 ring-inset ring-line">
+      via {label}
+    </span>
+  );
+}
+
 function LeadCard({
   lead,
   stages,
@@ -352,9 +368,12 @@ function LeadCard({
           </div>
         </div>
         <p className="mt-0.5 truncate text-[11px] text-ink-muted">{lead.phone || "No phone"}</p>
-        {lead.assignedTo ? (
-          <p className="mt-0.5 truncate text-[11px] text-ink-faint">Owner: {lead.assignedTo}</p>
-        ) : null}
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {lead.intake ? <IntakeChip intake={lead.intake} /> : null}
+          {lead.assignedTo ? (
+            <span className="truncate text-[11px] text-ink-faint">Owner: {lead.assignedTo}</span>
+          ) : null}
+        </div>
       </button>
       <div className="mt-2">
         <label className="sr-only" htmlFor={`move-${lead.id}`}>
@@ -526,6 +545,7 @@ function LeadRow({
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-semibold text-ink">{lead.name}</span>
           <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
+          {lead.intake ? <IntakeChip intake={lead.intake} /> : null}
           {lead.matchedPatientId && !converted ? (
             <Badge tone="violet" dot>Matches a patient</Badge>
           ) : null}
@@ -646,7 +666,7 @@ function NewLeadModal({
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Source" htmlFor="nl-source">
+          <Field label="Lead source" htmlFor="nl-source" hint="Where this lead came from (Meta Ads, Doctor Referral, …)">
             <select id="nl-source" value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
               {sources.map((s) => (
                 <option key={s.key} value={s.key}>{s.label}</option>
@@ -926,7 +946,7 @@ function ManageFunnelModal({
         />
         <EntryEditor
           title="Lead sources"
-          subtitle="Where leads come from (camp, web form, referral…)."
+          subtitle="Marketing attribution — where leads come from (Meta Ads, Google Ads, Doctor Referral, Camp – Self…). Used to target campaigns. Not how they're imported."
           entries={sourceList}
           ordered={false}
           onAdd={() => addEntry(setSourceList)}
@@ -934,7 +954,7 @@ function ManageFunnelModal({
           onRemove={(id) => removeEntry(setSourceList, id)}
           onMove={() => {}}
           addLabel="Add source"
-          labelPlaceholder="e.g. Web form"
+          labelPlaceholder="e.g. Meta Ads"
         />
         {error ? <p className="text-xs font-medium text-[var(--color-critical)]">{error}</p> : null}
       </div>
@@ -1205,7 +1225,7 @@ function SourcesTab({
 
 function FileImport({ sources }: { sources: LeadSourceOption[] }) {
   const { toast } = useToast();
-  const defaultSource = sources[0]?.key ?? "import";
+  const defaultSource = sources[0]?.key ?? "other";
   const [raw, setRaw] = useState("");
   const [sheet, setSheet] = useState<ParsedSheet | null>(null);
   const [source, setSource] = useState<string>(defaultSource);
@@ -1353,7 +1373,7 @@ function FileImport({ sources }: { sources: LeadSourceOption[] }) {
         {parsed.headers.length > 0 ? (
           <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
-              <Field label="Source" htmlFor="imp-source">
+              <Field label="Lead source" htmlFor="imp-source" hint="Marketing attribution for these leads — not the file itself (that's recorded as “via Excel”).">
                 <select id="imp-source" value={source} onChange={(e) => setSource(e.target.value)} className={selectClass}>
                   {sources.map((s) => (
                     <option key={s.key} value={s.key}>{s.label}</option>
@@ -1564,7 +1584,7 @@ function GoogleSheetConnect({
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Source" htmlFor="gs-source" hint="Imported leads are tagged with this source.">
+          <Field label="Lead source" htmlFor="gs-source" hint="Marketing attribution for synced leads (Meta Ads, Doctor Referral, …). The sheet itself is recorded as “via Google Sheet”.">
             <select id="gs-source" value={sourceKey} onChange={(e) => setSourceKey(e.target.value)} className={selectClass}>
               {sources.map((s) => (
                 <option key={s.key} value={s.key}>{s.label}</option>

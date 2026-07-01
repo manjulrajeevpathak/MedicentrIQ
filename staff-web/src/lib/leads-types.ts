@@ -19,13 +19,29 @@ export type LeadSource =
   | "import"
   | "other";
 
+/**
+ * How a lead ENTERED the system (the import mechanism). This is distinct from
+ * `source` (marketing attribution — Meta Ads, Doctor Referral, …). Intake is
+ * captured automatically per creation path and is NOT tenant-configurable.
+ */
+export type LeadIntake =
+  | "manual"
+  | "web_form"
+  | "excel_import"
+  | "google_sheet"
+  | "walk_in"
+  | "api";
+
 export type Lead = {
   id: string;
   name: string;
   phone: string;
   email?: string;
+  /** Marketing attribution — where the lead came from (configurable list). */
   source: LeadSource | string;
   sourceDetail?: string;
+  /** How the lead was captured (import mechanism; auto-set, not configurable). */
+  intake?: LeadIntake | string;
   stage: LeadStage | string;
   assignedTo?: string;
   branchId?: string;
@@ -68,15 +84,19 @@ export const DEFAULT_LEAD_STAGES: LeadFunnelStage[] = [
   { key: "lost", label: "Lost" }
 ];
 
+/**
+ * Marketing-attribution fallback used only before the tenant's `lead-config`
+ * loads. Mirrors core-api's DEFAULT_LEAD_SOURCES — these are where a lead came
+ * from, NOT how it was imported (that's `intake`).
+ */
 export const DEFAULT_LEAD_SOURCES: LeadSourceOption[] = [
-  { key: "camp", label: "Camp" },
-  { key: "web_form", label: "Web form" },
-  { key: "referral", label: "Referral" },
+  { key: "meta_ads", label: "Meta Ads" },
+  { key: "google_ads", label: "Google Ads" },
+  { key: "doctor_referral", label: "Doctor Referral" },
+  { key: "camp_self", label: "Camp – Self" },
+  { key: "camp_outsourced", label: "Camp – Outsourced" },
   { key: "walk_in", label: "Walk-in" },
-  { key: "call", label: "Call" },
-  { key: "whatsapp", label: "WhatsApp" },
-  { key: "import", label: "Import" },
-  { key: "other", label: "Other" }
+  { key: "website", label: "Website" }
 ];
 
 /** Normalise a possibly-empty/defaulted config into usable, non-empty lists. */
@@ -387,6 +407,24 @@ export const LEAD_SOURCE_LABELS: Record<string, string> = Object.fromEntries(
 
 export function leadSourceLabel(source: string): string {
   return LEAD_SOURCE_LABELS[source] ?? source.replace(/_/g, " ");
+}
+
+/**
+ * Intake = how the lead was captured (import mechanism). Shown as a light,
+ * secondary "via …" chip — never mixed into the marketing source list.
+ */
+export const LEAD_INTAKE_LABELS: Record<string, string> = {
+  manual: "Manual",
+  web_form: "Web form",
+  excel_import: "Excel",
+  google_sheet: "Google Sheet",
+  walk_in: "Walk-in",
+  api: "API"
+};
+
+export function leadIntakeLabel(intake?: string): string {
+  if (!intake) return "";
+  return LEAD_INTAKE_LABELS[intake] ?? intake.replace(/_/g, " ");
 }
 
 export function leadStageLabel(stage: string): string {

@@ -29,6 +29,7 @@ import {
   callbackChannelLabel,
   computeDueAt,
   configLabel,
+  leadIntakeLabel,
   formatDueDate,
   formatLeadDate,
   isOverdue,
@@ -128,6 +129,11 @@ export function LeadDetailDrawer({
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="truncate text-base font-semibold tracking-tight text-ink">{lead.name}</h2>
                   <Badge tone="neutral">{configLabel(sources, lead.source)}</Badge>
+                  {lead.intake ? (
+                    <span className="inline-flex items-center rounded-full bg-canvas px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint ring-1 ring-inset ring-line">
+                      via {leadIntakeLabel(lead.intake)}
+                    </span>
+                  ) : null}
                   {lead.convertedPatientId ? <Badge tone="good" dot>Converted</Badge> : null}
                 </div>
                 <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-ink-muted">
