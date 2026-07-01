@@ -41,3 +41,20 @@ const runLeadSheetPoll = async () => {
 };
 setTimeout(runLeadSheetPoll, 30_000);
 setInterval(runLeadSheetPoll, 15 * 60_000);
+
+// Recurring-campaign scheduler (Campaigns Phase 4b): run every campaign whose
+// schedule is enabled and due, honouring the contact-once ledger so each repeat
+// reaches only newly-qualifying recipients. Best-effort; failures never crash the
+// process. Runs ~45s after boot, then every 10 minutes.
+const runCampaignScheduler = async () => {
+  try {
+    const tally = await service.runCampaignScheduler();
+    if (tally.ran > 0) {
+      console.log(`[campaigns] ran=${tally.ran} sent=${tally.sent} failed=${tally.failed}`);
+    }
+  } catch (error) {
+    console.error("[campaigns] scheduler run failed", error);
+  }
+};
+setTimeout(runCampaignScheduler, 45_000);
+setInterval(runCampaignScheduler, 10 * 60_000);

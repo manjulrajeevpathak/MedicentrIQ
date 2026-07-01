@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { Server } from "node:http";
 import { createApiServer } from "../src/http/router.js";
-import { createCoreService } from "../src/services/core-service.js";
+import { createCoreService, type CoreService } from "../src/services/core-service.js";
 
 type JsonObject = Record<string, unknown>;
 
 describe("campaigns contract", () => {
   let server: Server;
+  let service: CoreService;
   let baseUrl: string;
   let token: string;
   let campaignId: string;
@@ -21,7 +22,7 @@ describe("campaigns contract", () => {
     delete process.env.DATABASE_URL;
     process.env.STAFF_SESSION_SECRET = "campaigns_contract_secret";
     process.env.ALLOW_DEMO_SESSION_ISSUER = "true";
-    const service = await createCoreService();
+    service = await createCoreService();
     server = createApiServer(service);
     baseUrl = await listen(server);
 
@@ -146,6 +147,128 @@ describe("campaigns contract", () => {
     assert.ok((stats.failed as number) > 0);
     assert.equal(stats.sent, 0);
     assert.ok(typeof stats.lastRunAt === "string");
+  });
+
+  it("creates a recurring campaign with a contact-once ledger", async () => {
+    const res = await authed("/campaigns", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Weekly camp nurture",
+        channelType: "marketing",
+        provider: "ultramsg",
+        audience: { include: "leads", leadSources: ["camp_self"] },
+        body: "Hi {{name}}, a note from the camp team.",
+        trigger: "manual",
+        sendOncePerContact: true,
+        schedule: { everyDays: 7, enabled: true }
+      })
+    });
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    // A live schedule surfaces as "scheduled"; the ledger starts empty.
+    assert.equal(body.data.status, "scheduled");
+    assert.equal(body.data.sendOncePerContact, true);
+    assert.deepEqual(body.data.contactedPhones, []);
+    const schedule = body.data.schedule as JsonObject;
+    assert.equal(schedule.everyDays, 7);
+    assert.equal(schedule.enabled, true);
+    assert.ok(typeof schedule.nextRunAt === "string");
+  });
+
+  it("does NOT mark failed recipients in the contact-once ledger", async () => {
+    // A once-per-contact campaign whose sends all fail (no channel) must leave the
+    // ledger empty, so those recipients are retried next run rather than dropped.
+    const create = await authed("/campaigns", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Once-per-contact",
+        channelType: "transactional",
+        audience: { include: "leads" },
+        body: "Hi {{name}}",
+        sendOncePerContact: true
+      })
+    });
+    const id = String(((await create.json()) as { data: JsonObject }).data.id);
+    const send = await authed(`/campaigns/${id}/send`, { method: "POST" });
+    const result = (await send.json()) as { data: { sent: number; failed: number; skipped: number } };
+    assert.equal(send.status, 200);
+    assert.equal(result.data.sent, 0);
+    assert.equal(result.data.skipped, 0); // ledger empty → nothing skipped this run
+    assert.ok(result.data.failed > 0);
+
+    const list = (await (await authed("/campaigns")).json()) as { data: JsonObject[] };
+    const updated = list.data.find((c) => c.id === id);
+    // Nothing succeeded, so no phone was recorded.
+    assert.deepEqual(updated?.contactedPhones, []);
+  });
+
+  it("runCampaignScheduler runs a due campaign and advances nextRunAt", async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const create = await authed("/campaigns", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Due recurring",
+        channelType: "transactional",
+        audience: { include: "leads" },
+        body: "Hi {{name}}",
+        schedule: { everyDays: 3, enabled: true, nextRunAt: past }
+      })
+    });
+    const id = String(((await create.json()) as { data: JsonObject }).data.id);
+
+    const tally = await service.runCampaignScheduler();
+    assert.ok(tally.ran >= 1);
+
+    const list = (await (await authed("/campaigns")).json()) as { data: JsonObject[] };
+    const updated = list.data.find((c) => c.id === id);
+    const schedule = updated?.schedule as JsonObject;
+    // nextRunAt has been pushed into the future (advanced by everyDays from now).
+    assert.ok(Date.parse(schedule.nextRunAt as string) > Date.now());
+    assert.ok(typeof (updated?.stats as JsonObject)?.lastRunAt === "string");
+  });
+
+  it("fires an automated new_lead campaign when a matching lead is created", async () => {
+    const create = await authed("/campaigns", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Auto welcome meta leads",
+        channelType: "marketing",
+        provider: "ultramsg",
+        audience: { include: "leads", leadSources: ["meta_ads"] },
+        body: "Hi {{name}}, welcome!",
+        trigger: "automated",
+        automatedOn: "new_lead"
+      })
+    });
+    const campaign = ((await create.json()) as { data: JsonObject }).data;
+    const id = String(campaign.id);
+    // Automated campaigns are armed ("scheduled") by default so they fire.
+    assert.equal(campaign.status, "scheduled");
+
+    // Creating a matching lead should fire the campaign for that one lead.
+    const lead = await authed("/leads", {
+      method: "POST",
+      body: JSON.stringify({ name: "Meta Lead", phone: "+919812300011", source: "meta_ads" })
+    });
+    assert.equal(lead.status, 200); // lead creation succeeds despite the send failing
+
+    let list = (await (await authed("/campaigns")).json()) as { data: JsonObject[] };
+    let updated = list.data.find((c) => c.id === id);
+    const stats = updated?.stats as JsonObject;
+    assert.equal(stats.audienceSize, 1); // just the new lead
+    assert.ok((stats.failed as number) >= 1); // no channel → send failed but was attempted
+    const firedAt = stats.lastRunAt as string;
+    assert.ok(typeof firedAt === "string");
+
+    // A NON-matching lead (different source) must NOT re-fire the campaign.
+    const other = await authed("/leads", {
+      method: "POST",
+      body: JSON.stringify({ name: "Google Lead", phone: "+919812300022", source: "google_ads" })
+    });
+    assert.equal(other.status, 200);
+    list = (await (await authed("/campaigns")).json()) as { data: JsonObject[] };
+    updated = list.data.find((c) => c.id === id);
+    assert.equal((updated?.stats as JsonObject).lastRunAt, firedAt); // unchanged → did not fire
   });
 });
 

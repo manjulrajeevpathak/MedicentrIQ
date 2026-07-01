@@ -513,6 +513,20 @@ export type CampaignTrigger = "manual" | "automated";
 export type CampaignAutomatedOn = "new_lead" | "appointment_missed" | "opd_done";
 export type CampaignStatus = "draft" | "sending" | "sent" | "scheduled";
 
+/**
+ * Recurring send schedule. The campaign scheduler re-resolves the audience and
+ * sends every `everyDays`, honouring `sendOncePerContact` so each repeat reaches
+ * only newly-qualifying recipients (not the whole segment again).
+ */
+export type CampaignSchedule = {
+  /** Interval between runs, in days (>= 1). */
+  everyDays: number;
+  /** ISO timestamp of the next scheduled run. */
+  nextRunAt: string;
+  /** When false, the schedule is paused (kept for reference, not executed). */
+  enabled: boolean;
+};
+
 /** Audience segment for a campaign — leads and/or patients, filtered. */
 export type CampaignAudience = {
   include: "leads" | "patients" | "both";
@@ -546,10 +560,21 @@ export type Campaign = {
   /** marketing: positional template params (may include {{name}}). */
   templateParams?: string[];
   trigger: CampaignTrigger;
-  /** Recorded only; automated execution is deferred to workflow-worker. */
+  /** For an automated campaign, the lifecycle event that fires it. `new_lead` is
+   *  executed live (a matching new lead is messaged on creation); the others are
+   *  reserved for the workflow engine. */
   automatedOn?: CampaignAutomatedOn;
+  /** When true, each contact (by normalized phone) is messaged at most once across
+   *  every run of this campaign — so recurring/re-sends only reach NEW recipients.
+   *  The set of already-contacted phones lives in `contactedPhones`. */
+  sendOncePerContact?: boolean;
+  /** The "contact-once" ledger: normalized phones already successfully messaged by
+   *  this campaign. Only consulted when `sendOncePerContact` is true. */
+  contactedPhones?: string[];
+  /** Recurring schedule; when enabled the campaign scheduler re-runs it periodically. */
+  schedule?: CampaignSchedule;
   status: CampaignStatus;
-  stats?: { audienceSize?: number; sent: number; failed: number; lastRunAt?: string };
+  stats?: { audienceSize?: number; sent: number; failed: number; skipped?: number; lastRunAt?: string };
   createdAt: string;
   updatedAt: string;
 };

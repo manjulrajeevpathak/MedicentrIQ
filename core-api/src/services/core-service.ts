@@ -30,6 +30,7 @@ import type {
   CampaignAutomatedOn,
   CampaignChannelType,
   CampaignRecipient,
+  CampaignSchedule,
   CampaignStatus,
   CampaignTrigger,
   Caregiver,
@@ -528,6 +529,8 @@ type UpsertCampaignInput = {
   templateParams?: unknown;
   trigger?: unknown;
   automatedOn?: unknown;
+  sendOncePerContact?: unknown;
+  schedule?: unknown;
   status?: unknown;
 };
 
@@ -6746,6 +6749,7 @@ export class CoreService {
       config.importedKeys = Array.from(imported);
       await this.persistence.saveCollection("leads", this.data.leads);
       await this.persistence.saveCollection("leadSheetConfigs", this.data.leadSheetConfigs);
+      await this.triggerNewLeadCampaigns(context, created);
     }
     return { imported: created.length, skipped, total };
   }
@@ -6820,6 +6824,7 @@ export class CoreService {
       stage: lead.stage,
       matchedPatientId: lead.matchedPatientId
     });
+    await this.triggerNewLeadCampaigns(context, [lead]);
     return lead;
   }
 
@@ -6983,6 +6988,7 @@ export class CoreService {
       created: created.length,
       skipped
     });
+    await this.triggerNewLeadCampaigns(context, created);
     return { created: created.length, skipped };
   }
 
@@ -7366,6 +7372,9 @@ export class CoreService {
     await this.persistence.saveCollection("leads", this.data.leads);
     await this.persistence.saveCollection("forms", this.data.forms);
     await this.persistence.saveCollection("auditEvents", this.data.auditEvents);
+    // Public form has no RequestContext — fire any automated new_lead campaigns as
+    // the system actor scoped to the form's tenant.
+    await this.triggerNewLeadCampaigns(this.systemContext(form.tenantId), [lead]);
     return { ok: true };
   }
 
@@ -7466,10 +7475,14 @@ export class CoreService {
     const timestamp = nowIso();
     const channelType: CampaignChannelType = input.channelType === "marketing" ? "marketing" : "transactional";
     const trigger: CampaignTrigger = input.trigger === "automated" ? "automated" : "manual";
+    // An automated campaign is "armed" (scheduled) by default so it actually fires;
+    // a manual one starts as a draft until the operator sends it.
     const status: CampaignStatus =
       typeof input.status === "string" && (CAMPAIGN_STATUSES as string[]).includes(input.status)
         ? (input.status as CampaignStatus)
-        : "draft";
+        : trigger === "automated"
+          ? "scheduled"
+          : "draft";
     const campaign: Campaign = {
       id: createId("campaign"),
       tenantId: context.tenantId,
@@ -7493,7 +7506,38 @@ export class CoreService {
     if (typeof input.automatedOn === "string" && (CAMPAIGN_AUTOMATED_ON as string[]).includes(input.automatedOn)) {
       campaign.automatedOn = input.automatedOn as CampaignAutomatedOn;
     }
+    if (input.sendOncePerContact === true) {
+      campaign.sendOncePerContact = true;
+      campaign.contactedPhones = [];
+    }
+    const schedule = this.sanitizeCampaignSchedule(input.schedule);
+    if (schedule) {
+      campaign.schedule = schedule;
+      // A live recurring schedule surfaces as "scheduled" rather than a one-off draft.
+      if (schedule.enabled) campaign.status = "scheduled";
+    }
     return campaign;
+  }
+
+  /**
+   * Normalise a recurring-schedule input into a usable CampaignSchedule, or
+   * undefined when absent/invalid. `everyDays` is clamped to >= 1; `nextRunAt`
+   * defaults to `everyDays` from now when not supplied or unparseable.
+   */
+  private sanitizeCampaignSchedule(raw: unknown): CampaignSchedule | undefined {
+    if (!isPlainRecord(raw)) return undefined;
+    const everyDaysNum = Number((raw as Record<string, unknown>).everyDays);
+    if (!Number.isFinite(everyDaysNum) || everyDaysNum < 1) return undefined;
+    const everyDays = Math.floor(everyDaysNum);
+    const enabled = (raw as Record<string, unknown>).enabled !== false;
+    const rawNext = (raw as Record<string, unknown>).nextRunAt;
+    let nextRunAt: string;
+    if (typeof rawNext === "string" && !Number.isNaN(Date.parse(rawNext))) {
+      nextRunAt = new Date(rawNext).toISOString();
+    } else {
+      nextRunAt = new Date(Date.now() + everyDays * 86_400_000).toISOString();
+    }
+    return { everyDays, nextRunAt, enabled };
   }
 
   async createCampaign(context: RequestContext, input: UpsertCampaignInput) {
@@ -7541,6 +7585,16 @@ export class CoreService {
           ? (input.automatedOn as CampaignAutomatedOn)
           : undefined;
     }
+    if (input.sendOncePerContact !== undefined) {
+      campaign.sendOncePerContact = input.sendOncePerContact === true ? true : undefined;
+      // Turning it on starts a fresh ledger; turning it off drops it.
+      campaign.contactedPhones = campaign.sendOncePerContact ? campaign.contactedPhones ?? [] : undefined;
+    }
+    if (input.schedule !== undefined) {
+      const schedule = this.sanitizeCampaignSchedule(input.schedule);
+      campaign.schedule = schedule;
+      if (schedule?.enabled) campaign.status = "scheduled";
+    }
     if (typeof input.status === "string" && (CAMPAIGN_STATUSES as string[]).includes(input.status)) {
       campaign.status = input.status as CampaignStatus;
     }
@@ -7551,23 +7605,56 @@ export class CoreService {
   }
 
   /**
-   * Resolve the audience and broadcast via the channel layer. Each recipient send
-   * is wrapped in try/catch so one unconfigured/failed send (sendMessage throws
-   * when UltraMsg/AISensy isn't configured) doesn't abort the whole campaign —
-   * it's tallied as failed and the run continues.
+   * Manual "Send now". Delegates to runCampaignSend, which applies the
+   * contact-once ledger, broadcasts, and records stats.
    */
   async sendCampaign(context: RequestContext, campaignId: string) {
     const campaign = this.ensureCampaign(context, campaignId);
-    const recipients = this.resolveCampaignAudience(context, campaign.audience);
+    return this.runCampaignSend(context, campaign);
+  }
+
+  /**
+   * Split resolved recipients into those eligible now and those skipped because the
+   * contact-once ledger already covers them. With sendOncePerContact off, all are
+   * eligible (legacy "blast the whole segment every time" behaviour).
+   */
+  private eligibleRecipients(
+    campaign: Campaign,
+    recipients: CampaignRecipient[]
+  ): { eligible: CampaignRecipient[]; skipped: number } {
+    if (!campaign.sendOncePerContact) return { eligible: recipients, skipped: 0 };
+    const contacted = new Set((campaign.contactedPhones ?? []).map((p) => normalizePhone(p)).filter(Boolean));
+    const eligible = recipients.filter((r) => {
+      const n = normalizePhone(r.phone);
+      return Boolean(n) && !contacted.has(n);
+    });
+    return { eligible, skipped: recipients.length - eligible.length };
+  }
+
+  /**
+   * Core broadcast shared by manual send, the recurring scheduler, and the new-lead
+   * trigger. Resolves the audience (unless the caller passes an explicit recipient
+   * list), skips anyone already covered by the contact-once ledger, sends via the
+   * channel layer, records the newly-contacted phones, and updates stats. Each
+   * recipient send is wrapped in try/catch so one unconfigured/failed send
+   * (sendMessage throws when UltraMsg/AISensy isn't configured) never aborts the run.
+   */
+  private async runCampaignSend(
+    context: RequestContext,
+    campaign: Campaign,
+    opts: { recipients?: CampaignRecipient[] } = {}
+  ): Promise<{ sent: number; failed: number; skipped: number; audienceSize: number }> {
+    const resolved = opts.recipients ?? this.resolveCampaignAudience(context, campaign.audience);
+    const { eligible, skipped } = this.eligibleRecipients(campaign, resolved);
     // Effective delivery provider — explicit, else derived from the category.
     const provider: ChannelProvider = campaign.provider ?? (campaign.channelType === "marketing" ? "aisensy" : "ultramsg");
 
     // Tenant-level tokens for the body (a campaign has no appointment context, so
-    // branch info comes from the tenant's primary branch). Recipient name fills
-    // every name alias so library templates ({{name}} OR {{patientName}}) work.
+    // branch info comes from the campaign tenant's primary branch). Recipient name
+    // fills every name alias so library templates ({{name}} OR {{patientName}}) work.
     const branch =
-      this.data.branches.find((b) => b.tenantId === context.tenantId && b.status === "active") ??
-      this.data.branches.find((b) => b.tenantId === context.tenantId);
+      this.data.branches.find((b) => b.tenantId === campaign.tenantId && b.status === "active") ??
+      this.data.branches.find((b) => b.tenantId === campaign.tenantId);
     const baseTokens: Record<string, string> = {
       branch: branch?.displayName ?? "",
       address: branch?.address ?? "",
@@ -7577,7 +7664,8 @@ export class CoreService {
 
     let sent = 0;
     let failed = 0;
-    for (const recipient of recipients) {
+    const newlyContacted: string[] = [];
+    for (const recipient of eligible) {
       try {
         const name = firstName(recipient.name);
         const renderedBody =
@@ -7595,6 +7683,8 @@ export class CoreService {
         });
         if (result.ok) {
           sent += 1;
+          const n = normalizePhone(recipient.phone);
+          if (n) newlyContacted.push(n);
         } else {
           failed += 1;
         }
@@ -7604,16 +7694,100 @@ export class CoreService {
       }
     }
 
-    campaign.stats = { audienceSize: recipients.length, sent, failed, lastRunAt: nowIso() };
-    campaign.status = "sent";
+    // Contact-once ledger: mark only successful sends, so a transient failure is
+    // retried on the next run rather than silently dropped.
+    if (campaign.sendOncePerContact && newlyContacted.length > 0) {
+      const ledger = new Set(campaign.contactedPhones ?? []);
+      for (const n of newlyContacted) ledger.add(n);
+      campaign.contactedPhones = Array.from(ledger);
+    }
+
+    campaign.stats = { audienceSize: resolved.length, sent, failed, skipped, lastRunAt: nowIso() };
+    // A live recurring campaign stays "scheduled"; a one-off becomes "sent".
+    campaign.status = campaign.schedule?.enabled ? "scheduled" : "sent";
     campaign.updatedAt = nowIso();
     await this.persistence.saveCollection("campaigns", this.data.campaigns);
     await this.audit(context, "campaign.send", "campaign", campaign.id, undefined, {
-      audienceSize: recipients.length,
+      audienceSize: resolved.length,
       sent,
-      failed
+      failed,
+      skipped
     });
-    return { sent, failed, audienceSize: recipients.length };
+    return { sent, failed, skipped, audienceSize: resolved.length };
+  }
+
+  /**
+   * Recurring-campaign scheduler tick. Wired from main.ts on an interval: runs every
+   * campaign whose schedule is enabled and due (nextRunAt <= now), advancing
+   * nextRunAt by `everyDays`. Per-campaign failures are swallowed so one bad send
+   * never stalls the rest. Honours the contact-once ledger, so each run reaches only
+   * newly-qualifying recipients.
+   */
+  async runCampaignScheduler(): Promise<{ ran: number; sent: number; failed: number }> {
+    const now = Date.now();
+    const due = this.data.campaigns.filter(
+      (c) => c.schedule?.enabled && Date.parse(c.schedule.nextRunAt) <= now
+    );
+    let ran = 0;
+    let sent = 0;
+    let failed = 0;
+    for (const campaign of due) {
+      try {
+        const result = await this.runCampaignSend(this.systemContext(campaign.tenantId), campaign);
+        ran += 1;
+        sent += result.sent;
+        failed += result.failed;
+      } catch {
+        // Non-fatal — a broken campaign shouldn't stall the scheduler.
+      } finally {
+        // Advance from now (not the stale nextRunAt) so a long outage doesn't create
+        // a backlog of catch-up runs.
+        if (campaign.schedule) {
+          campaign.schedule.nextRunAt = new Date(now + campaign.schedule.everyDays * 86_400_000).toISOString();
+          campaign.updatedAt = nowIso();
+        }
+      }
+    }
+    if (ran > 0) await this.persistence.saveCollection("campaigns", this.data.campaigns);
+    return { ran, sent, failed };
+  }
+
+  /**
+   * Fire automated `new_lead` campaigns for freshly-created leads. Called from every
+   * lead-creation path. For each active automated new_lead campaign whose audience
+   * matches a lead, that single lead is messaged (respecting the contact-once
+   * ledger). Best-effort: wrapped so a messaging failure never fails lead creation.
+   */
+  private async triggerNewLeadCampaigns(context: RequestContext, leads: Lead[]): Promise<void> {
+    if (leads.length === 0) return;
+    const campaigns = this.data.campaigns.filter(
+      (c) =>
+        c.tenantId === context.tenantId &&
+        c.trigger === "automated" &&
+        c.automatedOn === "new_lead" &&
+        c.status !== "draft" &&
+        c.audience.include !== "patients"
+    );
+    if (campaigns.length === 0) return;
+    for (const campaign of campaigns) {
+      const recipients: CampaignRecipient[] = leads
+        .filter((lead) => this.leadMatchesAudience(lead, campaign.audience) && lead.phone?.trim())
+        .map((lead) => ({ name: lead.name, phone: lead.phone, kind: "lead" as const, id: lead.id }));
+      if (recipients.length === 0) continue;
+      try {
+        await this.runCampaignSend(context, campaign, { recipients });
+      } catch {
+        // Non-fatal — never let campaign delivery break lead intake.
+      }
+    }
+  }
+
+  /** Whether a single lead satisfies a campaign audience's lead filters. */
+  private leadMatchesAudience(lead: Lead, audience: CampaignAudience): boolean {
+    if (audience.include === "patients") return false;
+    if (audience.leadStages && !audience.leadStages.includes(lead.stage)) return false;
+    if (audience.leadSources && !audience.leadSources.includes(lead.source)) return false;
+    return true;
   }
 
   // ---- Communication Workflows: templates (CRUD, config-only) --------------
