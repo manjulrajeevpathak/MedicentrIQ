@@ -305,6 +305,27 @@ export type AssistantConfig = {
 export type TemplateChannel = "whatsapp" | "call_script";
 export type TemplateKind = "text" | "form";
 
+/**
+ * Meta (WhatsApp Cloud) sync state on a template. ONE library template serves
+ * both worlds: its body (named {{tokens}}) is sent free-form inside the 24h
+ * service window, and — once submitted — the SAME body lives on the WABA as an
+ * approved template with positional {{1}}/{{2}} params. `paramTokens` records
+ * which named token sits behind each positional param, so campaign sends can
+ * personalize params per recipient automatically.
+ */
+export type TemplateMetaSync = {
+  /** Template name on the WABA (slugified from the library name). */
+  name: string;
+  language: string;
+  category: "MARKETING" | "UTILITY";
+  /** APPROVED | PENDING | REJECTED | PAUSED | UNKNOWN */
+  status: string;
+  /** Named token behind each positional param, in order ({{1}} ← paramTokens[0]). */
+  paramTokens: string[];
+  rejectionReason?: string;
+  syncedAt: string;
+};
+
 /** A reusable message/call-script body (or a form reference) used by workflow stages. */
 export type CommTemplate = {
   id: string;
@@ -316,6 +337,8 @@ export type CommTemplate = {
   body?: string;
   /** kind="form": references a LeadForm (forms collection). */
   formId?: string;
+  /** Present when this template has been submitted to the tenant's WABA. */
+  meta?: TemplateMetaSync;
   status: "active" | "archived";
   createdAt: string;
   updatedAt: string;

@@ -100,6 +100,42 @@ const postMessage = async (creds: WhatsAppCloudCreds, payload: unknown): Promise
   }
 };
 
+// ---- Library-template → Meta-template conversion ------------------------------
+
+/**
+ * Convert a library template body written with named tokens ({{patientName}},
+ * {{branch}}, …) into Meta's positional form ({{1}}, {{2}}, …). Every token
+ * OCCURRENCE gets its own sequential number (Meta requires strictly sequential
+ * params), and `paramTokens[i]` records the named token behind {{i+1}} so sends
+ * can render each param per recipient. Unknown/never-seen tokens are fine —
+ * they simply become params too.
+ */
+export const toMetaTemplateBody = (body: string): { text: string; paramTokens: string[] } => {
+  const paramTokens: string[] = [];
+  const text = body.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, token: string) => {
+    paramTokens.push(token);
+    return `{{${paramTokens.length}}}`;
+  });
+  return { text, paramTokens };
+};
+
+/** Realistic example values Meta requires for template review, per known token. */
+export const SAMPLE_TOKEN_VALUES: Record<string, string> = {
+  name: "Anita",
+  patientName: "Anita",
+  firstName: "Anita",
+  doctorName: "Dr. Mehta",
+  date: "12 Aug 2026",
+  time: "10:30 AM",
+  branch: "Main Branch",
+  address: "12 MG Road, Delhi",
+  mapLink: "https://maps.app.goo.gl/example",
+  clinicPhone: "+91 9800000000",
+  confirmLink: "https://example.com/c/abc123"
+};
+
+export const sampleValueForToken = (token: string): string => SAMPLE_TOKEN_VALUES[token] ?? "Sample";
+
 // ---- Template management (WABA-level) ---------------------------------------
 
 /** An approved/pending message template on the tenant's WABA. */

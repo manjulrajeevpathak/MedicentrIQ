@@ -16,8 +16,10 @@ import { sendAiSensy } from "../integrations/channels/aisensy.js";
 import {
   createWhatsAppCloudTemplate,
   listWhatsAppCloudTemplates,
+  sampleValueForToken,
   sendWhatsAppCloudTemplate,
-  sendWhatsAppCloudText
+  sendWhatsAppCloudText,
+  toMetaTemplateBody
 } from "../integrations/channels/whatsapp-cloud.js";
 import { placeCall } from "../integrations/channels/telephony.js";
 import { assistantAvailable, generateAssistantReply, type AssistantTurn } from "../integrations/assistant-llm.js";
@@ -8643,6 +8645,171 @@ export class CoreService {
     if (!exists) {
       throw new ApiError(400, `Form not found: ${formId}`);
     }
+  }
+
+  // ---- Unified WhatsApp templates: library ⇄ Meta (WABA) sync ---------------
+
+  /**
+   * Submit a library template to the tenant's WABA for Meta approval. The body's
+   * named tokens are converted to positional {{1}}/{{2}} params (mapping recorded
+   * in meta.paramTokens so campaign sends personalize automatically) and realistic
+   * sample values are attached for Meta's review. Re-submitting after a body edit
+   * creates/updates the same WABA template name.
+   */
+  async submitTemplateToMeta(context: RequestContext, templateId: string, input: Record<string, unknown>) {
+    const template = this.ensureTemplate(context, templateId);
+    if (template.channel !== "whatsapp" || template.kind !== "text" || !template.body?.trim()) {
+      throw new ApiError(400, "Only WhatsApp text templates with a body can be submitted to Meta.");
+    }
+    const wc = this.requireWhatsAppCloud(context);
+    if (!wc.wabaId) {
+      throw new ApiError(400, "The WhatsApp Business Account ID (WABA ID) is not configured.");
+    }
+    const category = input.category === "UTILITY" ? "UTILITY" : "MARKETING";
+    const language = typeof input.language === "string" && input.language.trim() ? input.language.trim() : "en";
+    const metaName = template.name
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    if (!metaName) {
+      throw new ApiError(400, "Template name must contain letters or numbers.");
+    }
+    const { text, paramTokens } = toMetaTemplateBody(template.body);
+    const result = await createWhatsAppCloudTemplate(
+      { wabaId: wc.wabaId, accessToken: wc.accessToken },
+      {
+        name: metaName,
+        category,
+        language,
+        body: text,
+        sampleParams: paramTokens.length > 0 ? paramTokens.map(sampleValueForToken) : undefined
+      }
+    );
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    template.meta = {
+      name: metaName,
+      language,
+      category,
+      status: result.status ?? "PENDING",
+      paramTokens,
+      syncedAt: nowIso()
+    };
+    template.updatedAt = nowIso();
+    await this.persistence.saveCollection("templates", this.data.templates);
+    await this.audit(context, "template.update", "template", template.id, undefined, {
+      metaSubmitted: metaName,
+      category,
+      params: paramTokens.length
+    });
+    return { ...template, usageCount: this.templateUsageCount(context.tenantId, template.id) };
+  }
+
+  /**
+   * Refresh Meta approval statuses for every library template that has been
+   * submitted, and surface WABA templates that exist only on Meta (created in
+   * WhatsApp Manager, or the stock hello_world) so they can be imported. One
+   * button in the UI → one call here.
+   */
+  async syncMetaTemplates(context: RequestContext) {
+    const wc = this.requireWhatsAppCloud(context);
+    if (!wc.wabaId) {
+      throw new ApiError(400, "The WhatsApp Business Account ID (WABA ID) is not configured.");
+    }
+    const result = await listWhatsAppCloudTemplates({ wabaId: wc.wabaId, accessToken: wc.accessToken });
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    const library = this.data.templates.filter((t) => t.tenantId === context.tenantId);
+    let mutated = false;
+    const matchedWabaIds = new Set<string>();
+    for (const template of library) {
+      if (!template.meta) continue;
+      const remote = result.templates.find(
+        (t) => t.name === template.meta?.name && t.language === template.meta.language
+      );
+      if (!remote) continue;
+      matchedWabaIds.add(remote.id);
+      if (
+        template.meta.status !== remote.status ||
+        template.meta.rejectionReason !== remote.rejectionReason
+      ) {
+        template.meta.status = remote.status;
+        template.meta.rejectionReason = remote.rejectionReason;
+        template.meta.syncedAt = nowIso();
+        template.updatedAt = nowIso();
+        mutated = true;
+      } else {
+        template.meta.syncedAt = nowIso();
+      }
+    }
+    if (mutated) {
+      await this.persistence.saveCollection("templates", this.data.templates);
+    }
+    const unmatched = result.templates.filter((t) => !matchedWabaIds.has(t.id));
+    return {
+      templates: library
+        .filter((t) => t.status === "active")
+        .map((t) => ({ ...t, usageCount: this.templateUsageCount(context.tenantId, t.id) })),
+      /** On the WABA but not in the library — importable. */
+      wabaOnly: unmatched
+    };
+  }
+
+  /**
+   * Import a WABA-only template into the library so there is ONE list. The Meta
+   * body's positional {{n}} placeholders are kept verbatim; paramTokens records
+   * the positions so the campaign composer knows values must be typed manually.
+   */
+  async importMetaTemplate(context: RequestContext, input: Record<string, unknown>) {
+    const name = ensureString(input.name, "name");
+    const language = ensureString(input.language, "language");
+    const wc = this.requireWhatsAppCloud(context);
+    if (!wc.wabaId) {
+      throw new ApiError(400, "The WhatsApp Business Account ID (WABA ID) is not configured.");
+    }
+    const result = await listWhatsAppCloudTemplates({ wabaId: wc.wabaId, accessToken: wc.accessToken });
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    const remote = result.templates.find((t) => t.name === name && t.language === language);
+    if (!remote) {
+      throw new ApiError(404, `Template not found on the WABA: ${name} (${language})`);
+    }
+    const already = this.data.templates.find(
+      (t) => t.tenantId === context.tenantId && t.meta?.name === name && t.meta.language === language
+    );
+    if (already) {
+      return { ...already, usageCount: this.templateUsageCount(context.tenantId, already.id) };
+    }
+    const body = remote.body ?? "";
+    const paramTokens = Array.from(body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)).map((m) => m[1]);
+    const timestamp = nowIso();
+    const template: CommTemplate = {
+      id: createId("template"),
+      tenantId: context.tenantId,
+      name: remote.name.replace(/_/g, " "),
+      channel: "whatsapp",
+      kind: "text",
+      body: body || `[${remote.name}]`,
+      meta: {
+        name: remote.name,
+        language: remote.language,
+        category: remote.category === "UTILITY" ? "UTILITY" : "MARKETING",
+        status: remote.status,
+        paramTokens,
+        ...(remote.rejectionReason ? { rejectionReason: remote.rejectionReason } : {}),
+        syncedAt: timestamp
+      },
+      status: "active",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.data.templates.push(template);
+    await this.persistence.saveCollection("templates", this.data.templates);
+    await this.audit(context, "template.create", "template", template.id, undefined, { importedFromMeta: remote.name });
+    return { ...template, usageCount: 0 };
   }
 
   // ---- Communication Workflows: workflows (CRUD, config-only) --------------

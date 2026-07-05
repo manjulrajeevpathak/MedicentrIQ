@@ -527,6 +527,15 @@ const createRoutes = (service: CoreService): Route[] => [
   route("POST", "/tenant/whatsapp/templates", "tenant:settings:manage", ({ auth, body }) =>
     service.createWaTemplate(auth, toRecord(body))
   ),
+  // Unified library ⇄ Meta sync: submit a library template for approval, refresh
+  // statuses (+ list WABA-only templates), import a WABA-only template.
+  route("POST", "/templates/:id/submit-meta", "tenant:settings:manage", ({ auth, params, body }) =>
+    service.submitTemplateToMeta(auth, params.id, toRecord(body))
+  ),
+  route("POST", "/templates/sync-meta", "tenant:settings:manage", ({ auth }) => service.syncMetaTemplates(auth)),
+  route("POST", "/templates/import-meta", "tenant:settings:manage", ({ auth, body }) =>
+    service.importMetaTemplate(auth, toRecord(body))
+  ),
   // Marketing opt-out (suppression) list.
   route("GET", "/tenant/opt-outs", "tenant:settings:manage", ({ auth }) => service.listOptOuts(auth)),
   route("POST", "/tenant/opt-outs", "tenant:settings:manage", ({ auth, body }) => {

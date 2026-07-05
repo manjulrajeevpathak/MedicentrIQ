@@ -250,6 +250,38 @@ describe("whatsapp cloud contract", () => {
     assert.equal(res.status, 400);
   });
 
+  it("converts named library tokens to sequential Meta params with a recorded mapping", async () => {
+    const { toMetaTemplateBody, sampleValueForToken } = await import("../src/integrations/channels/whatsapp-cloud.js");
+    const { text, paramTokens } = toMetaTemplateBody(
+      "Hi {{patientName}}, your visit at {{branch}} is on {{date}}. See you, {{patientName}}!"
+    );
+    // Every OCCURRENCE gets its own sequential number (Meta requires strict order).
+    assert.equal(text, "Hi {{1}}, your visit at {{2}} is on {{3}}. See you, {{4}}!");
+    assert.deepEqual(paramTokens, ["patientName", "branch", "date", "patientName"]);
+    // Sample values exist for known tokens, generic otherwise.
+    assert.equal(sampleValueForToken("patientName"), "Anita");
+    assert.equal(sampleValueForToken("someUnknownToken"), "Sample");
+    // A body without tokens converts to itself with no params.
+    const plain = toMetaTemplateBody("Namaste from the camp team.");
+    assert.equal(plain.text, "Namaste from the camp team.");
+    assert.deepEqual(plain.paramTokens, []);
+  });
+
+  it("guards Meta submission: only WhatsApp text templates with a body", async () => {
+    // A call-script template must be rejected before any Graph call happens.
+    const create = await authed("/templates", {
+      method: "POST",
+      body: JSON.stringify({ name: "Call script", channel: "call_script", kind: "text", body: "Ask about vision." })
+    });
+    assert.equal(create.status, 200);
+    const id = String(((await create.json()) as { data: JsonObject }).data.id);
+    const res = await authed(`/templates/${id}/submit-meta`, {
+      method: "POST",
+      body: JSON.stringify({ category: "MARKETING", language: "en" })
+    });
+    assert.equal(res.status, 400);
+  });
+
   it("manages the assistant config (disabled by default, hospital-editable)", async () => {
     const initial = (await (await authed("/tenant/assistant")).json()) as { data: JsonObject };
     assert.equal(initial.data.enabled, false);
