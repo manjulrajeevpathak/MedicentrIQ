@@ -138,18 +138,22 @@ Create a permanent **System User** token instead:
 
 ### Stage I — Real marketing templates
 
-24. Create templates in **Communications → Templates → WhatsApp (Meta)** (or in
-    Meta's WhatsApp Manager — both hit the same WABA):
-    - Name: lowercase + underscores (e.g. `camp_followup_v1`)
-    - Category: **MARKETING** (promos/retention) or **UTILITY** (appointment
-      updates etc. — cheaper, stricter rules)
-    - Body with positional placeholders: `Hi {{1}}, thank you for visiting our
-      eye camp at {{2}}. …` + sample values (Meta requires examples).
-25. Approval is usually minutes-to-hours (occasionally a day). Status is
-    visible via **Sync from Meta**. Rejected → reword (common causes: vague
-    placeholder-only bodies, prohibited claims, category mismatch).
-26. In a **Campaign**, pick provider *WhatsApp Cloud*, the approved template,
-    and map params — `{{name}}` in a param personalizes per recipient.
+24. There is ONE template library (**Communications → Templates**). Write the
+    body with normal MedicentrIQ tokens (`{{patientName}}`, `{{branch}}`,
+    `{{date}}` …) — the same template serves free-form session sends AND, once
+    approved, out-of-window sends.
+25. In the template editor, click **Submit to Meta** (pick MARKETING or
+    UTILITY + language). Your named tokens are converted to Meta's positional
+    `{{1}}/{{2}}` format automatically, with sample values attached for review.
+    Approval is usually minutes-to-hours; **Sync Meta** refreshes statuses.
+    Rejected → reword (common causes: vague placeholder-only bodies, prohibited
+    claims, category mismatch) and re-submit.
+26. Templates created directly in Meta's WhatsApp Manager (or the stock
+    `hello_world`) appear under "On your WABA only" after a sync — import them
+    into the library so everything stays in one list.
+27. In a **Campaign**, pick provider *WhatsApp Cloud* and the approved
+    template — params auto-personalize per recipient from the recorded token
+    mapping (imported/positional templates ask for manual values).
 
 ### Volume & quality (what governs your 5–10k/month)
 
