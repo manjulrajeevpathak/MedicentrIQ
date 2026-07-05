@@ -9,6 +9,7 @@ import {
   type ChannelActionState
 } from "@/app/(app)/admin/actions";
 import type { ChannelStatus } from "@/lib/users-types";
+import { WaSetupGuide } from "@/components/admin/wa-setup-guide";
 
 const inputCls =
   "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand-400";
@@ -145,18 +146,41 @@ export function IntegrationsPanel({
                 <span className="rounded bg-[var(--color-good-soft)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-good)]">Enabled</span>
               ) : null}
             </div>
-            <StatusPill ok={wa.configured} />
+            <div className="flex items-center gap-2">
+              <WaSetupGuide webhookUrl={webhookUrl} verifyToken={wa.verifyToken} />
+              <StatusPill ok={wa.configured} />
+            </div>
           </div>
+          <p className="mb-3 text-[11px] text-ink-muted">
+            New here? Open the <b>Setup guide</b> — it walks through creating the Meta app, the permanent token, and
+            the webhook, step by step.
+          </p>
           <form action={saveWa} className="space-y-3">
             <input type="hidden" name="provider" value="whatsapp_cloud" />
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className={labelCls}>Phone Number ID</label>
-                <input name="phoneNumberId" defaultValue={wa.phoneNumberId ?? ""} placeholder="1234567890…" className={inputCls} />
+                <input
+                  name="phoneNumberId"
+                  defaultValue={wa.phoneNumberId ?? ""}
+                  placeholder="e.g. 106540272229xxxx"
+                  autoComplete="off"
+                  inputMode="numeric"
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[10px] text-ink-faint">Numeric ID from Meta&rsquo;s API Setup — not the phone number.</p>
               </div>
               <div>
                 <label className={labelCls}>WABA ID</label>
-                <input name="wabaId" defaultValue={wa.wabaId ?? ""} placeholder="WhatsApp Business Account ID" className={inputCls} />
+                <input
+                  name="wabaId"
+                  defaultValue={wa.wabaId ?? ""}
+                  placeholder="e.g. 102290129340xxxx"
+                  autoComplete="off"
+                  inputMode="numeric"
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[10px] text-ink-faint">WhatsApp Business Account ID (templates live here).</p>
               </div>
             </div>
             <div>
