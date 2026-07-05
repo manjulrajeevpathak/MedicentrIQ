@@ -1,6 +1,7 @@
 import type {
   Appointment,
   AccessRequest,
+  AssistantConfig,
   AuditEvent,
   Branch,
   Call,
@@ -25,6 +26,7 @@ import type {
   LoginChallenge,
   MessageLog,
   MobileLinkSession,
+  OptOut,
   Organization,
   PasswordResetToken,
   TenantChannelConfig,
@@ -93,6 +95,8 @@ export type SeedData = {
   journeyEvents: JourneyEvent[];
   leadConfigs: LeadConfig[];
   leadSheetConfigs: LeadSheetConfig[];
+  optOuts: OptOut[];
+  assistantConfigs: AssistantConfig[];
   leads: Lead[];
   leadNotes: LeadNote[];
   leadCallbacks: LeadCallback[];
@@ -796,6 +800,8 @@ export const createSeedData = (): SeedData => ({
       updatedAt: daysFromNow(-30)
     }
   ],
+  optOuts: [],
+  assistantConfigs: [],
   leads: [
     {
       id: "lead_demo_001",
@@ -1147,6 +1153,8 @@ export const normalizeSeedData = (data: SeedData): SeedData => {
     journeyEvents: withTenant(data.journeyEvents ?? []),
     leadConfigs: data.leadConfigs?.length ? withTenant(data.leadConfigs) : seed.leadConfigs,
     leadSheetConfigs: data.leadSheetConfigs?.length ? withTenant(data.leadSheetConfigs) : seed.leadSheetConfigs,
+    optOuts: withTenant(data.optOuts ?? []),
+    assistantConfigs: withTenant(data.assistantConfigs ?? []),
     leads: data.leads?.length ? withTenant(data.leads) : seed.leads,
     leadNotes: data.leadNotes?.length ? withTenant(data.leadNotes) : seed.leadNotes,
     leadCallbacks: data.leadCallbacks?.length ? withTenant(data.leadCallbacks) : seed.leadCallbacks,

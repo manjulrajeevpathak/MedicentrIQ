@@ -519,7 +519,54 @@ const createRoutes = (service: CoreService): Route[] => [
   ),
   route("POST", "/service-events/workflow-callback", "service_events:ingest", ({ auth, body }) =>
     service.intakeWorkflowCallback(auth, toRecord(body))
-  )
+  ),
+
+  // ---- WhatsApp Cloud API (Meta) ------------------------------------------
+  // WABA template management (live against the Graph API).
+  route("GET", "/tenant/whatsapp/templates", "tenant:settings:manage", ({ auth }) => service.listWaTemplates(auth)),
+  route("POST", "/tenant/whatsapp/templates", "tenant:settings:manage", ({ auth, body }) =>
+    service.createWaTemplate(auth, toRecord(body))
+  ),
+  // Marketing opt-out (suppression) list.
+  route("GET", "/tenant/opt-outs", "tenant:settings:manage", ({ auth }) => service.listOptOuts(auth)),
+  route("POST", "/tenant/opt-outs", "tenant:settings:manage", ({ auth, body }) => {
+    const record = toRecord(body);
+    return service.addOptOut(auth, {
+      phone: String(record.phone ?? ""),
+      reason: record.reason === "complaint" ? "complaint" : "manual",
+      note: typeof record.note === "string" ? record.note : undefined
+    });
+  }),
+  route("DELETE", "/tenant/opt-outs/:id", "tenant:settings:manage", ({ auth, params }) =>
+    service.removeOptOut(auth, params.id)
+  ),
+  // Hospital-controlled WhatsApp assistant configuration.
+  route("GET", "/tenant/assistant", "tenant:settings:manage", ({ auth }) => service.getAssistantConfig(auth)),
+  route("PATCH", "/tenant/assistant", "tenant:settings:manage", ({ auth, body }) =>
+    service.updateAssistantConfig(auth, toRecord(body))
+  ),
+  // Inbound webhook processing, forwarded by integration-gateway (service key).
+  // The gateway wraps Meta's raw POST as { rawBody, signature } so the HMAC can
+  // be verified here against the tenant's stored app secret.
+  route("POST", "/integrations/whatsapp/:tenantId/webhook", "service_events:ingest", ({ params, body }) => {
+    const record = toRecord(body);
+    return service.processWhatsAppWebhook(
+      params.tenantId,
+      typeof record.rawBody === "string" ? record.rawBody : "",
+      typeof record.signature === "string" ? record.signature : undefined
+    );
+  }),
+  // Meta's GET subscription handshake, proxied by the gateway.
+  route("POST", "/integrations/whatsapp/:tenantId/verify", "service_events:ingest", ({ params, body }) => {
+    const record = toRecord(body);
+    const challenge = service.verifyWhatsAppWebhook(
+      params.tenantId,
+      String(record.mode ?? ""),
+      String(record.verifyToken ?? ""),
+      String(record.challenge ?? "")
+    );
+    return { challenge };
+  })
 ];
 
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {

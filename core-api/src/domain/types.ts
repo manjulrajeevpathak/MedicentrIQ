@@ -203,8 +203,28 @@ export type ServiceApiKey = {
 
 // ---- Messaging channels (per-tenant) --------------------------------------
 
-export type ChannelProvider = "ultramsg" | "aisensy";
+export type ChannelProvider = "ultramsg" | "aisensy" | "whatsapp_cloud";
 export type MessageType = "transactional" | "marketing";
+
+/**
+ * Meta WhatsApp Cloud API credentials (direct Graph API, no BSP). The hospital
+ * pastes these from its own Meta app / WABA (interim path) — later Embedded
+ * Signup fills the same fields via OAuth. `appSecret` verifies inbound webhook
+ * signatures; `verifyToken` answers Meta's one-time GET subscription handshake.
+ */
+export type WhatsAppCloudConfig = {
+  /** Graph API ID of the WhatsApp business phone number (NOT the phone number itself). */
+  phoneNumberId: string;
+  /** WhatsApp Business Account ID — templates live at this level. */
+  wabaId: string;
+  /** System-user access token with whatsapp_business_messaging + _management scopes. */
+  accessToken: string;
+  /** Meta app secret — used to verify X-Hub-Signature-256 on inbound webhooks. */
+  appSecret?: string;
+  /** Arbitrary string the hospital also enters in Meta's webhook config. */
+  verifyToken?: string;
+  enabled: boolean;
+};
 
 /** Per-tenant WhatsApp channel credentials. recordId = tenantId. Secrets are
  *  redacted on read everywhere except the manage path. */
@@ -214,27 +234,70 @@ export type TenantChannelConfig = {
   ultramsg?: { instanceId: string; token: string; enabled: boolean };
   /** AISensy — template/campaign (marketing). */
   aisensy?: { apiKey: string; enabled: boolean };
+  /** Meta WhatsApp Cloud API — templates + session messages + inbound webhooks. */
+  whatsappCloud?: WhatsAppCloudConfig;
   /** Telephony — per-tenant click-to-call / call-log provider (stub for now). */
   telephony?: { provider?: string; apiKey?: string; callerId?: string; enabled: boolean };
   createdAt: string;
   updatedAt: string;
 };
 
-/** Outbound message audit log (basis for future campaign delivery tracking). */
+export type MessageDirection = "outbound" | "inbound";
+export type MessageStatus = "sent" | "failed" | "delivered" | "read" | "received";
+
+/** Message audit log — every outbound attempt and (Cloud API) inbound message.
+ *  Outbound status upgrades sent→delivered→read via webhook status callbacks. */
 export type MessageLog = {
   id: string;
   tenantId: string;
+  /** Outbound: recipient phone. Inbound: sender phone (the patient). */
   to: string;
   channel: ChannelProvider;
   type: MessageType;
-  status: "sent" | "failed";
+  direction?: MessageDirection; // absent = outbound (back-compat)
+  status: MessageStatus;
   body?: string;
   campaign?: string;
   /** Communication-workflow template this message was rendered from (delivery attribution). */
   templateId?: string;
+  /** Cloud API template name, for template sends. */
+  waTemplate?: string;
   providerId?: string;
   error?: string;
   createdAt: string;
+  updatedAt?: string;
+};
+
+/** A suppressed (opted-out) phone for a tenant — never messaged by campaigns
+ *  or marketing sends. Created by inbound STOP or manually. recordId = id. */
+export type OptOut = {
+  id: string;
+  tenantId: string;
+  /** Normalized phone (digits only, country-code form). */
+  phone: string;
+  reason: "stop_message" | "manual" | "complaint";
+  note?: string;
+  createdAt: string;
+};
+
+/**
+ * Per-tenant WhatsApp assistant (chatbot) configuration — the hospital controls
+ * how the AI behaves. recordId = tenantId. The runtime grounds replies in
+ * `instructions` + `knowledge` + live org context (branches, doctors, timings).
+ */
+export type AssistantConfig = {
+  tenantId: string;
+  enabled: boolean;
+  /** Persona + behaviour instructions, hospital-authored. */
+  instructions?: string;
+  /** Editable knowledge base entries (FAQs, prices, prep instructions…). */
+  knowledge: { id: string; title: string; content: string }[];
+  /** Message shown when the assistant hands off / is unavailable. */
+  handoffMessage?: string;
+  /** Extra phrases that force a human handoff (in addition to built-ins). */
+  handoffKeywords: string[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 // ---- Communication Workflows (config / data layer) ------------------------
@@ -557,6 +620,10 @@ export type Campaign = {
   body?: string;
   /** marketing: AISensy campaign/template name. */
   aisensyCampaign?: string;
+  /** whatsapp_cloud: approved template name on the tenant's WABA. */
+  waTemplateName?: string;
+  /** whatsapp_cloud: template language code (e.g. "en", "en_US", "hi"). */
+  waTemplateLanguage?: string;
   /** marketing: positional template params (may include {{name}}). */
   templateParams?: string[];
   trigger: CampaignTrigger;

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { DEMO_STAFF_USER_ID, DEMO_TENANT_ID, type SeedData } from "../domain/seed.js";
 import { hasPermission, permissionsForRoles } from "../auth/permissions.js";
 import { bearerTokenFromAuthorization, createStaffSessionToken, verifyStaffSessionToken, type SessionScope } from "../auth/staff-session.js";
@@ -13,7 +13,14 @@ import {
 } from "../integrations/email.js";
 import { sendUltraMsg } from "../integrations/channels/ultramsg.js";
 import { sendAiSensy } from "../integrations/channels/aisensy.js";
+import {
+  createWhatsAppCloudTemplate,
+  listWhatsAppCloudTemplates,
+  sendWhatsAppCloudTemplate,
+  sendWhatsAppCloudText
+} from "../integrations/channels/whatsapp-cloud.js";
 import { placeCall } from "../integrations/channels/telephony.js";
+import { assistantAvailable, generateAssistantReply, type AssistantTurn } from "../integrations/assistant-llm.js";
 import { createStorageService, type StorageService } from "../integrations/storage.js";
 import { OPHTHALMOLOGY_CONDITION_CATALOG } from "../domain/clinical-catalog.js";
 import type {
@@ -80,6 +87,9 @@ import type {
   MessageLog,
   ChannelProvider,
   MessageType,
+  OptOut,
+  AssistantConfig,
+  WhatsAppCloudConfig,
   Patient,
   PatientSummary,
   Permission,
@@ -526,6 +536,8 @@ type UpsertCampaignInput = {
   audience?: unknown;
   body?: unknown;
   aisensyCampaign?: unknown;
+  waTemplateName?: unknown;
+  waTemplateLanguage?: unknown;
   templateParams?: unknown;
   trigger?: unknown;
   automatedOn?: unknown;
@@ -1040,6 +1052,14 @@ const maskPhone = (phone?: string) => {
 };
 
 const normalizePhone = (phone?: string) => phone?.replace(/\D/g, "").slice(-10);
+
+/** Verify Meta's X-Hub-Signature-256 header: "sha256=" + HMAC-SHA256(appSecret, rawBody). */
+const verifyMetaSignature = (rawBody: string, signature: string, appSecret: string): boolean => {
+  const expected = `sha256=${createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex")}`;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
 
 const ensureRecordArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
@@ -1907,6 +1927,17 @@ export class CoreService {
         enabled: c?.aisensy?.enabled ?? false,
         apiKeyTail: tail(c?.aisensy?.apiKey)
       },
+      whatsappCloud: {
+        configured: Boolean(c?.whatsappCloud?.phoneNumberId && c.whatsappCloud.accessToken),
+        enabled: c?.whatsappCloud?.enabled ?? false,
+        phoneNumberId: c?.whatsappCloud?.phoneNumberId ?? null,
+        wabaId: c?.whatsappCloud?.wabaId ?? null,
+        accessTokenTail: tail(c?.whatsappCloud?.accessToken),
+        appSecretTail: tail(c?.whatsappCloud?.appSecret),
+        verifyToken: c?.whatsappCloud?.verifyToken ?? null,
+        /** Paste this path (on the public gateway URL) into Meta's webhook config. */
+        webhookPath: `/webhooks/meta/whatsapp/${context.tenantId}`
+      },
       telephony: {
         configured: Boolean(c?.telephony?.apiKey),
         enabled: c?.telephony?.enabled ?? false,
@@ -1939,6 +1970,23 @@ export class CoreService {
       const apiKey = typeof a.apiKey === "string" && a.apiKey.trim() ? a.apiKey.trim() : c.aisensy?.apiKey ?? "";
       c.aisensy = { apiKey, enabled: typeof a.enabled === "boolean" ? a.enabled : c.aisensy?.enabled ?? true };
     }
+    const wc = input.whatsappCloud;
+    if (wc && typeof wc === "object") {
+      const w = wc as Record<string, unknown>;
+      const keep = c.whatsappCloud;
+      const str = (v: unknown, prev?: string) => (typeof v === "string" && v.trim() ? v.trim() : prev ?? "");
+      const next: WhatsAppCloudConfig = {
+        phoneNumberId: str(w.phoneNumberId, keep?.phoneNumberId),
+        wabaId: str(w.wabaId, keep?.wabaId),
+        accessToken: str(w.accessToken, keep?.accessToken),
+        enabled: typeof w.enabled === "boolean" ? w.enabled : keep?.enabled ?? true
+      };
+      const appSecret = str(w.appSecret, keep?.appSecret);
+      if (appSecret) next.appSecret = appSecret;
+      const verifyToken = str(w.verifyToken, keep?.verifyToken);
+      if (verifyToken) next.verifyToken = verifyToken;
+      c.whatsappCloud = next;
+    }
     const tel = input.telephony;
     if (tel && typeof tel === "object") {
       const t = tel as Record<string, unknown>;
@@ -1959,6 +2007,9 @@ export class CoreService {
     await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
       ultramsg: c.ultramsg ? { configured: Boolean(c.ultramsg.instanceId), enabled: c.ultramsg.enabled } : null,
       aisensy: c.aisensy ? { configured: Boolean(c.aisensy.apiKey), enabled: c.aisensy.enabled } : null,
+      whatsappCloud: c.whatsappCloud
+        ? { configured: Boolean(c.whatsappCloud.phoneNumberId && c.whatsappCloud.accessToken), enabled: c.whatsappCloud.enabled }
+        : null,
       telephony: c.telephony ? { configured: Boolean(c.telephony.apiKey), enabled: c.telephony.enabled } : null
     });
     return this.getTenantChannels(context);
@@ -2602,13 +2653,21 @@ export class CoreService {
     // go via UltraMsg (free-form) just as well as AISensy (approved template).
     // Default keeps back-compat: marketing→AISensy, transactional→UltraMsg.
     const providerOverride =
-      input.provider === "ultramsg" || input.provider === "aisensy" ? (input.provider as ChannelProvider) : undefined;
+      input.provider === "ultramsg" || input.provider === "aisensy" || input.provider === "whatsapp_cloud"
+        ? (input.provider as ChannelProvider)
+        : undefined;
     const config = this.tenantChannelConfig(context.tenantId);
+
+    // Marketing never reaches an opted-out phone, regardless of provider.
+    if (type === "marketing" && this.isOptedOut(context.tenantId, to)) {
+      throw new ApiError(400, "This recipient has opted out of marketing messages.");
+    }
 
     const channel: ChannelProvider = providerOverride ?? (type === "marketing" ? "aisensy" : "ultramsg");
     let result: { ok: true; providerId?: string } | { ok: false; error: string };
     let body: string | undefined;
     let campaign: string | undefined;
+    let waTemplate: string | undefined;
 
     if (channel === "aisensy") {
       if (!config?.aisensy?.enabled || !config.aisensy.apiKey) {
@@ -2620,6 +2679,29 @@ export class CoreService {
         userName: typeof input.userName === "string" ? input.userName : undefined,
         params: Array.isArray(input.params) ? (input.params.filter((p) => typeof p === "string") as string[]) : undefined
       });
+    } else if (channel === "whatsapp_cloud") {
+      const wc = config?.whatsappCloud;
+      if (!wc?.enabled || !wc.phoneNumberId || !wc.accessToken) {
+        throw new ApiError(400, "WhatsApp Cloud API is not configured for this hospital.");
+      }
+      const creds = { phoneNumberId: wc.phoneNumberId, accessToken: wc.accessToken };
+      const template = isPlainRecord(input.template) ? input.template : undefined;
+      if (template && typeof template.name === "string" && template.name) {
+        // Template send — required outside the 24h service window.
+        waTemplate = template.name;
+        const params = Array.isArray(template.params)
+          ? (template.params.filter((p) => typeof p === "string") as string[])
+          : undefined;
+        result = await sendWhatsAppCloudTemplate(creds, to, {
+          name: template.name,
+          language: typeof template.language === "string" && template.language ? template.language : "en",
+          params
+        });
+      } else {
+        // Free-form session message — only lands inside the 24h window.
+        body = ensureString(input.body, "body");
+        result = await sendWhatsAppCloudText(creds, to, body);
+      }
     } else {
       if (!config?.ultramsg?.enabled || !config.ultramsg.instanceId || !config.ultramsg.token) {
         throw new ApiError(400, "UltraMsg is not configured for this hospital.");
@@ -2634,9 +2716,11 @@ export class CoreService {
       to,
       channel,
       type,
+      direction: "outbound",
       status: result.ok ? "sent" : "failed",
       ...(body ? { body } : {}),
       ...(campaign ? { campaign } : {}),
+      ...(waTemplate ? { waTemplate } : {}),
       ...(result.ok && result.providerId ? { providerId: result.providerId } : {}),
       ...(result.ok ? {} : { error: result.error }),
       createdAt: nowIso()
@@ -2654,6 +2738,521 @@ export class CoreService {
       .filter((entry) => (filters.templateId ? entry.templateId === filters.templateId : true))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, limit);
+  }
+
+  // ---- WhatsApp Cloud API: templates on the tenant's WABA -------------------
+
+  private requireWhatsAppCloud(context: RequestContext): WhatsAppCloudConfig {
+    const wc = this.tenantChannelConfig(context.tenantId)?.whatsappCloud;
+    if (!wc?.phoneNumberId || !wc.accessToken) {
+      throw new ApiError(400, "WhatsApp Cloud API is not configured for this hospital.");
+    }
+    return wc;
+  }
+
+  /** Live list of the WABA's message templates (approved + pending + rejected). */
+  async listWaTemplates(context: RequestContext) {
+    const wc = this.requireWhatsAppCloud(context);
+    if (!wc.wabaId) {
+      throw new ApiError(400, "The WhatsApp Business Account ID (WABA ID) is not configured.");
+    }
+    const result = await listWhatsAppCloudTemplates({ wabaId: wc.wabaId, accessToken: wc.accessToken });
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    return { templates: result.templates };
+  }
+
+  /** Create a template on the WABA and submit it for Meta approval. */
+  async createWaTemplate(context: RequestContext, input: Record<string, unknown>) {
+    const wc = this.requireWhatsAppCloud(context);
+    if (!wc.wabaId) {
+      throw new ApiError(400, "The WhatsApp Business Account ID (WABA ID) is not configured.");
+    }
+    const name = ensureString(input.name, "name")
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    if (!name) {
+      throw new ApiError(400, "Template name must contain letters/numbers (lowercase + underscores).");
+    }
+    const body = ensureString(input.body, "body");
+    const category = input.category === "UTILITY" ? "UTILITY" : "MARKETING";
+    const language = typeof input.language === "string" && input.language.trim() ? input.language.trim() : "en";
+    const sampleParams = Array.isArray(input.sampleParams)
+      ? (input.sampleParams.filter((p) => typeof p === "string" && p) as string[])
+      : undefined;
+    const result = await createWhatsAppCloudTemplate(
+      { wabaId: wc.wabaId, accessToken: wc.accessToken },
+      { name, category, language, body, sampleParams }
+    );
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
+      waTemplateSubmitted: name,
+      category
+    });
+    return { name, id: result.id, status: result.status ?? "PENDING" };
+  }
+
+  // ---- Opt-outs (marketing suppression list) ---------------------------------
+
+  /** Whether a phone has opted out of this tenant's marketing messages. */
+  private isOptedOut(tenantId: string, phone: string): boolean {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return false;
+    return this.data.optOuts.some((entry) => entry.tenantId === tenantId && entry.phone === normalized);
+  }
+
+  listOptOuts(context: RequestContext) {
+    return this.data.optOuts
+      .filter((entry) => entry.tenantId === context.tenantId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async addOptOut(
+    context: RequestContext,
+    input: { phone: string; reason?: OptOut["reason"]; note?: string }
+  ): Promise<OptOut | null> {
+    const normalized = normalizePhone(ensureString(input.phone, "phone"));
+    if (!normalized) {
+      throw new ApiError(400, "A valid phone number is required.");
+    }
+    if (this.isOptedOut(context.tenantId, normalized)) {
+      return this.data.optOuts.find((e) => e.tenantId === context.tenantId && e.phone === normalized) ?? null;
+    }
+    const optOut: OptOut = {
+      id: createId("optout"),
+      tenantId: context.tenantId,
+      phone: normalized,
+      reason: input.reason ?? "manual",
+      ...(input.note ? { note: input.note } : {}),
+      createdAt: nowIso()
+    };
+    this.data.optOuts.push(optOut);
+    await this.persistence.saveCollection("optOuts", this.data.optOuts);
+    return optOut;
+  }
+
+  async removeOptOut(context: RequestContext, optOutId: string) {
+    const index = this.data.optOuts.findIndex(
+      (entry) => entry.id === optOutId && entry.tenantId === context.tenantId
+    );
+    if (index === -1) {
+      throw new ApiError(404, `Opt-out not found: ${optOutId}`);
+    }
+    this.data.optOuts.splice(index, 1);
+    await this.persistence.saveCollection("optOuts", this.data.optOuts);
+    return { removed: true };
+  }
+
+  /** Drop opted-out phones from a recipient list (marketing sends). */
+  private filterOptedOut(tenantId: string, recipients: CampaignRecipient[]): {
+    allowed: CampaignRecipient[];
+    optedOut: number;
+  } {
+    const allowed = recipients.filter((r) => !this.isOptedOut(tenantId, r.phone));
+    return { allowed, optedOut: recipients.length - allowed.length };
+  }
+
+  // ---- WhatsApp Cloud API: inbound webhook processing ------------------------
+
+  /**
+   * Answer Meta's one-time GET subscription handshake for a tenant. Returns the
+   * hub.challenge to echo when the verify token matches the tenant's configured
+   * one; null otherwise (the gateway then responds 403).
+   */
+  verifyWhatsAppWebhook(tenantId: string, mode: string, verifyToken: string, challenge: string): string | null {
+    const wc = this.tenantChannelConfig(tenantId)?.whatsappCloud;
+    if (mode !== "subscribe" || !wc?.verifyToken || !verifyToken || wc.verifyToken !== verifyToken) {
+      return null;
+    }
+    return challenge;
+  }
+
+  /**
+   * Process one Meta webhook POST for a tenant. `rawBody` is the exact body
+   * string Meta sent (signature is HMAC-SHA256 over those bytes with the
+   * tenant's app secret). Handles inbound messages (log + STOP/START + assistant)
+   * and status callbacks (sent→delivered→read upgrades on the message log).
+   * Never throws for content errors — Meta retries on non-200.
+   */
+  async processWhatsAppWebhook(
+    tenantId: string,
+    rawBody: string,
+    signature: string | undefined
+  ): Promise<{ ok: boolean; handled: number; reason?: string }> {
+    const wc = this.tenantChannelConfig(tenantId)?.whatsappCloud;
+    if (!wc?.enabled) {
+      return { ok: false, handled: 0, reason: "whatsapp_cloud_not_configured" };
+    }
+    // Signature check: required whenever an app secret is configured.
+    if (wc.appSecret) {
+      if (!signature || !verifyMetaSignature(rawBody, signature, wc.appSecret)) {
+        return { ok: false, handled: 0, reason: "invalid_signature" };
+      }
+    }
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawBody) as Record<string, unknown>;
+    } catch {
+      return { ok: false, handled: 0, reason: "invalid_json" };
+    }
+
+    const context = this.systemContext(tenantId);
+    let handled = 0;
+    let messagesMutated = false;
+
+    const entries = Array.isArray(payload.entry) ? payload.entry : [];
+    for (const entry of entries) {
+      if (!isPlainRecord(entry)) continue;
+      const changes = Array.isArray(entry.changes) ? entry.changes : [];
+      for (const change of changes) {
+        if (!isPlainRecord(change) || !isPlainRecord(change.value)) continue;
+        const value = change.value as Record<string, unknown>;
+
+        // -- Status callbacks: upgrade outbound log rows (sent→delivered→read). --
+        const statuses = Array.isArray(value.statuses) ? value.statuses : [];
+        for (const status of statuses) {
+          if (!isPlainRecord(status)) continue;
+          const wamid = typeof status.id === "string" ? status.id : undefined;
+          const state = typeof status.status === "string" ? status.status : undefined;
+          if (!wamid || !state) continue;
+          const log = this.data.messages.find(
+            (m) => m.tenantId === tenantId && m.providerId === wamid && m.direction !== "inbound"
+          );
+          if (!log) continue;
+          const rank: Record<string, number> = { sent: 1, delivered: 2, read: 3 };
+          if (state === "failed") {
+            log.status = "failed";
+            const errors = Array.isArray(status.errors) ? status.errors : [];
+            const first = isPlainRecord(errors[0]) ? errors[0] : undefined;
+            log.error = typeof first?.title === "string" ? first.title : "Delivery failed.";
+            log.updatedAt = nowIso();
+            messagesMutated = true;
+            handled += 1;
+          } else if ((rank[state] ?? 0) > (rank[log.status] ?? 0)) {
+            log.status = state as MessageLog["status"];
+            log.updatedAt = nowIso();
+            messagesMutated = true;
+            handled += 1;
+          }
+        }
+
+        // -- Inbound messages -------------------------------------------------
+        const messages = Array.isArray(value.messages) ? value.messages : [];
+        const contacts = Array.isArray(value.contacts) ? value.contacts : [];
+        for (const message of messages) {
+          if (!isPlainRecord(message)) continue;
+          const wamid = typeof message.id === "string" ? message.id : undefined;
+          const from = typeof message.from === "string" ? message.from : undefined;
+          if (!wamid || !from) continue;
+          // Dedupe: Meta retries webhooks, so the same wamid can arrive twice.
+          if (this.data.messages.some((m) => m.tenantId === tenantId && m.providerId === wamid)) {
+            continue;
+          }
+          const text =
+            isPlainRecord(message.text) && typeof message.text.body === "string"
+              ? message.text.body
+              : isPlainRecord(message.button) && typeof message.button.text === "string"
+                ? message.button.text
+                : "";
+          const contact = contacts.find((c) => isPlainRecord(c)) as Record<string, unknown> | undefined;
+          const profileName =
+            contact && isPlainRecord(contact.profile) && typeof contact.profile.name === "string"
+              ? contact.profile.name
+              : undefined;
+
+          const inbound: MessageLog = {
+            id: createId("msg"),
+            tenantId,
+            to: from,
+            channel: "whatsapp_cloud",
+            type: "transactional",
+            direction: "inbound",
+            status: "received",
+            body: text || `[${typeof message.type === "string" ? message.type : "unsupported"} message]`,
+            providerId: wamid,
+            createdAt: nowIso()
+          };
+          this.data.messages.push(inbound);
+          messagesMutated = true;
+          handled += 1;
+
+          await this.handleInboundWhatsApp(context, wc, from, text, profileName);
+        }
+      }
+    }
+
+    if (messagesMutated) {
+      await this.persistence.saveCollection("messages", this.data.messages);
+    }
+    return { ok: true, handled };
+  }
+
+  /**
+   * React to one inbound patient message: STOP/START manage the opt-out list;
+   * everything else goes to the assistant (if enabled + available) or to the
+   * human inbox. All replies are session messages inside the 24h window.
+   */
+  private async handleInboundWhatsApp(
+    context: RequestContext,
+    wc: WhatsAppCloudConfig,
+    from: string,
+    text: string,
+    profileName?: string
+  ): Promise<void> {
+    const creds = { phoneNumberId: wc.phoneNumberId, accessToken: wc.accessToken };
+    const trimmed = (text ?? "").trim();
+    const upper = trimmed.toUpperCase();
+
+    const replyAndLog = async (body: string) => {
+      const result = await sendWhatsAppCloudText(creds, from, body);
+      const log: MessageLog = {
+        id: createId("msg"),
+        tenantId: context.tenantId,
+        to: from,
+        channel: "whatsapp_cloud",
+        type: "transactional",
+        direction: "outbound",
+        status: result.ok ? "sent" : "failed",
+        body,
+        ...(result.ok && result.providerId ? { providerId: result.providerId } : {}),
+        ...(result.ok ? {} : { error: result.error }),
+        createdAt: nowIso()
+      };
+      this.data.messages.push(log);
+      await this.persistence.saveCollection("messages", this.data.messages);
+    };
+
+    // Opt-out / opt-in keywords (Meta policy + basic hygiene).
+    if (["STOP", "UNSUBSCRIBE", "OPT OUT", "OPTOUT"].includes(upper)) {
+      await this.addOptOut(context, { phone: from, reason: "stop_message" });
+      await replyAndLog("You've been unsubscribed and won't receive promotional messages. Reply START anytime to opt back in.");
+      return;
+    }
+    if (["START", "SUBSCRIBE", "OPT IN", "OPTIN"].includes(upper)) {
+      const existing = this.data.optOuts.find(
+        (e) => e.tenantId === context.tenantId && e.phone === normalizePhone(from)
+      );
+      if (existing) {
+        await this.removeOptOut(context, existing.id);
+      }
+      await replyAndLog("Welcome back — you'll receive updates from us again.");
+      return;
+    }
+    if (!trimmed) {
+      return; // media/unsupported message with no text — logged, nothing to answer.
+    }
+
+    const assistant = this.resolveAssistantConfig(context.tenantId);
+    const wantsHuman = this.matchesHandoff(trimmed, assistant);
+
+    if (!assistant.enabled || !assistantAvailable() || wantsHuman) {
+      // Straight to the human inbox; acknowledge so the patient isn't left hanging.
+      await this.createInboxHandoff(context, from, trimmed, profileName);
+      await replyAndLog(
+        assistant.handoffMessage?.trim() ||
+          "Thanks for reaching out — our team has your message and will get back to you shortly."
+      );
+      return;
+    }
+
+    // Assistant reply, grounded in hospital context + recent conversation.
+    const systemPrompt = this.buildAssistantSystemPrompt(context.tenantId, assistant);
+    const turns = this.recentConversation(context.tenantId, from, trimmed);
+    const result = await generateAssistantReply(systemPrompt, turns);
+    if (!result.ok) {
+      await this.createInboxHandoff(context, from, trimmed, profileName);
+      await replyAndLog(
+        assistant.handoffMessage?.trim() ||
+          "Thanks for reaching out — our team has your message and will get back to you shortly."
+      );
+      return;
+    }
+    await replyAndLog(result.reply);
+    if (result.handoff) {
+      await this.createInboxHandoff(context, from, trimmed, profileName);
+    }
+  }
+
+  /** Create an Inbox interaction for a WhatsApp conversation needing a human. */
+  private async createInboxHandoff(
+    context: RequestContext,
+    from: string,
+    text: string,
+    profileName?: string
+  ): Promise<void> {
+    const normalized = normalizePhone(from);
+    const patient = this.findPatientByPhone(context.tenantId, from);
+    // One open interaction per phone — append instead of flooding the inbox.
+    const open = this.data.interactions.find(
+      (i) =>
+        i.tenantId === context.tenantId &&
+        i.channel === "whatsapp" &&
+        i.status !== "closed" &&
+        normalizePhone(i.from ?? "") === normalized
+    );
+    if (open) {
+      open.body = `${open.body}\n[${new Date().toLocaleString("en-IN")}] ${text}`;
+      await this.persistence.saveCollection("interactions", this.data.interactions);
+      return;
+    }
+    const interaction: Interaction = {
+      id: createId("interaction"),
+      tenantId: context.tenantId,
+      ...(patient ? { patientId: patient.id } : {}),
+      channel: "whatsapp",
+      direction: "inbound",
+      status: "new",
+      subject: `WhatsApp from ${profileName || patient?.displayName || from}`,
+      body: text,
+      from,
+      urgency: "medium",
+      receivedAt: nowIso(),
+      createdTaskIds: []
+    };
+    this.data.interactions.push(interaction);
+    await this.persistence.saveCollection("interactions", this.data.interactions);
+  }
+
+  // ---- WhatsApp assistant (hospital-controlled chatbot) ----------------------
+
+  private resolveAssistantConfig(tenantId: string): AssistantConfig {
+    const existing = this.data.assistantConfigs.find((entry) => entry.tenantId === tenantId);
+    if (existing) return existing;
+    const now = nowIso();
+    return {
+      tenantId,
+      enabled: false,
+      knowledge: [],
+      handoffKeywords: [],
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+
+  getAssistantConfig(context: RequestContext) {
+    return { ...this.resolveAssistantConfig(context.tenantId), available: assistantAvailable() };
+  }
+
+  async updateAssistantConfig(context: RequestContext, input: Record<string, unknown>) {
+    let config = this.data.assistantConfigs.find((entry) => entry.tenantId === context.tenantId);
+    if (!config) {
+      config = this.resolveAssistantConfig(context.tenantId);
+      this.data.assistantConfigs.push(config);
+    }
+    if (typeof input.enabled === "boolean") config.enabled = input.enabled;
+    if (input.instructions !== undefined) {
+      config.instructions =
+        typeof input.instructions === "string" && input.instructions.trim() ? input.instructions.trim() : undefined;
+    }
+    if (input.handoffMessage !== undefined) {
+      config.handoffMessage =
+        typeof input.handoffMessage === "string" && input.handoffMessage.trim() ? input.handoffMessage.trim() : undefined;
+    }
+    if (Array.isArray(input.handoffKeywords)) {
+      config.handoffKeywords = input.handoffKeywords
+        .filter((k): k is string => typeof k === "string" && Boolean(k.trim()))
+        .map((k) => k.trim())
+        .slice(0, 30);
+    }
+    if (Array.isArray(input.knowledge)) {
+      config.knowledge = input.knowledge
+        .filter(isPlainRecord)
+        .map((entry) => ({
+          id: typeof entry.id === "string" && entry.id ? entry.id : createId("kb"),
+          title: typeof entry.title === "string" ? entry.title.trim() : "",
+          content: typeof entry.content === "string" ? entry.content.trim() : ""
+        }))
+        .filter((entry) => entry.title && entry.content)
+        .slice(0, 100);
+    }
+    config.updatedAt = nowIso();
+    await this.persistence.saveCollection("assistantConfigs", this.data.assistantConfigs);
+    await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
+      assistant: { enabled: config.enabled, knowledgeEntries: config.knowledge.length }
+    });
+    return this.getAssistantConfig(context);
+  }
+
+  /** Built-in + hospital-configured phrases that force a human handoff. */
+  private matchesHandoff(text: string, config: AssistantConfig): boolean {
+    const lower = text.toLowerCase();
+    const builtIn = ["talk to a human", "talk to human", "speak to a person", "real person", "talk to staff", "call me back", "human agent"];
+    return [...builtIn, ...config.handoffKeywords.map((k) => k.toLowerCase())].some((phrase) =>
+      lower.includes(phrase)
+    );
+  }
+
+  /** System prompt: hospital instructions + live org context + knowledge base. */
+  private buildAssistantSystemPrompt(tenantId: string, config: AssistantConfig): string {
+    const org = this.data.organizations.find((o) => o.id === tenantId);
+    const branches = this.data.branches.filter((b) => b.tenantId === tenantId && b.status === "active");
+    const doctors = this.data.doctors.filter((d) => d.tenantId === tenantId && d.status === "active");
+    const lines: string[] = [];
+    lines.push(
+      `You are the WhatsApp assistant for ${org?.displayName ?? "this hospital"}. Reply in the patient's language (mirror Hindi/English/Hinglish). Keep replies short (2-4 sentences), warm and concrete — this is WhatsApp, not email.`
+    );
+    lines.push(
+      "You must NOT give medical advice, diagnoses, or medication guidance — for anything clinical, tell the patient a doctor/staff member will help and append [HANDOFF]. Never invent prices, timings or availability that are not listed below. If you don't know, say so and append [HANDOFF]."
+    );
+    lines.push(
+      "Append the literal marker [HANDOFF] at the end of your reply whenever the patient should be connected to staff (clinical questions, complaints, emergencies, booking requests you cannot complete, or anything outside the knowledge below)."
+    );
+    if (config.instructions) {
+      lines.push(`Hospital instructions:\n${config.instructions}`);
+    }
+    if (branches.length > 0) {
+      lines.push(
+        `Locations:\n${branches
+          .map((b) => `- ${b.displayName}${b.address ? ` · ${b.address}` : ""}${b.phone ? ` · Phone: ${b.phone}` : ""}`)
+          .join("\n")}`
+      );
+    }
+    if (doctors.length > 0) {
+      lines.push(
+        `Doctors:\n${doctors.map((d) => `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}`).join("\n")}`
+      );
+    }
+    if (config.knowledge.length > 0) {
+      lines.push(
+        `Hospital knowledge base:\n${config.knowledge.map((k) => `## ${k.title}\n${k.content}`).join("\n\n")}`
+      );
+    }
+    return lines.join("\n\n");
+  }
+
+  /** Recent two-way conversation with this phone (oldest first), ending with the new message. */
+  private recentConversation(tenantId: string, phone: string, newMessage: string): AssistantTurn[] {
+    const normalized = normalizePhone(phone);
+    const history = this.data.messages
+      .filter(
+        (m) =>
+          m.tenantId === tenantId &&
+          m.channel === "whatsapp_cloud" &&
+          normalizePhone(m.to) === normalized &&
+          m.body &&
+          // Skip template blasts — conversation context is session messages only.
+          !m.waTemplate
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(-10);
+    const turns: AssistantTurn[] = history.map((m) => ({
+      role: m.direction === "inbound" ? ("user" as const) : ("assistant" as const),
+      content: m.body ?? ""
+    }));
+    // The just-received message was already logged by the webhook processor, so it
+    // is usually the last history entry; append only if it isn't there yet.
+    if (turns.length === 0 || turns[turns.length - 1].content !== newMessage || turns[turns.length - 1].role !== "user") {
+      turns.push({ role: "user", content: newMessage });
+    }
+    // Anthropic requires the first turn to be from the user.
+    while (turns.length > 0 && turns[0].role !== "user") {
+      turns.shift();
+    }
+    return turns.length > 0 ? turns : [{ role: "user", content: newMessage }];
   }
 
   // ---- Telephony (per-tenant call log) --------------------------------------
@@ -7595,12 +8194,18 @@ export class CoreService {
       createdAt: timestamp,
       updatedAt: timestamp
     };
-    if (input.provider === "ultramsg" || input.provider === "aisensy") {
+    if (input.provider === "ultramsg" || input.provider === "aisensy" || input.provider === "whatsapp_cloud") {
       campaign.provider = input.provider;
     }
     if (typeof input.body === "string" && input.body.trim()) campaign.body = input.body.trim();
     if (typeof input.aisensyCampaign === "string" && input.aisensyCampaign.trim()) {
       campaign.aisensyCampaign = input.aisensyCampaign.trim();
+    }
+    if (typeof input.waTemplateName === "string" && input.waTemplateName.trim()) {
+      campaign.waTemplateName = input.waTemplateName.trim();
+    }
+    if (typeof input.waTemplateLanguage === "string" && input.waTemplateLanguage.trim()) {
+      campaign.waTemplateLanguage = input.waTemplateLanguage.trim();
     }
     const templateParams = sanitizeStringArray(input.templateParams);
     if (templateParams) campaign.templateParams = templateParams;
@@ -7661,7 +8266,7 @@ export class CoreService {
     if (input.channelType === "marketing" || input.channelType === "transactional") {
       campaign.channelType = input.channelType;
     }
-    if (input.provider === "ultramsg" || input.provider === "aisensy") {
+    if (input.provider === "ultramsg" || input.provider === "aisensy" || input.provider === "whatsapp_cloud") {
       campaign.provider = input.provider;
     }
     if (input.audience !== undefined) {
@@ -7673,6 +8278,16 @@ export class CoreService {
     if (input.aisensyCampaign !== undefined) {
       campaign.aisensyCampaign =
         typeof input.aisensyCampaign === "string" && input.aisensyCampaign.trim() ? input.aisensyCampaign.trim() : undefined;
+    }
+    if (input.waTemplateName !== undefined) {
+      campaign.waTemplateName =
+        typeof input.waTemplateName === "string" && input.waTemplateName.trim() ? input.waTemplateName.trim() : undefined;
+    }
+    if (input.waTemplateLanguage !== undefined) {
+      campaign.waTemplateLanguage =
+        typeof input.waTemplateLanguage === "string" && input.waTemplateLanguage.trim()
+          ? input.waTemplateLanguage.trim()
+          : undefined;
     }
     if (input.templateParams !== undefined) {
       campaign.templateParams = sanitizeStringArray(input.templateParams);
@@ -7746,7 +8361,10 @@ export class CoreService {
     opts: { recipients?: CampaignRecipient[] } = {}
   ): Promise<{ sent: number; failed: number; skipped: number; audienceSize: number }> {
     const resolved = opts.recipients ?? this.resolveCampaignAudience(context, campaign.audience);
-    const { eligible, skipped } = this.eligibleRecipients(campaign, resolved);
+    // Opted-out phones never receive campaign sends (campaigns are bulk outreach).
+    const { allowed, optedOut } = this.filterOptedOut(campaign.tenantId, resolved);
+    const { eligible, skipped: alreadyContacted } = this.eligibleRecipients(campaign, allowed);
+    const skipped = alreadyContacted + optedOut;
     // Effective delivery provider — explicit, else derived from the category.
     const provider: ChannelProvider = campaign.provider ?? (campaign.channelType === "marketing" ? "aisensy" : "ultramsg");
 
@@ -7769,15 +8387,25 @@ export class CoreService {
     for (const recipient of eligible) {
       try {
         const name = firstName(recipient.name);
+        const tokens = { ...baseTokens, name, patientName: name, firstName: name };
         const renderedBody =
-          provider === "ultramsg" && campaign.body
-            ? this.renderTemplate(campaign.body, { ...baseTokens, name, patientName: name, firstName: name })
+          provider !== "aisensy" && campaign.body ? this.renderTemplate(campaign.body, tokens) : undefined;
+        // Cloud API template send: each positional param is itself rendered per
+        // recipient, so params like "{{name}}" personalize correctly.
+        const waTemplate =
+          provider === "whatsapp_cloud" && campaign.waTemplateName
+            ? {
+                name: campaign.waTemplateName,
+                language: campaign.waTemplateLanguage ?? "en",
+                params: (campaign.templateParams ?? []).map((p) => this.renderTemplate(p, tokens))
+              }
             : undefined;
         const result = await this.sendMessage(context, {
           to: recipient.phone,
           type: campaign.channelType,
           provider,
-          body: renderedBody,
+          body: waTemplate ? undefined : renderedBody,
+          template: waTemplate,
           campaign: provider === "aisensy" ? campaign.aisensyCampaign : undefined,
           userName: recipient.name,
           params: provider === "aisensy" ? campaign.templateParams : undefined

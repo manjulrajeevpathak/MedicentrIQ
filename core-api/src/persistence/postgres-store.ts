@@ -37,6 +37,8 @@ const collections: CollectionName[] = [
   "journeyEvents",
   "leadConfigs",
   "leadSheetConfigs",
+  "optOuts",
+  "assistantConfigs",
   "leads",
   "leadNotes",
   "leadCallbacks",
@@ -244,10 +246,14 @@ function recordId(collection: CollectionName, record: unknown): string {
   }
 
   const tokenKeyed = collection === "sessions" || collection === "loginChallenges" || collection === "passwordResetTokens";
-  // channelConfigs, leadConfigs and leadSheetConfigs are one-per-tenant (keyed by
-  // tenantId); clinicalRecords are one-per-patient (keyed by patientId).
+  // channelConfigs, leadConfigs, leadSheetConfigs and assistantConfigs are
+  // one-per-tenant (keyed by tenantId); clinicalRecords are one-per-patient
+  // (keyed by patientId).
   const value =
-    collection === "channelConfigs" || collection === "leadConfigs" || collection === "leadSheetConfigs"
+    collection === "channelConfigs" ||
+    collection === "leadConfigs" ||
+    collection === "leadSheetConfigs" ||
+    collection === "assistantConfigs"
       ? record.tenantId
       : collection === "clinicalRecords"
         ? record.patientId

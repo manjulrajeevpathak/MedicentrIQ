@@ -444,6 +444,95 @@ function requireServiceAuth(req: IncomingMessage): boolean {
   return req.headers["x-service-api-key"] === serviceApiKey;
 }
 
+// ---- Meta WhatsApp Cloud API webhooks (tenant-suffixed) ----------------------
+// Each hospital's Meta app points its webhook at:
+//   https://<gateway-host>/webhooks/meta/whatsapp/<tenantId>
+// The tenant suffix makes the app-secret lookup deterministic; the definitive
+// check is core-api's HMAC verification against that tenant's stored secret.
+
+/** Read the EXACT raw body bytes — Meta's signature is computed over them. */
+async function readRawBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** GET handshake: Meta sends hub.mode/hub.verify_token/hub.challenge once when
+ *  the hospital saves the webhook URL. core-api checks the token; we echo the
+ *  challenge as plain text (Meta requires the bare value, not JSON). */
+async function handleMetaWhatsAppVerify(url: URL, tenantId: string, res: ServerResponse): Promise<void> {
+  const mode = url.searchParams.get("hub.mode") ?? "";
+  const verifyToken = url.searchParams.get("hub.verify_token") ?? "";
+  const challenge = url.searchParams.get("hub.challenge") ?? "";
+  if (!coreApiUrl) {
+    sendJson(res, 503, { error: "core_api_unconfigured", message: "CORE_API_URL is not configured." });
+    return;
+  }
+  try {
+    const response = await fetch(`${coreApiUrl}/integrations/whatsapp/${encodeURIComponent(tenantId)}/verify`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(serviceApiKey ? { "x-service-api-key": serviceApiKey } : {})
+      },
+      body: JSON.stringify({ mode, verifyToken, challenge })
+    });
+    const body = (await response.json().catch(() => ({}))) as { data?: { challenge?: string | null } };
+    const echoed = body.data?.challenge;
+    if (response.ok && typeof echoed === "string" && echoed) {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end(echoed);
+      return;
+    }
+    res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+    res.end("verification failed");
+  } catch {
+    sendJson(res, 502, { error: "core_api_unreachable" });
+  }
+}
+
+/** POST events: forward Meta's RAW body + signature to core-api for HMAC
+ *  verification + processing. 200 on handled/rejected content (retry won't
+ *  help); 5xx only when core-api is unreachable (so Meta retries). */
+async function handleMetaWhatsAppEvent(req: IncomingMessage, tenantId: string, res: ServerResponse): Promise<void> {
+  const rawBody = await readRawBody(req);
+  const signature = req.headers["x-hub-signature-256"];
+  if (!coreApiUrl) {
+    sendJson(res, 503, { error: "core_api_unconfigured", message: "CORE_API_URL is not configured." });
+    return;
+  }
+  try {
+    const response = await fetch(`${coreApiUrl}/integrations/whatsapp/${encodeURIComponent(tenantId)}/webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(serviceApiKey ? { "x-service-api-key": serviceApiKey } : {})
+      },
+      body: JSON.stringify({ rawBody, signature: typeof signature === "string" ? signature : undefined })
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      data?: { ok?: boolean; handled?: number; reason?: string };
+    };
+    if (!response.ok) {
+      // core-api rejected the request itself (auth/route) — surface for retry.
+      sendJson(res, 502, { error: "core_api_error", statusCode: response.status });
+      return;
+    }
+    if (body.data?.ok === false) {
+      console.warn(
+        JSON.stringify({ service: "integration-gateway", metaWebhookRejected: { tenantId, reason: body.data.reason } })
+      );
+    }
+    // Always 200 for processed/rejected content: Meta retrying identical bytes
+    // cannot fix a bad signature or malformed payload.
+    sendJson(res, 200, { received: true });
+  } catch {
+    sendJson(res, 502, { error: "core_api_unreachable" });
+  }
+}
+
 async function forwardEvent(event: NormalizedIntegrationEvent): Promise<Record<string, unknown>> {
   if (!coreApiUrl) {
     return {
@@ -496,6 +585,22 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       coreApiForwardingConfigured: Boolean(coreApiUrl)
     });
     return;
+  }
+
+  // Meta WhatsApp Cloud webhooks — PUBLIC routes (Meta cannot send our service
+  // key; authenticity is the HMAC signature verified in core-api + the verify
+  // token on the GET handshake). Registered before the service-auth gate.
+  const metaWhatsAppMatch = url.pathname.match(/^\/webhooks\/meta\/whatsapp\/([^/]+)$/);
+  if (metaWhatsAppMatch) {
+    const tenantId = decodeURIComponent(metaWhatsAppMatch[1]);
+    if (method === "GET") {
+      await handleMetaWhatsAppVerify(url, tenantId, res);
+      return;
+    }
+    if (method === "POST") {
+      await handleMetaWhatsAppEvent(req, tenantId, res);
+      return;
+    }
   }
 
   if (!requireServiceAuth(req)) {
