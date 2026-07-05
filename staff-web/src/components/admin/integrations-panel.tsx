@@ -1,7 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
-import { MessageSquare, Megaphone, Phone, Send, CheckCircle2, Circle } from "lucide-react";
+import { useActionState, useState } from "react";
+import { MessageSquare, Megaphone, Phone, Send, CheckCircle2, Circle, Cloud, Copy, Check } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import {
   saveChannelsAction,
@@ -26,11 +26,46 @@ function StatusPill({ ok }: { ok: boolean }) {
   );
 }
 
-export function IntegrationsPanel({ channels }: { channels: ChannelStatus }) {
+/** Small copy-to-clipboard affordance for the webhook URL. */
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        } catch {
+          /* clipboard unavailable — ignore */
+        }
+      }}
+      title="Copy to clipboard"
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink-soft transition hover:bg-fill"
+    >
+      {copied ? <Check className="size-3 text-good" /> : <Copy className="size-3" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+export function IntegrationsPanel({
+  channels,
+  gatewayBase
+}: {
+  channels: ChannelStatus;
+  /** Public gateway origin (NEXT_PUBLIC_GATEWAY_URL, read server-side) for the Meta webhook URL. */
+  gatewayBase: string;
+}) {
   const [umState, saveUm] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
   const [aiState, saveAi] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
+  const [waState, saveWa] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
   const [telState, saveTel] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
   const [testState, sendTest] = useActionState<ChannelActionState, FormData>(sendTestMessageAction, { ok: false });
+
+  const wa = channels.whatsappCloud;
+  const webhookUrl = `${gatewayBase.replace(/\/$/, "")}${wa.webhookPath}`;
 
   return (
     <div className="space-y-5">
@@ -97,6 +132,64 @@ export function IntegrationsPanel({ channels }: { channels: ChannelStatus }) {
             </div>
             <p className="text-[11px] text-ink-faint">AISensy sends pre-approved templates — a test needs an existing campaign name.</p>
           </form>
+        </Panel>
+
+        {/* WhatsApp Business (Meta) — Cloud API */}
+        <Panel>
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Cloud className="size-4 text-brand-600" />
+              <span className="text-sm font-semibold text-ink">WhatsApp Business (Meta)</span>
+              <span className="rounded bg-fill px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted">Cloud API</span>
+              {wa.configured && wa.enabled ? (
+                <span className="rounded bg-[var(--color-good-soft)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-good)]">Enabled</span>
+              ) : null}
+            </div>
+            <StatusPill ok={wa.configured} />
+          </div>
+          <form action={saveWa} className="space-y-3">
+            <input type="hidden" name="provider" value="whatsapp_cloud" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className={labelCls}>Phone Number ID</label>
+                <input name="phoneNumberId" defaultValue={wa.phoneNumberId ?? ""} placeholder="1234567890…" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>WABA ID</label>
+                <input name="wabaId" defaultValue={wa.wabaId ?? ""} placeholder="WhatsApp Business Account ID" className={inputCls} />
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>Access token {wa.accessTokenTail ? `(saved ${wa.accessTokenTail})` : ""}</label>
+              <input name="accessToken" type="password" autoComplete="off" placeholder={wa.accessTokenTail ? "•••••• leave blank to keep" : "Permanent system-user access token"} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>App secret {wa.appSecretTail ? `(saved ${wa.appSecretTail})` : ""}</label>
+              <input name="appSecret" type="password" autoComplete="off" placeholder={wa.appSecretTail ? "•••••• leave blank to keep" : "Meta app secret (webhook signature check)"} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Verify token</label>
+              <input name="verifyToken" defaultValue={wa.verifyToken ?? ""} placeholder="Any string you choose" className={inputCls} />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input type="checkbox" name="enabled" defaultChecked={wa.enabled} className="size-4" /> Enabled
+            </label>
+            <div className="flex items-center gap-3">
+              <button type="submit" className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">Save</button>
+              {waState.error ? <span className="text-xs text-critical">{waState.error}</span> : waState.ok ? <span className="text-xs text-good">{waState.message}</span> : null}
+            </div>
+          </form>
+          <div className="mt-4 space-y-1.5 rounded-lg border border-line bg-fill/40 p-3">
+            <p className="text-xs font-semibold text-ink">Webhook callback URL</p>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded bg-surface px-2 py-1 font-mono text-[11px] text-ink-soft ring-1 ring-inset ring-line">{webhookUrl}</code>
+              <CopyButton value={webhookUrl} />
+            </div>
+            <p className="text-[11px] text-ink-faint">
+              Paste this as the callback URL in Meta&rsquo;s webhook configuration, and enter this same
+              Verify token there — Meta calls it back to confirm the subscription.
+            </p>
+          </div>
         </Panel>
 
         {/* Telephony */}

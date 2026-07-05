@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { coreApi } from "@/lib/users-api";
 import type { CommTemplate, Workflow, WorkflowStage } from "@/lib/comms-types";
+import type { WaTemplate, WaTemplateInput } from "@/lib/whatsapp-cloud-types";
 
 /**
  * Org-admin server actions for the Communication Workflows engine. Each reads
@@ -52,6 +53,65 @@ export async function archiveTemplateAction(id: string): Promise<CommActionState
   if (!result.ok) return { ok: false, error: result.error ?? "Could not archive the template." };
   revalidatePath("/communications/templates");
   return { ok: true, message: "Template archived." };
+}
+
+// ---- WhatsApp Cloud API (Meta) templates -----------------------------------
+
+export type WaTemplatesState = {
+  ok: boolean;
+  error?: string;
+  /** 400 from core-api = the WhatsApp Cloud channel isn't configured yet. */
+  notConfigured?: boolean;
+  templates?: WaTemplate[];
+};
+
+/** Live sync of the tenant's Meta-approved template catalog (per-WABA). */
+export async function listWhatsappTemplatesAction(): Promise<WaTemplatesState> {
+  const result = await coreApi<{ templates: WaTemplate[] }>("/tenant/whatsapp/templates");
+  if (!result.ok) {
+    return {
+      ok: false,
+      notConfigured: result.status === 400,
+      error: result.error ?? "Could not load the WhatsApp templates."
+    };
+  }
+  return { ok: true, templates: result.data.templates ?? [] };
+}
+
+/** Submit a new template to Meta for review. Returns Meta's initial status. */
+export async function createWhatsappTemplateAction(
+  input: WaTemplateInput
+): Promise<CommActionState<{ name: string; id: string; status: string }>> {
+  const name = input.name.trim();
+  if (!name) return { ok: false, error: "Enter a template name." };
+  const body = input.body.trim();
+  if (!body) return { ok: false, error: "Enter the template body." };
+  const language = input.language.trim();
+  if (!language) return { ok: false, error: "Pick a language." };
+
+  const sampleParams = (input.sampleParams ?? []).map((p) => p.trim()).filter(Boolean);
+  const hasPlaceholders = /\{\{\d+\}\}/.test(body);
+  if (hasPlaceholders && sampleParams.length === 0) {
+    return { ok: false, error: "Meta needs sample values for each {{n}} placeholder." };
+  }
+
+  const result = await coreApi<{ name: string; id: string; status: string }>("/tenant/whatsapp/templates", {
+    method: "POST",
+    body: {
+      name,
+      category: input.category,
+      language,
+      body,
+      ...(sampleParams.length ? { sampleParams } : {})
+    }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not submit the template to Meta." };
+  revalidatePath("/communications/templates");
+  return {
+    ok: true,
+    data: result.data,
+    message: `Submitted for Meta review — status ${result.data.status || "PENDING"}.`
+  };
 }
 
 // ---- Workflows ------------------------------------------------------------

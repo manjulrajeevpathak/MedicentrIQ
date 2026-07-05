@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BedDouble,
+  Bot,
   CalendarClock,
   ClipboardPlus,
   IndianRupee,
@@ -94,7 +95,8 @@ export const navGroups: NavGroup[] = [
     items: [
       { href: "/communications/channels", label: "Channels", icon: Radio, description: "WhatsApp & telephony credentials", module: "admin", requires: "audit:view" },
       { href: "/communications/templates", label: "Templates", icon: MailCheck, description: "Reusable WhatsApp messages & call scripts", module: "admin", requires: "audit:view" },
-      { href: "/communications/workflows", label: "Workflows", icon: Workflow, description: "Staged message, call, form & task orchestration", module: "admin", requires: "audit:view" }
+      { href: "/communications/workflows", label: "Workflows", icon: Workflow, description: "Staged message, call, form & task orchestration", module: "admin", requires: "audit:view" },
+      { href: "/assistant", label: "Assistant", icon: Bot, description: "AI answers patient WhatsApp messages — hands off to your Inbox", module: "admin", requires: "audit:view" }
     ]
   },
   {

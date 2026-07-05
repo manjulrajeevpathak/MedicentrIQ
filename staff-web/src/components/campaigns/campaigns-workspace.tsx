@@ -62,11 +62,13 @@ import {
 import {
   createCampaignAction,
   getCampaignDetailAction,
+  listApprovedWaTemplatesAction,
   previewAudienceAction,
   previewCampaignRecipientsAction,
   sendCampaignAction,
   updateCampaignAction
 } from "@/app/(app)/campaigns/actions";
+import type { WaTemplate } from "@/lib/whatsapp-cloud-types";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
@@ -279,6 +281,12 @@ function CampaignCard({
         {campaignProvider(campaign) === "aisensy" && campaign.aisensyCampaign ? (
           <span className="inline-flex items-center gap-1">
             <Sparkles className="size-3" /> {campaign.aisensyCampaign}
+          </span>
+        ) : null}
+        {campaignProvider(campaign) === "whatsapp_cloud" && campaign.waTemplateName ? (
+          <span className="inline-flex items-center gap-1">
+            <Sparkles className="size-3" /> {campaign.waTemplateName}
+            {campaign.waTemplateLanguage ? ` (${campaign.waTemplateLanguage})` : ""}
           </span>
         ) : null}
         <span>· created {formatCampaignDate(campaign.createdAt)}</span>
@@ -598,6 +606,15 @@ function CampaignDetailDrawer({
                     {c.templateParams?.length ? ` · params: ${c.templateParams.join(", ")}` : ""}
                   </p>
                 </section>
+              ) : campaignProvider(c) === "whatsapp_cloud" && c.waTemplateName ? (
+                <section>
+                  <h3 className="mb-1.5 text-xs font-semibold text-ink">WhatsApp (Meta) template</h3>
+                  <p className="text-xs text-ink-soft">
+                    <code className="font-mono">{c.waTemplateName}</code>
+                    {c.waTemplateLanguage ? ` · ${c.waTemplateLanguage}` : ""}
+                    {c.templateParams?.length ? ` · params: ${c.templateParams.join(", ")}` : ""}
+                  </p>
+                </section>
               ) : null}
 
               {recipients ? (
@@ -736,6 +753,29 @@ function CampaignComposer({
   // marketing
   const [aisensyCampaign, setAisensyCampaign] = useState("");
   const [templateParams, setTemplateParams] = useState("");
+  // whatsapp_cloud (Meta template)
+  const [waTemplateName, setWaTemplateName] = useState("");
+  const [waTemplateLanguage, setWaTemplateLanguage] = useState("en");
+  /** Approved Meta templates for the picker; null = not loaded yet. */
+  const [waTemplates, setWaTemplates] = useState<WaTemplate[] | null>(null);
+  /** When the fetch fails we fall back to a plain template-name input. */
+  const [waTemplatesError, setWaTemplatesError] = useState<string | null>(null);
+  const waTemplatesRequested = useRef(false);
+
+  // Lazy-load the approved Meta templates the first time the provider is picked.
+  useEffect(() => {
+    if (!open || provider !== "whatsapp_cloud" || waTemplatesRequested.current) return;
+    waTemplatesRequested.current = true;
+    void (async () => {
+      const result = await listApprovedWaTemplatesAction();
+      if (!result.ok || !result.data) {
+        setWaTemplatesError(result.error ?? "Could not load the Meta templates.");
+        return;
+      }
+      setWaTemplatesError(null);
+      setWaTemplates(result.data);
+    })();
+  }, [open, provider]);
 
   // audience
   const [audience, setAudience] = useState<CampaignAudience>({ include: "leads" });
@@ -752,6 +792,8 @@ function CampaignComposer({
     setBody("");
     setAisensyCampaign("");
     setTemplateParams("");
+    setWaTemplateName("");
+    setWaTemplateLanguage("en");
     setAudience({ include: "leads" });
     setError(null);
   }
@@ -772,6 +814,8 @@ function CampaignComposer({
       setBody(editing.body ?? "");
       setAisensyCampaign(editing.aisensyCampaign ?? "");
       setTemplateParams((editing.templateParams ?? []).join(", "));
+      setWaTemplateName(editing.waTemplateName ?? "");
+      setWaTemplateLanguage(editing.waTemplateLanguage ?? "en");
       setAudience(editing.audience);
       setError(null);
     } else {
@@ -786,6 +830,8 @@ function CampaignComposer({
       return setError("Enter the WhatsApp message body.");
     if (provider === "aisensy" && !aisensyCampaign.trim())
       return setError("Enter the AISensy template/campaign name.");
+    if (provider === "whatsapp_cloud" && !waTemplateName.trim())
+      return setError("Pick the Meta-approved WhatsApp template to send.");
     setError(null);
 
     const params = templateParams
@@ -803,7 +849,10 @@ function CampaignComposer({
       audience,
       body: provider === "ultramsg" ? body : undefined,
       aisensyCampaign: provider === "aisensy" ? aisensyCampaign : undefined,
-      templateParams: provider === "aisensy" && params.length ? params : undefined,
+      waTemplateName: provider === "whatsapp_cloud" ? waTemplateName.trim() : undefined,
+      waTemplateLanguage: provider === "whatsapp_cloud" ? waTemplateLanguage.trim() || "en" : undefined,
+      templateParams:
+        (provider === "aisensy" || provider === "whatsapp_cloud") && params.length ? params : undefined,
       sendOncePerContact: sendOnce,
       schedule: repeat
         ? {
@@ -1015,7 +1064,7 @@ function CampaignComposer({
             />
             </Field>
           </>
-        ) : (
+        ) : provider === "aisensy" ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="AISensy campaign" htmlFor="nc-aisensy">
               <Input
@@ -1037,6 +1086,89 @@ function CampaignComposer({
                 placeholder="Indiranagar, 12 Jul"
               />
             </Field>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {waTemplatesError ? (
+              <Field
+                label="Meta template name"
+                htmlFor="nc-wa-name"
+                hint={`Couldn't load the approved templates (${waTemplatesError}) — enter the exact template name.`}
+              >
+                <Input
+                  id="nc-wa-name"
+                  value={waTemplateName}
+                  onChange={(e) => setWaTemplateName(e.target.value)}
+                  placeholder="e.g. appointment_reminder"
+                />
+              </Field>
+            ) : (
+              <Field
+                label="Meta-approved template"
+                htmlFor="nc-wa-template"
+                hint="Synced live from Meta — only APPROVED templates can be sent."
+              >
+                <select
+                  id="nc-wa-template"
+                  value={waTemplateName}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setWaTemplateName(next);
+                    const tpl = (waTemplates ?? []).find((t) => t.name === next);
+                    if (tpl?.language) setWaTemplateLanguage(tpl.language);
+                  }}
+                  className={selectClass}
+                >
+                  <option value="">
+                    {waTemplates === null ? "Loading templates…" : "Choose an approved template…"}
+                  </option>
+                  {waTemplateName && !(waTemplates ?? []).some((t) => t.name === waTemplateName) ? (
+                    <option value={waTemplateName}>{waTemplateName} (current)</option>
+                  ) : null}
+                  {(waTemplates ?? []).map((t) => (
+                    <option key={`${t.id}-${t.language}`} value={t.name}>
+                      {t.name} · {t.language} · {t.category}
+                    </option>
+                  ))}
+                </select>
+                {waTemplates !== null && waTemplates.length === 0 ? (
+                  <p className="mt-1 text-[11px] text-ink-muted">
+                    No approved templates on this WABA yet — create one under Communications → Templates.
+                  </p>
+                ) : null}
+              </Field>
+            )}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field
+                label="Language"
+                htmlFor="nc-wa-lang"
+                hint="Auto-filled from the picked template."
+              >
+                <Input
+                  id="nc-wa-lang"
+                  value={waTemplateLanguage}
+                  onChange={(e) => setWaTemplateLanguage(e.target.value)}
+                  placeholder="en, en_US, hi…"
+                />
+              </Field>
+              <Field
+                label="Template params (optional)"
+                htmlFor="nc-wa-params"
+                hint={
+                  <>
+                    Comma-separated — one value per <code className="font-mono">{"{{n}}"}</code> placeholder.{" "}
+                    <code className="font-mono">{"{{name}}"}</code> personalizes per recipient.
+                  </>
+                }
+              >
+                <Input
+                  id="nc-wa-params"
+                  value={templateParams}
+                  onChange={(e) => setTemplateParams(e.target.value)}
+                  placeholder="{{name}}, 12 Jul"
+                />
+              </Field>
+            </div>
           </div>
         )}
 

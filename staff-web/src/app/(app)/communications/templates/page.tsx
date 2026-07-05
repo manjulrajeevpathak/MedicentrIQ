@@ -1,4 +1,5 @@
 import { TemplatesManager } from "@/components/communications/templates-manager";
+import { WaTemplatesPanel } from "@/components/communications/wa-templates-panel";
 import { fetchTemplates, fetchTemplateMessageStats } from "@/lib/comms-api";
 import type { TemplateMessageStats } from "@/lib/comms-types";
 
@@ -22,6 +23,7 @@ export default async function TemplatesPage() {
         </p>
       </div>
       <TemplatesManager templates={templates} stats={stats} />
+      <WaTemplatesPanel />
     </div>
   );
 }

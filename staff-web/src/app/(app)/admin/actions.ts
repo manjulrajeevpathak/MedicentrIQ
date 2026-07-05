@@ -106,6 +106,22 @@ export async function saveChannelsAction(_prev: ChannelActionState, formData: Fo
     const apiKey = String(formData.get("apiKey") ?? "").trim();
     const enabled = formData.get("enabled") === "on";
     body.aisensy = { ...(apiKey ? { apiKey } : {}), enabled };
+  } else if (provider === "whatsapp_cloud") {
+    const phoneNumberId = String(formData.get("phoneNumberId") ?? "").trim();
+    const wabaId = String(formData.get("wabaId") ?? "").trim();
+    const accessToken = String(formData.get("accessToken") ?? "").trim();
+    const appSecret = String(formData.get("appSecret") ?? "").trim();
+    const verifyToken = String(formData.get("verifyToken") ?? "").trim();
+    const enabled = formData.get("enabled") === "on";
+    // Blank accessToken/appSecret = keep the existing secrets (core-api handles this).
+    body.whatsappCloud = {
+      ...(phoneNumberId ? { phoneNumberId } : {}),
+      ...(wabaId ? { wabaId } : {}),
+      ...(accessToken ? { accessToken } : {}),
+      ...(appSecret ? { appSecret } : {}),
+      ...(verifyToken ? { verifyToken } : {}),
+      enabled
+    };
   } else if (provider === "telephony") {
     const telProvider = String(formData.get("telProvider") ?? "").trim();
     const callerId = String(formData.get("callerId") ?? "").trim();

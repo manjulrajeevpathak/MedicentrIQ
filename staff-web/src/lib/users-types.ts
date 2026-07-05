@@ -48,6 +48,19 @@ export type ChannelStatus = {
   ultramsg: { configured: boolean; enabled: boolean; instanceId: string | null; tokenTail: string | null };
   aisensy: { configured: boolean; enabled: boolean; apiKeyTail: string | null };
   telephony: { configured: boolean; enabled: boolean; provider: string | null; callerId: string | null; apiKeyTail: string | null };
+  whatsappCloud: {
+    configured: boolean;
+    enabled: boolean;
+    phoneNumberId: string | null;
+    wabaId: string | null;
+    /** Redacted tail of the stored access token — never the full secret. */
+    accessTokenTail: string | null;
+    /** Redacted tail of the stored app secret — never the full secret. */
+    appSecretTail: string | null;
+    verifyToken: string | null;
+    /** Gateway-relative webhook path, e.g. "/webhooks/meta/whatsapp/org_xxx". */
+    webhookPath: string;
+  };
 };
 
 export const STAFF_ROLES: { value: StaffRole; label: string }[] = [

@@ -10,8 +10,9 @@
 export type CampaignChannel = "transactional" | "marketing";
 
 /** Delivery provider — decoupled from the marketing/transactional category, so a
- *  marketing broadcast can go via UltraMsg (free text) or AISensy (template). */
-export type CampaignProvider = "ultramsg" | "aisensy";
+ *  marketing broadcast can go via UltraMsg (free text), AISensy (template) or
+ *  the WhatsApp Cloud API (Meta template). */
+export type CampaignProvider = "ultramsg" | "aisensy" | "whatsapp_cloud";
 
 export type CampaignTrigger = "manual" | "automated";
 
@@ -115,6 +116,10 @@ export type Campaign = {
   audience: CampaignAudience;
   body?: string;
   aisensyCampaign?: string;
+  /** Meta-approved template name (provider whatsapp_cloud). */
+  waTemplateName?: string;
+  /** Locale of the Meta template, e.g. "en" / "en_US" / "hi". */
+  waTemplateLanguage?: string;
   templateParams?: string[];
   trigger: CampaignTrigger;
   automatedOn?: AutomatedOn;
@@ -137,6 +142,10 @@ export type CampaignInput = {
   audience: CampaignAudience;
   body?: string;
   aisensyCampaign?: string;
+  /** Meta-approved template name (provider whatsapp_cloud). */
+  waTemplateName?: string;
+  /** Locale of the Meta template, e.g. "en" / "en_US" / "hi". */
+  waTemplateLanguage?: string;
   templateParams?: string[];
   trigger: CampaignTrigger;
   automatedOn?: AutomatedOn;
@@ -159,12 +168,18 @@ export const PROVIDER_OPTIONS: { value: CampaignProvider; label: string; hint: s
     value: "aisensy",
     label: "AISensy (approved template)",
     hint: "Sends an approved WhatsApp template — required for first contact with a number."
+  },
+  {
+    value: "whatsapp_cloud",
+    label: "WhatsApp Cloud (Meta template)",
+    hint: "Sends an approved Meta template — works outside the 24h window; params fill {{1}}, {{2}}…"
   }
 ];
 
 export const PROVIDER_LABELS: Record<CampaignProvider, string> = {
   ultramsg: "UltraMsg",
-  aisensy: "AISensy"
+  aisensy: "AISensy",
+  whatsapp_cloud: "WhatsApp Cloud"
 };
 
 export type SendResult = {

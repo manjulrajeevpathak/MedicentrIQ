@@ -8,9 +8,11 @@ import type {
   CampaignAudience,
   CampaignDetail,
   CampaignInput,
+  CampaignProvider,
   CampaignRecipientsPreview,
   SendResult
 } from "@/lib/campaigns-types";
+import type { WaTemplate } from "@/lib/whatsapp-cloud-types";
 
 /**
  * Campaigns server actions. Each reads the session bearer (via `coreApi`),
@@ -43,12 +45,16 @@ export async function createCampaignAction(input: CampaignInput): Promise<Action
   const name = input.name.trim();
   if (!name) return { ok: false, error: "Enter a campaign name." };
 
-  const provider = input.provider === "aisensy" ? "aisensy" : "ultramsg";
+  const provider: CampaignProvider =
+    input.provider === "aisensy" || input.provider === "whatsapp_cloud" ? input.provider : "ultramsg";
   if (provider === "ultramsg" && !input.body?.trim()) {
     return { ok: false, error: "Enter the WhatsApp message body." };
   }
   if (provider === "aisensy" && !input.aisensyCampaign?.trim()) {
     return { ok: false, error: "Enter the AISensy template/campaign name." };
+  }
+  if (provider === "whatsapp_cloud" && !input.waTemplateName?.trim()) {
+    return { ok: false, error: "Pick the Meta-approved WhatsApp template to send." };
   }
 
   const body: Record<string, unknown> = {
@@ -61,10 +67,16 @@ export async function createCampaignAction(input: CampaignInput): Promise<Action
   if (provider === "ultramsg" && input.body?.trim()) {
     body.body = input.body.trim();
   }
-  if (provider === "aisensy") {
-    body.aisensyCampaign = input.aisensyCampaign?.trim();
+  if (provider === "aisensy" || provider === "whatsapp_cloud") {
     const params = (input.templateParams ?? []).map((p) => p.trim()).filter(Boolean);
     if (params.length) body.templateParams = params;
+  }
+  if (provider === "aisensy") {
+    body.aisensyCampaign = input.aisensyCampaign?.trim();
+  }
+  if (provider === "whatsapp_cloud") {
+    body.waTemplateName = input.waTemplateName?.trim();
+    if (input.waTemplateLanguage?.trim()) body.waTemplateLanguage = input.waTemplateLanguage.trim();
   }
   if (input.trigger === "automated" && input.automatedOn) {
     body.automatedOn = input.automatedOn;
@@ -105,6 +117,8 @@ export async function updateCampaignAction(
   if (patch.audience) body.audience = cleanAudience(patch.audience);
   if (typeof patch.body === "string") body.body = patch.body;
   if (typeof patch.aisensyCampaign === "string") body.aisensyCampaign = patch.aisensyCampaign;
+  if (typeof patch.waTemplateName === "string") body.waTemplateName = patch.waTemplateName.trim();
+  if (typeof patch.waTemplateLanguage === "string") body.waTemplateLanguage = patch.waTemplateLanguage.trim();
   if (patch.templateParams) body.templateParams = patch.templateParams;
   if (patch.provider) body.provider = patch.provider;
   if (patch.trigger) body.trigger = patch.trigger;
@@ -120,6 +134,22 @@ export async function updateCampaignAction(
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the campaign." };
   revalidatePath("/campaigns");
   return { ok: true, data: result.data, message: "Campaign updated." };
+}
+
+// ---- Meta template picker (read-only) --------------------------------------
+
+/**
+ * Approved WhatsApp Cloud (Meta) templates for the composer's template picker.
+ * Falls back to a free-text input in the composer when this errors (e.g. the
+ * channel isn't configured or Meta is unreachable).
+ */
+export async function listApprovedWaTemplatesAction(): Promise<ActionState<WaTemplate[]>> {
+  const result = await coreApi<{ templates: WaTemplate[] }>("/tenant/whatsapp/templates");
+  if (!result.ok) {
+    return { ok: false, error: result.error ?? "Could not load the Meta templates." };
+  }
+  const approved = (result.data.templates ?? []).filter((t) => t.status?.toUpperCase() === "APPROVED");
+  return { ok: true, data: approved };
 }
 
 // ---- Live audience preview (read-only) -------------------------------------
