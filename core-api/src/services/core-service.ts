@@ -3195,7 +3195,7 @@ export class CoreService {
     const doctors = this.data.doctors.filter((d) => d.tenantId === tenantId && d.status === "active");
     const lines: string[] = [];
     lines.push(
-      `You are the WhatsApp assistant for ${org?.displayName ?? "this hospital"}. Reply in the patient's language (mirror Hindi/English/Hinglish). Keep replies short (2-4 sentences), warm and concrete — this is WhatsApp, not email.`
+      `You are the WhatsApp assistant for ${org?.displayName ?? "this hospital"}. Reply in the patient's language (mirror Hindi/English/Hinglish). Keep replies short (2-4 sentences), warm and concrete — this is WhatsApp, not email. Use WhatsApp formatting only: *single asterisks* for bold, _underscores_ for italics — NEVER Markdown (**double asterisks**, #headings, bullet syntax).`
     );
     lines.push(
       "You must NOT give medical advice, diagnoses, or medication guidance — for anything clinical, tell the patient a doctor/staff member will help and append [HANDOFF]. Never invent prices, timings or availability that are not listed below. If you don't know, say so and append [HANDOFF]."
