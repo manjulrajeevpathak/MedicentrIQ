@@ -114,19 +114,18 @@ export function PatientsWorkspace({
               icon={<Users className="size-4" />}
               title="Patient directory"
               subtitle={`${directory.length} ${directory.length === 1 ? "record" : "records"}`}
-              action={
-                <div className="flex items-center gap-2">
-                  <Link href="/opd">
-                    <Button size="sm">
-                      <ClipboardPlus className="size-3.5" /> Register walk-in (OPD)
-                    </Button>
-                  </Link>
-                  <Button size="sm" variant="outline" onClick={() => setComposerOpen(true)}>
-                    <UserPlus className="size-3.5" /> Add patient
-                  </Button>
-                </div>
-              }
             />
+            {/* Actions on their own row — the 340px column can't fit them beside the title. */}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Link href="/opd" className="min-w-0">
+                <Button size="sm" className="w-full">
+                  <ClipboardPlus className="size-3.5" /> Walk-in (OPD)
+                </Button>
+              </Link>
+              <Button size="sm" variant="outline" className="w-full" onClick={() => setComposerOpen(true)}>
+                <UserPlus className="size-3.5" /> Add patient
+              </Button>
+            </div>
             <div className="mt-3 flex items-center gap-2 rounded-xl border border-line bg-surface-muted px-3 focus-within:border-brand-300 focus-within:ring-2 focus-within:ring-brand-100">
               <Search className="size-4 text-ink-faint" />
               <input
@@ -159,7 +158,11 @@ export function PatientsWorkspace({
                     <div className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold text-ink">{patient.displayName}</span>
                       <p className="truncate text-xs text-ink-muted">
-                        {[patient.age ? `${patient.age}y` : null, patient.gender, patient.primaryPhone]
+                        {[
+                          patient.age ? `${patient.age}y` : null,
+                          patient.gender && patient.gender !== "unknown" ? patient.gender : null,
+                          patient.primaryPhone
+                        ]
                           .filter(Boolean)
                           .join(" · ") || "No details"}
                       </p>
@@ -246,7 +249,12 @@ function Patient360({
   timeline: TimelineEvent[];
 }) {
   const stage = detail.lifecycle.stage as LifecycleStage;
-  const meta = [detail.age ? `${detail.age}y` : null, detail.gender].filter(Boolean).join(" · ");
+  const meta = [
+    detail.age ? `${detail.age}y` : null,
+    detail.gender && detail.gender !== "unknown" ? detail.gender : null
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <>
