@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { coreApi } from "@/lib/users-api";
 import type { CommTemplate, Workflow, WorkflowStage } from "@/lib/comms-types";
-import type { WaTemplate, WaTemplateInput } from "@/lib/whatsapp-cloud-types";
+import type { WaTemplate, WaTemplateCategory } from "@/lib/whatsapp-cloud-types";
 
 /**
  * Org-admin server actions for the Communication Workflows engine. Each reads
@@ -55,63 +55,63 @@ export async function archiveTemplateAction(id: string): Promise<CommActionState
   return { ok: true, message: "Template archived." };
 }
 
-// ---- WhatsApp Cloud API (Meta) templates -----------------------------------
+// ---- WhatsApp Cloud API (Meta) promotion ------------------------------------
 
-export type WaTemplatesState = {
-  ok: boolean;
-  error?: string;
-  /** 400 from core-api = the WhatsApp Cloud channel isn't configured yet. */
-  notConfigured?: boolean;
-  templates?: WaTemplate[];
-};
-
-/** Live sync of the tenant's Meta-approved template catalog (per-WABA). */
-export async function listWhatsappTemplatesAction(): Promise<WaTemplatesState> {
-  const result = await coreApi<{ templates: WaTemplate[] }>("/tenant/whatsapp/templates");
-  if (!result.ok) {
-    return {
-      ok: false,
-      notConfigured: result.status === 400,
-      error: result.error ?? "Could not load the WhatsApp templates."
-    };
-  }
-  return { ok: true, templates: result.data.templates ?? [] };
-}
-
-/** Submit a new template to Meta for review. Returns Meta's initial status. */
-export async function createWhatsappTemplateAction(
-  input: WaTemplateInput
-): Promise<CommActionState<{ name: string; id: string; status: string }>> {
-  const name = input.name.trim();
-  if (!name) return { ok: false, error: "Enter a template name." };
-  const body = input.body.trim();
-  if (!body) return { ok: false, error: "Enter the template body." };
+/**
+ * Promote a library template to Meta for review (or re-submit after a body
+ * edit). Named {{tokens}} are converted to Meta's {{1}}/{{2}} positional
+ * params server-side.
+ */
+export async function submitTemplateToMetaAction(
+  id: string,
+  input: { category: WaTemplateCategory; language: string }
+): Promise<CommActionState<CommTemplate>> {
   const language = input.language.trim();
-  if (!language) return { ok: false, error: "Pick a language." };
+  if (!language) return { ok: false, error: "Enter a language code (e.g. en, en_US, hi)." };
 
-  const sampleParams = (input.sampleParams ?? []).map((p) => p.trim()).filter(Boolean);
-  const hasPlaceholders = /\{\{\d+\}\}/.test(body);
-  if (hasPlaceholders && sampleParams.length === 0) {
-    return { ok: false, error: "Meta needs sample values for each {{n}} placeholder." };
-  }
-
-  const result = await coreApi<{ name: string; id: string; status: string }>("/tenant/whatsapp/templates", {
+  const result = await coreApi<CommTemplate>(`/templates/${id}/submit-meta`, {
     method: "POST",
-    body: {
-      name,
-      category: input.category,
-      language,
-      body,
-      ...(sampleParams.length ? { sampleParams } : {})
-    }
+    body: { category: input.category, language }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not submit the template to Meta." };
   revalidatePath("/communications/templates");
   return {
     ok: true,
     data: result.data,
-    message: `Submitted for Meta review — status ${result.data.status || "PENDING"}.`
+    message: `Submitted for Meta review — status ${result.data.meta?.status ?? "PENDING"}.`
   };
+}
+
+export type SyncMetaResult = {
+  /** Active library templates with refreshed Meta statuses. */
+  templates: CommTemplate[];
+  /** Templates that exist on the WABA but not in the library. */
+  wabaOnly: WaTemplate[];
+};
+
+/** Refresh Meta statuses on library templates + list WABA-only templates. */
+export async function syncMetaTemplatesAction(): Promise<CommActionState<SyncMetaResult>> {
+  const result = await coreApi<SyncMetaResult>("/templates/sync-meta", { method: "POST" });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not sync templates from Meta." };
+  revalidatePath("/communications/templates");
+  return { ok: true, data: result.data };
+}
+
+/** Create a library template from a WABA-only Meta template. */
+export async function importMetaTemplateAction(input: {
+  name: string;
+  language: string;
+}): Promise<CommActionState<CommTemplate>> {
+  const name = input.name.trim();
+  if (!name) return { ok: false, error: "Missing template name." };
+
+  const result = await coreApi<CommTemplate>("/templates/import-meta", {
+    method: "POST",
+    body: { name, language: input.language.trim() }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not import the template." };
+  revalidatePath("/communications/templates");
+  return { ok: true, data: result.data, message: `Imported "${name}" to the library.` };
 }
 
 // ---- Workflows ------------------------------------------------------------

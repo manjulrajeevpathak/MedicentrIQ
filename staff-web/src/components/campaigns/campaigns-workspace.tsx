@@ -66,9 +66,9 @@ import {
   previewAudienceAction,
   previewCampaignRecipientsAction,
   sendCampaignAction,
-  updateCampaignAction
+  updateCampaignAction,
+  type SendableWaTemplate
 } from "@/app/(app)/campaigns/actions";
-import type { WaTemplate } from "@/lib/whatsapp-cloud-types";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
@@ -756,8 +756,8 @@ function CampaignComposer({
   // whatsapp_cloud (Meta template)
   const [waTemplateName, setWaTemplateName] = useState("");
   const [waTemplateLanguage, setWaTemplateLanguage] = useState("en");
-  /** Approved Meta templates for the picker; null = not loaded yet. */
-  const [waTemplates, setWaTemplates] = useState<WaTemplate[] | null>(null);
+  /** Approved Meta templates (library + WABA-only) for the picker; null = not loaded yet. */
+  const [waTemplates, setWaTemplates] = useState<SendableWaTemplate[] | null>(null);
   /** When the fetch fails we fall back to a plain template-name input. */
   const [waTemplatesError, setWaTemplatesError] = useState<string | null>(null);
   const waTemplatesRequested = useRef(false);
@@ -883,6 +883,13 @@ function CampaignComposer({
   }
 
   const channelHint = PROVIDER_OPTIONS.find((p) => p.value === provider)?.hint;
+
+  // Named (non-numeric) tokens on the picked Meta template auto-personalize
+  // per recipient; numeric tokens need manual param values.
+  const pickedWaTemplate = (waTemplates ?? []).find((t) => t.name === waTemplateName);
+  const pickedHasNamedParams =
+    (pickedWaTemplate?.paramTokens.length ?? 0) > 0 &&
+    Boolean(pickedWaTemplate?.paramTokens.every((tok) => !/^\d+$/.test(tok)));
 
   return (
     <Modal open={open} onClose={onClose} labelledBy="new-campaign-title" className="max-w-2xl">
@@ -1106,7 +1113,7 @@ function CampaignComposer({
               <Field
                 label="Meta-approved template"
                 htmlFor="nc-wa-template"
-                hint="Synced live from Meta — only APPROVED templates can be sent."
+                hint="From your template library + WABA — only APPROVED templates can be sent."
               >
                 <select
                   id="nc-wa-template"
@@ -1115,7 +1122,14 @@ function CampaignComposer({
                     const next = e.target.value;
                     setWaTemplateName(next);
                     const tpl = (waTemplates ?? []).find((t) => t.name === next);
-                    if (tpl?.language) setWaTemplateLanguage(tpl.language);
+                    if (!tpl) return;
+                    if (tpl.language) setWaTemplateLanguage(tpl.language);
+                    const named =
+                      tpl.paramTokens.length > 0 &&
+                      tpl.paramTokens.every((tok) => !/^\d+$/.test(tok));
+                    if (named) {
+                      setTemplateParams(tpl.paramTokens.map((tok) => `{{${tok}}}`).join(", "));
+                    }
                   }}
                   className={selectClass}
                 >
@@ -1126,14 +1140,14 @@ function CampaignComposer({
                     <option value={waTemplateName}>{waTemplateName} (current)</option>
                   ) : null}
                   {(waTemplates ?? []).map((t) => (
-                    <option key={`${t.id}-${t.language}`} value={t.name}>
-                      {t.name} · {t.language} · {t.category}
+                    <option key={`${t.source}-${t.name}-${t.language}`} value={t.name}>
+                      {t.label} · {t.language}
                     </option>
                   ))}
                 </select>
                 {waTemplates !== null && waTemplates.length === 0 ? (
                   <p className="mt-1 text-[11px] text-ink-muted">
-                    No approved templates on this WABA yet — create one under Communications → Templates.
+                    No approved templates yet — submit one to Meta under Communications → Templates.
                   </p>
                 ) : null}
               </Field>

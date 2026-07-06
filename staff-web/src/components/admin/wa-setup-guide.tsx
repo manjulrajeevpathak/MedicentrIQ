@@ -219,9 +219,9 @@ export function WaSetupGuide({
               (Assistant page). START clears it.
             </li>
             <li>
-              <b>Real templates:</b> create them under <i>Communications → Templates → WhatsApp templates (Meta)</i>{" "}
-              — body placeholders are <code className="rounded bg-fill px-1">{"{{1}}"}</code>,{" "}
-              <code className="rounded bg-fill px-1">{"{{2}}"}</code>…; approval is usually minutes-to-hours.
+              <b>Real templates:</b> write them once in <i>Communications → Templates</i> with normal tokens
+              (<code className="rounded bg-fill px-1">{"{{patientName}}"}</code>…) and click <b>Submit to Meta</b> in
+              the editor — tokens convert to Meta&rsquo;s format automatically; approval is usually minutes-to-hours.
             </li>
             <li>
               <b>Billing:</b> attach a payment method in WhatsApp Manager (Billing &amp; payments) — Meta bills your

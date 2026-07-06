@@ -7,6 +7,23 @@ export type CommChannel = "whatsapp" | "call_script";
 export type CommKind = "text" | "form";
 export type CommTemplateStatus = "active" | "archived";
 
+/**
+ * Meta (WhatsApp Cloud) state for a library template that has been submitted
+ * to / synced with the tenant's WABA. `paramTokens[i]` is the named token
+ * behind positional param {{i+1}}; numeric strings ("1", "2") mean the
+ * template was imported from Meta and params need manual values.
+ */
+export type CommTemplateMeta = {
+  name: string;
+  language: string;
+  category: "MARKETING" | "UTILITY";
+  /** Meta review status: APPROVED / PENDING / REJECTED / PAUSED / ... */
+  status: string;
+  paramTokens: string[];
+  rejectionReason?: string;
+  syncedAt: string;
+};
+
 export type CommTemplate = {
   id: string;
   tenantId: string;
@@ -19,6 +36,8 @@ export type CommTemplate = {
   usageCount: number;
   createdAt: string;
   updatedAt: string;
+  /** Present once the template has been submitted to / synced from Meta. */
+  meta?: CommTemplateMeta;
 };
 
 export type WorkflowAnchor = "appointment" | "visit" | "manual";

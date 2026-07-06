@@ -12,6 +12,7 @@ import type {
   CampaignRecipientsPreview,
   SendResult
 } from "@/lib/campaigns-types";
+import type { CommTemplate } from "@/lib/comms-types";
 import type { WaTemplate } from "@/lib/whatsapp-cloud-types";
 
 /**
@@ -138,18 +139,65 @@ export async function updateCampaignAction(
 
 // ---- Meta template picker (read-only) --------------------------------------
 
+/** One sendable template for the composer's whatsapp_cloud picker. */
+export type SendableWaTemplate = {
+  /** Meta template name (what gets sent as waTemplateName). */
+  name: string;
+  language: string;
+  /** Display label: library name, or "<name> (Meta only)" for WABA-only. */
+  label: string;
+  /**
+   * Named token behind each positional param ({{1}} ← paramTokens[0]).
+   * Numeric strings ("1", "2") mean params need manual values.
+   */
+  paramTokens: string[];
+  source: "library" | "waba";
+};
+
+/** Positional {{n}} placeholders present in a WABA template body. */
+function extractPositionalParams(body?: string): string[] {
+  if (!body) return [];
+  const nums = new Set<number>();
+  for (const match of body.matchAll(/\{\{(\d+)\}\}/g)) nums.add(Number(match[1]));
+  return [...nums].sort((a, b) => a - b).map(String);
+}
+
 /**
- * Approved WhatsApp Cloud (Meta) templates for the composer's template picker.
- * Falls back to a free-text input in the composer when this errors (e.g. the
- * channel isn't configured or Meta is unreachable).
+ * Approved WhatsApp Cloud (Meta) templates for the composer's template picker:
+ * the unified library (templates promoted to Meta) first, then templates that
+ * only exist on the WABA. Falls back to a free-text input in the composer when
+ * this errors (e.g. the channel isn't configured or Meta is unreachable).
  */
-export async function listApprovedWaTemplatesAction(): Promise<ActionState<WaTemplate[]>> {
-  const result = await coreApi<{ templates: WaTemplate[] }>("/tenant/whatsapp/templates");
+export async function listApprovedWaTemplatesAction(): Promise<ActionState<SendableWaTemplate[]>> {
+  const result = await coreApi<{ templates: CommTemplate[]; wabaOnly: WaTemplate[] }>(
+    "/templates/sync-meta",
+    { method: "POST" }
+  );
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not load the Meta templates." };
   }
-  const approved = (result.data.templates ?? []).filter((t) => t.status?.toUpperCase() === "APPROVED");
-  return { ok: true, data: approved };
+
+  const library: SendableWaTemplate[] = (result.data.templates ?? [])
+    .filter((t) => t.meta && t.meta.status.toUpperCase() === "APPROVED")
+    .map((t) => ({
+      name: t.meta!.name,
+      language: t.meta!.language,
+      label: t.name,
+      paramTokens: t.meta!.paramTokens ?? [],
+      source: "library" as const
+    }));
+
+  const wabaOnly: SendableWaTemplate[] = (result.data.wabaOnly ?? [])
+    .filter((t) => t.status?.toUpperCase() === "APPROVED")
+    .map((t) => ({
+      name: t.name,
+      language: t.language,
+      label: `${t.name} (Meta only)`,
+      paramTokens: extractPositionalParams(t.body),
+      source: "waba" as const
+    }));
+
+  return { ok: true, data: [...library, ...wabaOnly] };
 }
 
 // ---- Live audience preview (read-only) -------------------------------------

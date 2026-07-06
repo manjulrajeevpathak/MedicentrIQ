@@ -1,5 +1,4 @@
 import { TemplatesManager } from "@/components/communications/templates-manager";
-import { WaTemplatesPanel } from "@/components/communications/wa-templates-panel";
 import { fetchTemplates, fetchTemplateMessageStats } from "@/lib/comms-api";
 import type { TemplateMessageStats } from "@/lib/comms-types";
 
@@ -19,11 +18,11 @@ export default async function TemplatesPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-ink">Templates</h1>
         <p className="text-sm text-ink-muted">
-          Reusable WhatsApp messages and call scripts that power your communication workflows.
+          Reusable WhatsApp messages and call scripts that power your workflows — promote WhatsApp
+          templates to Meta to send them in campaigns.
         </p>
       </div>
       <TemplatesManager templates={templates} stats={stats} />
-      <WaTemplatesPanel />
     </div>
   );
 }
