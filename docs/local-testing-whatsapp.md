@@ -46,19 +46,21 @@ approval, the 24h window.
 
 Meta needs a public HTTPS callback URL; a tunnel makes your laptop that URL.
 
-1. **Tunnel** (in order of reliability):
-   - **cloudflared (recommended)** — installed at `~/.local/bin/cloudflared`
-     (official binary; Homebrew on this machine predates macOS 26 and can't
-     install it):
+1. **Tunnel** (in order of preference):
+   - **ngrok static domain (current setup)** — the account's reserved domain
+     gives a URL that NEVER changes, so Meta's webhook config survives
+     restarts/reboots:
+     `ngrok http 4105 --url=https://feeble-unlisted-earthly.ngrok-free.dev`
+     ⚠ The free plan has ONE domain — while it points at the gateway, the
+     other project's tunnel (Docker on :3030) is offline publicly. Give it
+     back with `ngrok http 3030 --url=https://feeble-unlisted-earthly.ngrok-free.dev`.
+   - **cloudflared** — installed at `~/.local/bin/cloudflared` (official
+     binary; Homebrew here predates macOS 26):
      `~/.local/bin/cloudflared tunnel --url http://localhost:4105 --no-autoupdate`
-     → prints `https://<random>.trycloudflare.com`. Free, no account, stable
-     for a whole session; new URL on each restart.
-   - `npx localtunnel --port 4105` → `https://<x>.loca.lt`. Works but flaky in
-     practice (sessions die silently with 408s, `--subdomain` pins aren't
-     honored) — fallback only.
-   - ngrok: this machine's free account/static domain is already used by
-     another project's tunnel (port 3030) — don't reuse it for the gateway
-     without coordinating; free plan = one domain.
+     → `https://<random>.trycloudflare.com`. Free, no account, stable for a
+     session; NEW URL each restart (must update Meta config + .env.local).
+   - `npx localtunnel --port 4105` — flaky in practice (silent 408 deaths,
+     `--subdomain` pins not honored). Last resort.
 2. Set `NEXT_PUBLIC_GATEWAY_URL=<tunnel URL>` in staff-web/.env.local and
    restart staff-web — the Channels card + setup guide then show the real
    copy-ready webhook URL per hospital.
