@@ -3,15 +3,39 @@
   "configurations": [
     {
       "name": "staff-web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "staff-web", "run", "dev"],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/maverick/Documents/HealthOs/MedicentrIQ && export NVM_DIR=$HOME/.nvm && source /opt/homebrew/opt/nvm/nvm.sh && nvm use 22 && npm --prefix staff-web run dev"
+      ],
       "port": 3200
     },
     {
       "name": "patient-web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "patient-web", "run", "dev"],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/maverick/Documents/HealthOs/MedicentrIQ && export NVM_DIR=$HOME/.nvm && source /opt/homebrew/opt/nvm/nvm.sh && nvm use 22 && npm --prefix patient-web run dev"
+      ],
       "port": 3201
+    },
+    {
+      "name": "platform-console",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/maverick/Documents/HealthOs/MedicentrIQ && export NVM_DIR=$HOME/.nvm && source /opt/homebrew/opt/nvm/nvm.sh && nvm use 22 && npm --prefix platform-console run dev"
+      ],
+      "port": 3202
+    },
+    {
+      "name": "clinician-pwa",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/maverick/Documents/HealthOs/MedicentrIQ && export NVM_DIR=$HOME/.nvm && source /opt/homebrew/opt/nvm/nvm.sh && nvm use 22 && npm --prefix clinician-pwa run dev"
+      ],
+      "port": 3203
     }
   ]
 }
