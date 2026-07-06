@@ -46,9 +46,16 @@ approval, the 24h window.
 
 Meta needs a public HTTPS callback URL; a tunnel makes your laptop that URL.
 
-1. **Tunnel** (pick one):
-   - `npx localtunnel --port 4105` → prints `https://<something>.loca.lt`
-     (free, no account; URL changes each restart).
+1. **Tunnel** (in order of reliability):
+   - **cloudflared (recommended)** — installed at `~/.local/bin/cloudflared`
+     (official binary; Homebrew on this machine predates macOS 26 and can't
+     install it):
+     `~/.local/bin/cloudflared tunnel --url http://localhost:4105 --no-autoupdate`
+     → prints `https://<random>.trycloudflare.com`. Free, no account, stable
+     for a whole session; new URL on each restart.
+   - `npx localtunnel --port 4105` → `https://<x>.loca.lt`. Works but flaky in
+     practice (sessions die silently with 408s, `--subdomain` pins aren't
+     honored) — fallback only.
    - ngrok: this machine's free account/static domain is already used by
      another project's tunnel (port 3030) — don't reuse it for the gateway
      without coordinating; free plan = one domain.
