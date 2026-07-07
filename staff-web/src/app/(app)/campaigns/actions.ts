@@ -37,6 +37,11 @@ function cleanAudience(a: CampaignAudience): CampaignAudience {
   if (a.patientStages?.length) out.patientStages = a.patientStages;
   if (a.conditionCodes?.length) out.conditionCodes = a.conditionCodes;
   if (a.tags?.length) out.tags = a.tags;
+  if (a.visitOutcomes?.length) {
+    out.visitOutcomes = a.visitOutcomes;
+    // The look-back window only matters when outcomes are being filtered on.
+    if (typeof a.visitWithinDays === "number") out.visitWithinDays = a.visitWithinDays;
+  }
   return out;
 }
 

@@ -36,11 +36,9 @@ import {
 import {
   intakeLookupAction,
   listVisitsAction,
-  loadVisitAction,
   registerVisitAction
 } from "@/app/(app)/opd/actions";
 import { HighlightMenu, OpdRegisterList, useRowHighlights } from "@/components/opd/opd-register-list";
-import { ClinicalObservationsForm } from "@/components/opd/clinical-observations-form";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
@@ -69,7 +67,6 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors }: Props) {
   const [customTo, setCustomTo] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [observationsVisit, setObservationsVisit] = useState<Visit | null>(null);
   const [refreshing, startRefresh] = useTransition();
   const { rules, setRule } = useRowHighlights();
 
@@ -123,12 +120,6 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors }: Props) {
     () => (statusFilter === "all" ? visits : visits.filter((v) => v.status === statusFilter)),
     [visits, statusFilter]
   );
-
-  async function openObservations(visit: Visit) {
-    // Pull the freshest copy so the form shows the persisted observations.
-    const result = await loadVisitAction(visit.id);
-    setObservationsVisit(result.ok && result.data ? result.data : visit);
-  }
 
   return (
     <>
@@ -237,7 +228,7 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors }: Props) {
           </Panel>
         ) : (
           <Panel className="p-0">
-            <OpdRegisterList visits={filtered} rules={rules} onObservations={openObservations} />
+            <OpdRegisterList visits={filtered} rules={rules} />
           </Panel>
         )}
       </div>
@@ -252,18 +243,6 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors }: Props) {
           refresh();
         }}
       />
-
-      {observationsVisit ? (
-        <ClinicalObservationsForm
-          key={observationsVisit.id}
-          visit={observationsVisit}
-          onClose={() => setObservationsVisit(null)}
-          onSaved={() => {
-            setObservationsVisit(null);
-            refresh();
-          }}
-        />
-      ) : null}
     </>
   );
 }

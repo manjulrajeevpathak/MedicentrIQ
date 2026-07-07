@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { FileText, Paintbrush, Stethoscope, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   DISPOSITION_OUTCOMES,
@@ -273,13 +272,10 @@ function ClinicalSummary({ visit }: { visit: Visit }) {
 
 export function OpdRegisterList({
   visits,
-  rules,
-  onObservations
+  rules
 }: {
   visits: Visit[];
   rules: HighlightRules;
-  /** Open the clinical observations form for this visit (capture or edit). */
-  onObservations: (visit: Visit) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -333,9 +329,12 @@ export function OpdRegisterList({
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   {visit.status === "completed" ? (
-                    <Button size="sm" variant="outline" onClick={() => onObservations(visit)}>
+                    <Link
+                      href={`/opd/${visit.id}`}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-surface px-3 text-xs font-medium text-ink-soft ring-1 ring-inset ring-line-strong transition hover:bg-surface-muted hover:text-ink"
+                    >
                       <FileText className="size-3.5" /> View / edit observations
-                    </Button>
+                    </Link>
                   ) : visit.status === "left_without_seen" ? (
                     <Link
                       href={`/opd/${visit.id}`}
@@ -345,9 +344,12 @@ export function OpdRegisterList({
                     </Link>
                   ) : (
                     // registered (and any legacy in_consult row) → capture observations.
-                    <Button size="sm" onClick={() => onObservations(visit)}>
+                    <Link
+                      href={`/opd/${visit.id}`}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-medium text-white shadow-sm transition hover:bg-brand-700"
+                    >
                       <Stethoscope className="size-3.5" /> Clinical observations
-                    </Button>
+                    </Link>
                   )}
                 </td>
               </tr>

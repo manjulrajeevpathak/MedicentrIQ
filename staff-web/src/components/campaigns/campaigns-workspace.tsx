@@ -41,6 +41,7 @@ import {
   STATUS_TONE,
   TRIGGER_LABELS,
   TRIGGER_OPTIONS,
+  VISIT_OUTCOME_OPTIONS,
   automatedOnLabel,
   campaignProvider,
   formatCampaignDate,
@@ -707,6 +708,7 @@ function audienceSummary(a: CampaignAudience): string {
   if (a.leadStages?.length) counts.push(`${a.leadStages.length} lead stage${a.leadStages.length > 1 ? "s" : ""}`);
   if (a.patientStages?.length) counts.push(`${a.patientStages.length} patient stage${a.patientStages.length > 1 ? "s" : ""}`);
   if (a.conditionCodes?.length) counts.push(`${a.conditionCodes.length} condition${a.conditionCodes.length > 1 ? "s" : ""}`);
+  if (a.visitOutcomes?.length) counts.push(`${a.visitOutcomes.length} visit outcome${a.visitOutcomes.length > 1 ? "s" : ""}`);
   if (a.tags?.length) counts.push(`${a.tags.length} tag${a.tags.length > 1 ? "s" : ""}`);
   return counts.length ? `${parts[0]} · ${counts.join(", ")}` : parts[0];
 }
@@ -1231,7 +1233,10 @@ function AudienceBuilder({
 
   const [tagInput, setTagInput] = useState("");
 
-  function toggle(key: "leadStages" | "leadSources" | "patientStages" | "conditionCodes", v: string) {
+  function toggle(
+    key: "leadStages" | "leadSources" | "patientStages" | "conditionCodes" | "visitOutcomes",
+    v: string
+  ) {
     const cur = value[key] ?? [];
     const next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v];
     onChange({ ...value, [key]: next });
@@ -1296,6 +1301,36 @@ function AudienceBuilder({
               selected={value.conditionCodes ?? []}
               onToggle={(v) => toggle("conditionCodes", v)}
             />
+            <div>
+              <ChipGroup
+                label="Visit outcome (OPD)"
+                options={VISIT_OUTCOME_OPTIONS}
+                selected={value.visitOutcomes ?? []}
+                onToggle={(v) => toggle("visitOutcomes", v)}
+              />
+              {(value.visitOutcomes?.length ?? 0) > 0 ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <label htmlFor="aud-visit-days" className="text-xs font-medium text-ink-soft">
+                    Visited within
+                  </label>
+                  <Input
+                    id="aud-visit-days"
+                    type="number"
+                    min={1}
+                    value={value.visitWithinDays ?? 90}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      onChange({
+                        ...value,
+                        visitWithinDays: Number.isNaN(n) || n < 1 ? 90 : Math.floor(n)
+                      });
+                    }}
+                    className="h-8 w-20 px-2 text-xs"
+                  />
+                  <span className="text-xs text-ink-muted">days</span>
+                </div>
+              ) : null}
+            </div>
           </>
         ) : null}
 

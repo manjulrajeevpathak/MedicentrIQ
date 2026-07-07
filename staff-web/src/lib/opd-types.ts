@@ -36,6 +36,38 @@ export type Disposition = {
   nextActionDate?: string;
 };
 
+// ---- Visit outcome ---------------------------------------------------------
+
+/**
+ * The clinical outcome of an OPD encounter — the key field the doctor sets when
+ * completing the visit (drives disposition, revisit reminders and campaign
+ * audiences). Kept in sync with core-api's `VisitOutcome`.
+ */
+export type VisitOutcome =
+  | "medicine_advised"
+  | "surgery_advised"
+  | "revisit_advised"
+  | "diagnostics_advised"
+  | "referred"
+  | "admitted"
+  | "discharged"
+  | "observation";
+
+export const VISIT_OUTCOME_OPTIONS: { value: VisitOutcome; label: string }[] = [
+  { value: "medicine_advised", label: "Medicine advised" },
+  { value: "surgery_advised", label: "Surgery advised" },
+  { value: "revisit_advised", label: "Revisit advised" },
+  { value: "diagnostics_advised", label: "Diagnostics advised" },
+  { value: "referred", label: "Referred out" },
+  { value: "admitted", label: "Admitted" },
+  { value: "discharged", label: "Discharged" },
+  { value: "observation", label: "Watchful observation" }
+];
+
+export const VISIT_OUTCOME_LABELS: Record<VisitOutcome, string> = Object.fromEntries(
+  VISIT_OUTCOME_OPTIONS.map((o) => [o.value, o.label])
+) as Record<VisitOutcome, string>;
+
 // ---- Clinical observations ---------------------------------------------------
 
 /**
@@ -51,6 +83,12 @@ export type VisitClinical = {
   advisePharmacy?: string;
   adviseDiagnostics?: string;
   adviseProcedureAdmission?: string;
+  /** ICD-10 coded chief complaints (the free-text `chiefComplaints` note rides alongside). */
+  chiefComplaintCodes?: IntakeCondition[];
+  /** ICD-10 coded comorbidities (the free-text `preExistingDiseases` note rides alongside). */
+  preExistingCodes?: IntakeCondition[];
+  /** The clinical outcome that completes the visit. */
+  outcome?: VisitOutcome;
   revisitAdvised?: boolean;
   /** ISO date (YYYY-MM-DD) the patient was asked to return. */
   revisitDate?: string;
@@ -161,6 +199,7 @@ export type ConditionCatalogEntry = {
   icd10Code: string;
   label: string;
   category?: string;
+  kind?: "symptom" | "diagnosis" | "comorbidity";
 };
 
 // ---- Documents (reuses the patient document contract) ----------------------

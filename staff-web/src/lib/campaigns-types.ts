@@ -32,6 +32,10 @@ export type CampaignAudience = {
   patientStages?: string[];
   conditionCodes?: string[];
   tags?: string[];
+  /** Target patients whose recent OPD visit had one of these outcomes. */
+  visitOutcomes?: string[];
+  /** Look-back window (days) for `visitOutcomes` — backend defaults to 90. */
+  visitWithinDays?: number;
 };
 
 export type AudienceSample = {
@@ -196,6 +200,15 @@ export type ConditionCatalogEntry = {
   category?: string;
 };
 
+// ---- Visit outcome (for the OPD visit-outcome audience filter) -------------
+// Single-sourced from opd-types so the labels stay in sync with the OPD surface.
+
+export {
+  VISIT_OUTCOME_OPTIONS,
+  VISIT_OUTCOME_LABELS,
+  type VisitOutcome
+} from "./opd-types";
+
 // ---- Presentation ----------------------------------------------------------
 
 export const CHANNEL_OPTIONS: { value: CampaignChannel; label: string; hint: string }[] = [
@@ -298,14 +311,15 @@ export function formatCampaignDate(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata",  day: "numeric", month: "short", year: "numeric" });
 }
 
 export function formatCampaignDateTime(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
     day: "numeric",
     month: "short",
     year: "numeric",

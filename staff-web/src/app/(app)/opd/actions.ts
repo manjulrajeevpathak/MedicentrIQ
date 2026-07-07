@@ -5,10 +5,12 @@ import { coreApi } from "@/lib/users-api";
 import { fetchVisit, fetchVisits, lookupIntake } from "@/lib/opd-api";
 import type { PatientDocument } from "@/lib/patients-types";
 import type {
+  ConditionCatalogEntry,
   IntakeCondition,
   IntakeLookupResult,
   Visit,
   VisitListFilters,
+  VisitOutcome,
   Vitals
 } from "@/lib/opd-types";
 
@@ -121,6 +123,14 @@ export type VisitClinicalInput = {
   advisePharmacy?: string;
   adviseDiagnostics?: string;
   adviseProcedureAdmission?: string;
+  /** ICD-10 coded chief complaints (goes to Visit.clinical.chiefComplaintCodes). */
+  chiefComplaintCodes?: IntakeCondition[];
+  /** ICD-10 coded comorbidities (goes to Visit.clinical.preExistingCodes). */
+  preExistingCodes?: IntakeCondition[];
+  /** ICD-10 coded diagnosis (goes to Visit.diagnosis). */
+  diagnosis?: IntakeCondition[];
+  /** The clinical outcome — required to complete the visit. */
+  outcome?: VisitOutcome;
   revisitAdvised?: boolean;
   /** YYYY-MM-DD. Send "" to clear. */
   revisitDate?: string;
@@ -151,6 +161,11 @@ export async function updateVisitClinicalAction(
   for (const key of textKeys) {
     if (input[key] !== undefined) body[key] = input[key];
   }
+  // Coded arrays are sent whenever defined (an empty array clears the codes).
+  if (input.chiefComplaintCodes !== undefined) body.chiefComplaintCodes = input.chiefComplaintCodes;
+  if (input.preExistingCodes !== undefined) body.preExistingCodes = input.preExistingCodes;
+  if (input.diagnosis !== undefined) body.diagnosis = input.diagnosis;
+  if (input.outcome) body.outcome = input.outcome;
   if (input.revisitAdvised !== undefined) body.revisitAdvised = input.revisitAdvised;
   if (input.prescriptionDocumentIds?.length) body.prescriptionDocumentIds = input.prescriptionDocumentIds;
   if (input.complete === false) body.complete = false;
@@ -162,6 +177,21 @@ export async function updateVisitClinicalAction(
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the observations." };
   revalidatePath("/opd");
   return { ok: true, data: result.data, message: "Observations saved." };
+}
+
+// ---- ICD-10 condition search (typeahead for the clinical pickers) -----------
+
+/**
+ * Search the shared ICD-10 catalog (GET /clinical/conditions?q=). Powers the
+ * chief-complaint / pre-existing / diagnosis pickers on the visit page. With no
+ * query the backend returns the first ~100 common entries.
+ */
+export async function searchConditionsAction(q: string): Promise<ActionState<ConditionCatalogEntry[]>> {
+  const query = q.trim();
+  const path = query ? `/clinical/conditions?q=${encodeURIComponent(query)}` : "/clinical/conditions";
+  const result = await coreApi<ConditionCatalogEntry[]>(path);
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not search conditions." };
+  return { ok: true, data: result.data };
 }
 
 // ---- Visit documents (reuses the patient documents flow) -------------------
