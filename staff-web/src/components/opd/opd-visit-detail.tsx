@@ -276,44 +276,47 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
         toast(result.error ?? "Could not upload the prescription.", "error");
         return;
       }
-      setNewDocs((prev) => [...prev, { id: result.data!.id, name: file.name }]);
+      const docId = result.data.id;
+      setNewDocs((prev) => [...prev, { id: docId, name: file.name }]);
       if (fileRef.current) fileRef.current.value = "";
-      toast("Prescription attached — it saves with the observations.", "success");
+      toast("Prescription attached — reading it with AI…", "success");
+      // Auto-read + pre-fill (its own transition → distinct "Reading…" state).
+      startExtract(() => runExtract(docId));
     });
   }
 
   /**
    * Read the latest prescription with AI vision and pre-fill the free-text fields
    * (never the ICD chips — OCR gives text; the doctor codes it). Nothing is saved
-   * server-side; the doctor reviews, then submits. We pass the newest known
-   * document id explicitly so a just-uploaded (unsaved) prescription is read too.
+   * server-side; the doctor reviews, then submits. Runs automatically right after
+   * an upload; `docId` targets the just-uploaded (still-unsaved) prescription.
    */
-  function extract() {
-    const latestDocId = newDocs.at(-1)?.id ?? attachedIds.at(-1);
-    startExtract(async () => {
-      const result = await extractPrescriptionAction(visit.id, latestDocId);
-      if (!result.ok || !result.data) {
-        toast(result.error ?? "Could not read the prescription.", "error");
-        return;
-      }
-      const x = result.data;
-      // Overwrite only the fields the extract returned non-empty; keep the rest.
-      if (x.chiefComplaints) setChiefComplaints(x.chiefComplaints);
-      if (x.preExistingDiseases) setPreExistingDiseases(x.preExistingDiseases);
-      if (x.diagnosisText) setDiagnosisText(x.diagnosisText);
-      if (x.advisePharmacy) setAdvisePharmacy(x.advisePharmacy);
-      if (x.adviseDiagnostics) setAdviseDiagnostics(x.adviseDiagnostics);
-      if (x.adviseProcedureAdmission) {
-        setNoProcedure(false);
-        setAdviseProcedureAdmission(x.adviseProcedureAdmission);
-      }
-      if (x.suggestedOutcome) setOutcome(x.suggestedOutcome);
-      setRevisitAdvised(x.revisitAdvised);
-      if (x.revisitDate) setRevisitDate(x.revisitDate);
-      setAiPrefilled(true);
-      setError(null);
-      toast("Pre-filled from prescription — review and submit.", "success");
-    });
+  async function runExtract(docId?: string) {
+    const latestDocId = docId ?? newDocs.at(-1)?.id ?? attachedIds.at(-1);
+    if (!latestDocId) return;
+    const result = await extractPrescriptionAction(visit.id, latestDocId);
+    if (!result.ok || !result.data) {
+      // Non-fatal — the prescription is attached; the AI read may be unavailable.
+      toast(result.error ?? "Attached, but couldn't auto-read it — fill the fields manually.", "error");
+      return;
+    }
+    const x = result.data;
+    // Overwrite only the fields the extract returned non-empty; keep the rest.
+    if (x.chiefComplaints) setChiefComplaints(x.chiefComplaints);
+    if (x.preExistingDiseases) setPreExistingDiseases(x.preExistingDiseases);
+    if (x.diagnosisText) setDiagnosisText(x.diagnosisText);
+    if (x.advisePharmacy) setAdvisePharmacy(x.advisePharmacy);
+    if (x.adviseDiagnostics) setAdviseDiagnostics(x.adviseDiagnostics);
+    if (x.adviseProcedureAdmission) {
+      setNoProcedure(false);
+      setAdviseProcedureAdmission(x.adviseProcedureAdmission);
+    }
+    if (x.suggestedOutcome) setOutcome(x.suggestedOutcome);
+    setRevisitAdvised(x.revisitAdvised);
+    if (x.revisitDate) setRevisitDate(x.revisitDate);
+    setAiPrefilled(true);
+    setError(null);
+    toast("Pre-filled from prescription — review and submit.", "success");
   }
 
   /** asDraft → PATCH with complete:false; otherwise the backend completes the visit. */
@@ -448,22 +451,19 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
               className="flex-1 text-xs text-ink-soft file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-xs file:font-medium file:text-brand-700 hover:file:bg-brand-100"
             />
             <Button variant="secondary" onClick={upload} disabled={busy}>
-              {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
-              {uploading ? "Uploading…" : "Upload"}
+              {uploading || extracting ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Upload className="size-3.5" />
+              )}
+              {uploading ? "Uploading…" : extracting ? "Reading prescription…" : "Upload & pre-fill"}
             </Button>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
-            <Button onClick={extract} disabled={busy || attachedCount === 0}>
-              {extracting ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-              {extracting ? "Reading prescription…" : "Extract with AI"}
-            </Button>
-            <p className="text-[11px] text-ink-muted">
-              {attachedCount === 0
-                ? "Attach a prescription to enable AI pre-fill."
-                : "Reads the latest prescription and pre-fills the notes below for review."}
-            </p>
-          </div>
+          <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-ink-muted">
+            <Sparkles className="size-3 text-brand-600" />
+            On upload, AI reads the prescription and pre-fills the notes below for your review.
+          </p>
         </Section>
 
         {/* 2 — Chief Complaints */}

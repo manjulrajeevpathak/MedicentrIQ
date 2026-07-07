@@ -93,37 +93,42 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
         setError(res.error ?? "Upload failed.");
         return;
       }
-      setDocs((prev) => [...prev, res.doc!]);
+      const doc = res.doc!;
+      setDocs((prev) => [...prev, doc]);
       setError(null);
+      // Auto-read + pre-fill (its own transition → distinct "Reading…" state).
+      startExtract(() => runExtract(doc.id));
     });
   }
 
-  function extract() {
-    const doc = docs[docs.length - 1];
-    if (!doc) return;
-    startExtract(async () => {
-      const res = await extractPrescriptionAction(visit.id, doc.id);
-      if (!res.ok || !res.data) {
-        setError(res.error ?? "Could not read the prescription.");
-        return;
-      }
-      const d = res.data;
-      // Pre-fill the free-text fields + outcome + revisit; the doctor adds ICD chips.
-      if (d.chiefComplaints) setChiefText(d.chiefComplaints);
-      if (d.preExistingDiseases) setPreText(d.preExistingDiseases);
-      if (d.diagnosisText) setDxText(d.diagnosisText);
-      if (d.advisePharmacy) setPharmacy(d.advisePharmacy);
-      if (d.adviseDiagnostics) setDiagnostics(d.adviseDiagnostics);
-      if (d.adviseProcedureAdmission) {
-        setProcText(d.adviseProcedureAdmission);
-        setNoProcedure(false);
-      }
-      if (d.suggestedOutcome) setOutcome(d.suggestedOutcome);
-      if (d.revisitAdvised) setRevisit(true);
-      if (d.revisitDate) setRevisitDate(d.revisitDate);
-      setAiFilled(true);
-      setError(null);
-    });
+  // Reads the latest prescription with AI vision and pre-fills the free-text
+  // fields; runs automatically right after an upload. `docId` targets the
+  // just-uploaded prescription. Nothing is saved — the doctor reviews + submits.
+  async function runExtract(docId?: string) {
+    const targetId = docId ?? docs[docs.length - 1]?.id;
+    if (!targetId) return;
+    const res = await extractPrescriptionAction(visit.id, targetId);
+    if (!res.ok || !res.data) {
+      // Non-fatal — the prescription is attached; the AI read may be unavailable.
+      setError(res.error ?? "Attached, but couldn't auto-read it — fill the fields manually.");
+      return;
+    }
+    const d = res.data;
+    // Pre-fill the free-text fields + outcome + revisit; the doctor adds ICD chips.
+    if (d.chiefComplaints) setChiefText(d.chiefComplaints);
+    if (d.preExistingDiseases) setPreText(d.preExistingDiseases);
+    if (d.diagnosisText) setDxText(d.diagnosisText);
+    if (d.advisePharmacy) setPharmacy(d.advisePharmacy);
+    if (d.adviseDiagnostics) setDiagnostics(d.adviseDiagnostics);
+    if (d.adviseProcedureAdmission) {
+      setProcText(d.adviseProcedureAdmission);
+      setNoProcedure(false);
+    }
+    if (d.suggestedOutcome) setOutcome(d.suggestedOutcome);
+    if (d.revisitAdvised) setRevisit(true);
+    if (d.revisitDate) setRevisitDate(d.revisitDate);
+    setAiFilled(true);
+    setError(null);
   }
 
   function save() {
@@ -185,7 +190,7 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
       ) : null}
 
       {/* 1. Prescription (first — the OCR source) */}
-      <Section n={1} title="Prescription" hint="Upload the prescription; AI can read it to pre-fill the fields below.">
+      <Section n={1} title="Prescription" hint="Upload the prescription — AI reads it and pre-fills the fields below for review.">
         {docs.length > 0 ? (
           <ul className="flex flex-wrap gap-1.5">
             {docs.map((d) => (
@@ -196,11 +201,13 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
           </ul>
         ) : null}
         <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong px-3 py-3 text-sm font-medium text-ink-soft">
-          <FileUp className="h-4 w-4" /> {uploading ? "Uploading…" : "Upload prescription (photo / PDF)"}
+          <FileUp className="h-4 w-4" />{" "}
+          {uploading ? "Uploading…" : extracting ? "Reading prescription…" : "Upload prescription (photo / PDF)"}
           <input
             type="file"
             accept="image/*,application/pdf"
             className="hidden"
+            disabled={uploading || extracting}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) upload(f);
@@ -208,14 +215,6 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
             }}
           />
         </label>
-        <button
-          type="button"
-          onClick={extract}
-          disabled={docs.length === 0 || extracting}
-          className="flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-        >
-          <Sparkles className="h-4 w-4" /> {extracting ? "Reading prescription…" : "Extract with AI"}
-        </button>
       </Section>
 
       {/* 2. Chief Complaints */}
