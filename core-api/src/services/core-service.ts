@@ -26,9 +26,15 @@ import {
   toMetaTemplateBody
 } from "../integrations/channels/whatsapp-cloud.js";
 import { placeCall } from "../integrations/channels/telephony.js";
-import { assistantAvailable, generateAssistantReply, type AssistantTurn } from "../integrations/assistant-llm.js";
+import {
+  assistantAvailable,
+  extractFromDocument,
+  generateAssistantReply,
+  type AssistantTurn
+} from "../integrations/assistant-llm.js";
 import { createStorageService, type StorageService } from "../integrations/storage.js";
 import { searchConditionCatalog } from "../domain/clinical-catalog.js";
+import { searchProcedureCatalog } from "../domain/procedure-catalog.js";
 import type {
   AccessRequest,
   Appointment,
@@ -4034,6 +4040,7 @@ export class CoreService {
       advisePharmacy: text(input.advisePharmacy, current.advisePharmacy),
       adviseDiagnostics: text(input.adviseDiagnostics, current.adviseDiagnostics),
       adviseProcedureAdmission: text(input.adviseProcedureAdmission, current.adviseProcedureAdmission),
+      adviseProcedureCodes: codes(input.adviseProcedureCodes, current.adviseProcedureCodes),
       outcome,
       // outcome=revisit_advised implies a revisit even if the flag wasn't set.
       revisitAdvised:
@@ -6292,6 +6299,80 @@ export class CoreService {
   // ---- Clinical history (ICD-10 conditions) ---------------------------------
 
   /** Static, curated ophthalmology ICD-10 condition catalog for the UI picker. */
+  listProcedureCatalog(query?: string) {
+    return searchProcedureCatalog(query ?? "", 50);
+  }
+
+  /**
+   * Read an uploaded prescription (image/PDF) with Claude vision and return
+   * structured suggestions for the clinical form — NOT saved. The doctor
+   * validates + edits before submitting. Best-effort: unreadable fields come
+   * back empty; requires ANTHROPIC_API_KEY (else 503).
+   */
+  async extractPrescription(context: RequestContext, visitId: string, input: Record<string, unknown>) {
+    const visit = this.ensureVisibleVisit(context, visitId);
+    if (!assistantAvailable()) {
+      throw new ApiError(503, "AI extraction is not configured on this platform.");
+    }
+    // The document to read: an explicit id, else the visit's latest prescription.
+    const requestedId = typeof input.documentId === "string" ? input.documentId : undefined;
+    const docId = requestedId ?? visit.clinical?.prescriptionDocumentIds?.slice(-1)[0];
+    if (!docId) {
+      throw new ApiError(400, "Upload a prescription first, then extract.");
+    }
+    const document = this.data.documents.find(
+      (d) => d.id === docId && d.tenantId === context.tenantId && d.patientId === visit.patientId
+    );
+    if (!document || !document.storageKey) {
+      throw new ApiError(404, "Prescription document not found for this visit.");
+    }
+    const storageKey = document.storageKey;
+
+    // Fetch the bytes from storage and base64-encode for the vision call.
+    let base64: string;
+    try {
+      const url = await this.storage.getDownloadUrl(storageKey);
+      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) throw new Error(`storage responded ${res.status}`);
+      base64 = Buffer.from(await res.arrayBuffer()).toString("base64");
+    } catch (error) {
+      throw new ApiError(502, `Could not read the uploaded prescription: ${String(error)}`);
+    }
+
+    const instruction = [
+      "You are reading a scanned/handwritten ophthalmology OPD prescription.",
+      "Extract what is actually written — do NOT invent or assume. If a field is not present, use an empty string (or false/null).",
+      "Return ONLY a JSON object with these keys:",
+      '{"chiefComplaints": string, "preExistingDiseases": string, "diagnosisText": string,',
+      '"advisePharmacy": string, "adviseDiagnostics": string, "adviseProcedureAdmission": string,',
+      '"revisitAdvised": boolean, "revisitDate": string (YYYY-MM-DD or ""),',
+      '"suggestedOutcome": one of "medicine_advised"|"surgery_advised"|"revisit_advised"|"diagnostics_advised"|"referred"|"admitted"|"discharged"|"observation" or ""}',
+      "advisePharmacy = medicines/drops advised; adviseDiagnostics = tests/scans advised; adviseProcedureAdmission = any surgery/procedure/admission advised.",
+      "Return the JSON only, no prose."
+    ].join("\n");
+
+    const result = await extractFromDocument(base64, document.contentType ?? "image/jpeg", instruction);
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    const raw = isPlainRecord(result.json) ? result.json : {};
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const outcome = validVisitOutcome(raw.suggestedOutcome);
+    await this.audit(context, "visit.update", "visit", visit.id, visit.patientId, { prescriptionExtracted: true });
+    return {
+      chiefComplaints: str(raw.chiefComplaints),
+      preExistingDiseases: str(raw.preExistingDiseases),
+      diagnosisText: str(raw.diagnosisText),
+      advisePharmacy: str(raw.advisePharmacy),
+      adviseDiagnostics: str(raw.adviseDiagnostics),
+      adviseProcedureAdmission: str(raw.adviseProcedureAdmission),
+      revisitAdvised: raw.revisitAdvised === true,
+      revisitDate: str(raw.revisitDate),
+      suggestedOutcome: outcome ?? null,
+      documentId: docId
+    };
+  }
+
   listConditionCatalog(query?: string) {
     return searchConditionCatalog(query ?? "", 100);
   }

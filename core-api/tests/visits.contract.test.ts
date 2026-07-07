@@ -253,6 +253,44 @@ describe("OPD walk-in visits contract", () => {
     assert.equal((visit.disposition as JsonObject).outcome, "advised_surgery");
   });
 
+  it("searches the procedure catalog and stores coded procedures on a visit", async () => {
+    const procs = (await (await authed("/clinical/procedures?q=cataract")).json()) as {
+      data: { code: string; label: string }[];
+    };
+    assert.ok(procs.data.some((p) => p.code === "66984"));
+
+    const create = await authed("/visits", {
+      method: "POST",
+      body: JSON.stringify({ patientId: "patient_demo_001", chiefComplaint: "Cataract" })
+    });
+    const visitId = String(((await create.json()) as { data: JsonObject }).data.id);
+    const res = await authed(`/visits/${visitId}/clinical`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        outcome: "surgery_advised",
+        adviseProcedureCodes: [{ icd10Code: "66984", label: "Cataract surgery — phaco + IOL" }]
+      })
+    });
+    const visit = ((await res.json()) as { data: JsonObject }).data;
+    assert.deepEqual((visit.clinical as JsonObject).adviseProcedureCodes, [
+      { icd10Code: "66984", label: "Cataract surgery — phaco + IOL" }
+    ]);
+  });
+
+  it("prescription extraction requires the AI key (503 when unset)", async () => {
+    const create = await authed("/visits", {
+      method: "POST",
+      body: JSON.stringify({ patientId: "patient_demo_001", chiefComplaint: "Rx" })
+    });
+    const visitId = String(((await create.json()) as { data: JsonObject }).data.id);
+    const res = await authed(`/visits/${visitId}/extract-prescription`, {
+      method: "POST",
+      body: JSON.stringify({ documentId: "doc_x" })
+    });
+    // No ANTHROPIC_API_KEY in the test env → 503 before any document lookup.
+    assert.equal(res.status, 503);
+  });
+
   it("filters visits by from/to date range", async () => {
     const today = new Date().toISOString().slice(0, 10);
     const inRange = (await (await authed(`/visits?from=${today}&to=${today}`)).json()) as { data: JsonObject[] };

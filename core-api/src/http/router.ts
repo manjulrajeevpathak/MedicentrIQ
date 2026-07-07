@@ -298,6 +298,9 @@ const createRoutes = (service: CoreService): Route[] => [
   route("GET", "/clinical/conditions", "clinical:read", ({ query }) =>
     service.listConditionCatalog(query.get("q") ?? undefined)
   ),
+  route("GET", "/clinical/procedures", "clinical:read", ({ query }) =>
+    service.listProcedureCatalog(query.get("q") ?? undefined)
+  ),
   route("GET", "/patients/:patientId/clinical", "clinical:read", ({ auth, params }) =>
     service.getClinicalRecord(auth, params.patientId)
   ),
@@ -530,6 +533,10 @@ const createRoutes = (service: CoreService): Route[] => [
   // "start consult" step); disposition is derived so workflows keep firing.
   route("PATCH", "/visits/:visitId/clinical", "visits:manage", ({ auth, params, body }) =>
     service.updateVisitClinical(auth, params.visitId, toRecord(body)), "patients"
+  ),
+  // AI vision: read an uploaded prescription → structured suggestions (not saved).
+  route("POST", "/visits/:visitId/extract-prescription", "visits:manage", ({ auth, params, body }) =>
+    service.extractPrescription(auth, params.visitId, toRecord(body)), "patients"
   ),
 
   route("POST", "/service-events/integration", "service_events:ingest", ({ auth, body }) =>

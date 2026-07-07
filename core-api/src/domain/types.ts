@@ -1159,6 +1159,8 @@ export type VisitClinical = {
   advisePharmacy?: string;
   adviseDiagnostics?: string;
   adviseProcedureAdmission?: string;
+  /** Coded procedures/admission advised (from the procedure catalog). Empty = none. */
+  adviseProcedureCodes?: ClinicalCondition[];
   /** The root outcome used for retargeting. Falls back to derived on older rows. */
   outcome?: VisitOutcome;
   revisitAdvised?: boolean;

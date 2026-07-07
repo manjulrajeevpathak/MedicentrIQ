@@ -73,3 +73,79 @@ export const generateAssistantReply = async (
     return { ok: false, error: `Failed to reach the Anthropic API: ${String(error)}` };
   }
 };
+
+// ---- Prescription vision extraction (OCR → structured fields) ----------------
+
+export type VisionExtractResult = { ok: true; json: unknown } | { ok: false; error: string };
+
+/**
+ * Send a prescription/document (base64) to Claude vision with an instruction to
+ * return ONLY a JSON object, and return the parsed JSON. Images use an `image`
+ * content block; PDFs use a `document` block. Used to pre-fill the OPD clinical
+ * form from an uploaded prescription — the doctor validates before submitting.
+ */
+export const extractFromDocument = async (
+  base64: string,
+  mediaType: string,
+  instruction: string
+): Promise<VisionExtractResult> => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { ok: false, error: "ANTHROPIC_API_KEY is not configured." };
+  }
+  const isPdf = mediaType === "application/pdf";
+  const mediaBlock = isPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+    : {
+        type: "image",
+        // Anthropic accepts jpeg/png/gif/webp; default unknown types to jpeg.
+        source: {
+          type: "base64",
+          media_type: ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mediaType)
+            ? mediaType
+            : "image/jpeg",
+          data: base64
+        }
+      };
+  try {
+    const response = await fetch(ANTHROPIC_BASE, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        // Vision-capable; the assistant model (Haiku 4.5) supports images.
+        model: process.env.OCR_MODEL || process.env.ASSISTANT_MODEL || DEFAULT_MODEL,
+        max_tokens: 1500,
+        messages: [{ role: "user", content: [mediaBlock, { type: "text", text: instruction }] }]
+      }),
+      signal: AbortSignal.timeout(60_000)
+    });
+    const result = (await response.json().catch(() => ({}))) as {
+      content?: { type?: string; text?: string }[];
+      error?: { message?: string };
+    };
+    if (!response.ok) {
+      return { ok: false, error: String(result.error?.message ?? `Anthropic API responded with ${response.status}.`) };
+    }
+    const text = (result.content ?? [])
+      .filter((b) => b.type === "text" && typeof b.text === "string")
+      .map((b) => b.text)
+      .join("\n")
+      .trim();
+    // Model may wrap JSON in prose/fences — extract the first {...} block.
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) {
+      return { ok: false, error: "Could not read structured data from the document." };
+    }
+    try {
+      return { ok: true, json: JSON.parse(match[0]) };
+    } catch {
+      return { ok: false, error: "The document reader returned malformed data." };
+    }
+  } catch (error) {
+    return { ok: false, error: `Failed to reach the Anthropic API: ${String(error)}` };
+  }
+};
