@@ -17,8 +17,12 @@ import {
   createWhatsAppCloudTemplate,
   listWhatsAppCloudTemplates,
   sampleValueForToken,
+  downloadWhatsAppCloudMedia,
+  fetchWhatsAppCloudHealth,
+  sendWhatsAppCloudMedia,
   sendWhatsAppCloudTemplate,
   sendWhatsAppCloudText,
+  uploadWhatsAppSampleMedia,
   toMetaTemplateBody
 } from "../integrations/channels/whatsapp-cloud.js";
 import { placeCall } from "../integrations/channels/telephony.js";
@@ -102,6 +106,7 @@ import type {
   TenantType,
   TimelineEvent,
   Visit,
+  VisitClinical,
   VisitDisposition,
   VisitStatus,
   VisitType,
@@ -109,6 +114,8 @@ import type {
   WorkbenchTask,
   WorkbenchTaskView,
   CommTemplate,
+  TemplateRich,
+  TemplateRichButton,
   TemplateChannel,
   TemplateKind,
   Workflow,
@@ -555,6 +562,55 @@ type UpsertTemplateInput = {
   body?: unknown;
   formId?: unknown;
   status?: unknown;
+  /** Header/footer/buttons — validated by parseTemplateRich. */
+  rich?: unknown;
+};
+
+/** Validate + trim the rich template extras; throws on malformed shapes. */
+const parseTemplateRich = (input: unknown, keepImageKey?: string): TemplateRich | undefined => {
+  if (input === null) return undefined;
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "rich must be an object.");
+  }
+  const raw = input as Record<string, unknown>;
+  const text = (value: unknown, field: string, max: number): string | undefined => {
+    if (value === undefined || value === null || value === "") return undefined;
+    if (typeof value !== "string") throw new ApiError(400, `${field} must be a string.`);
+    const trimmed = value.trim();
+    if (trimmed.length > max) throw new ApiError(400, `${field} must be at most ${max} characters.`);
+    return trimmed || undefined;
+  };
+  const rich: TemplateRich = {};
+  const headerText = text(raw.headerText, "headerText", 60);
+  if (headerText) rich.headerText = headerText;
+  // The image key is managed by the header-image upload endpoint; carry it through.
+  if (keepImageKey) rich.headerImageKey = keepImageKey;
+  const footerText = text(raw.footerText, "footerText", 60);
+  if (footerText) rich.footerText = footerText;
+  if (raw.buttons !== undefined) {
+    if (!Array.isArray(raw.buttons)) throw new ApiError(400, "buttons must be an array.");
+    if (raw.buttons.length > 3) throw new ApiError(400, "At most 3 buttons are supported.");
+    const buttons: TemplateRichButton[] = [];
+    for (const entry of raw.buttons) {
+      if (typeof entry !== "object" || entry === null) throw new ApiError(400, "Each button must be an object.");
+      const b = entry as Record<string, unknown>;
+      const label = text(b.text, "button text", 25);
+      if (!label) throw new ApiError(400, "Every button needs a text label.");
+      if (b.type === "url") {
+        const url = text(b.url, "button url", 2000);
+        if (!url || !/^https?:\/\//i.test(url)) throw new ApiError(400, "URL buttons need an http(s) URL.");
+        buttons.push({ type: "url", text: label, url });
+      } else if (b.type === "phone") {
+        const phone = text(b.phone, "button phone", 20);
+        if (!phone) throw new ApiError(400, "Phone buttons need a phone number.");
+        buttons.push({ type: "phone", text: label, phone });
+      } else {
+        buttons.push({ type: "quick_reply", text: label });
+      }
+    }
+    if (buttons.length > 0) rich.buttons = buttons;
+  }
+  return Object.keys(rich).length > 0 ? rich : undefined;
 };
 
 type UpsertWorkflowInput = {
@@ -1151,7 +1207,7 @@ export class CoreService {
         actorType: "platform",
         tenantId: PLATFORM_SCOPE,
         actorId: "platform_admin",
-        displayName: "HealthOS platform admin",
+        displayName: "HealthFlow platform admin",
         roles,
         branchIds: [],
         permissions: permissionsForRoles(roles),
@@ -1937,6 +1993,7 @@ export class CoreService {
         accessTokenTail: tail(c?.whatsappCloud?.accessToken),
         appSecretTail: tail(c?.whatsappCloud?.appSecret),
         verifyToken: c?.whatsappCloud?.verifyToken ?? null,
+        appId: c?.whatsappCloud?.appId ?? null,
         /** Paste this path (on the public gateway URL) into Meta's webhook config. */
         webhookPath: `/webhooks/meta/whatsapp/${context.tenantId}`
       },
@@ -1987,6 +2044,8 @@ export class CoreService {
       if (appSecret) next.appSecret = appSecret;
       const verifyToken = str(w.verifyToken, keep?.verifyToken);
       if (verifyToken) next.verifyToken = verifyToken;
+      const appId = str(w.appId, keep?.appId);
+      if (appId) next.appId = appId;
       c.whatsappCloud = next;
     }
     const tel = input.telephony;
@@ -2694,10 +2753,18 @@ export class CoreService {
         const params = Array.isArray(template.params)
           ? (template.params.filter((p) => typeof p === "string") as string[])
           : undefined;
+        // IMAGE-header templates need the image per send — use the library copy.
+        const library = this.data.templates.find(
+          (t) => t.tenantId === context.tenantId && t.meta?.name === template.name
+        );
+        const headerImageLink = library?.rich?.headerImageKey
+          ? await this.storage.getDownloadUrl(library.rich.headerImageKey)
+          : undefined;
         result = await sendWhatsAppCloudTemplate(creds, to, {
           name: template.name,
           language: typeof template.language === "string" && template.language ? template.language : "en",
-          params
+          params,
+          headerImageLink
         });
       } else {
         // Free-form session message — only lands inside the 24h window.
@@ -2720,6 +2787,9 @@ export class CoreService {
       type,
       direction: "outbound",
       status: result.ok ? "sent" : "failed",
+      ...(context.source === "staff_session" || context.source === "demo_headers"
+        ? { origin: "staff" as const, senderName: context.displayName }
+        : { origin: "workflow" as const }),
       ...(body ? { body } : {}),
       ...(campaign ? { campaign } : {}),
       ...(waTemplate ? { waTemplate } : {}),
@@ -2732,6 +2802,99 @@ export class CoreService {
     await this.audit(context, "message.send", "message", log.id, undefined, { channel, type, status: log.status });
 
     return { ok: result.ok, channel, type, messageId: log.id, providerId: result.ok ? result.providerId : undefined, error: result.ok ? undefined : result.error };
+  }
+
+  /**
+   * Staff attachment from the inbox: store the file (S3/local), send it on the
+   * hospital's WhatsApp Cloud line by link, and log it like any other message
+   * so it renders in the conversation thread and survives refreshes.
+   */
+  async sendMessageAttachment(context: RequestContext, input: Record<string, unknown>) {
+    const to = ensureString(input.to, "to");
+    const filename = ensureString(input.filename, "filename");
+    const mimeType = ensureString(input.mimeType, "mimeType");
+    const dataBase64 = ensureString(input.data, "data");
+    const caption = typeof input.caption === "string" && input.caption.trim() ? input.caption.trim() : undefined;
+
+    const wc = this.tenantChannelConfig(context.tenantId)?.whatsappCloud;
+    if (!wc?.enabled || !wc.phoneNumberId || !wc.accessToken) {
+      throw new ApiError(400, "Attachments send via the WhatsApp Cloud API — configure it for this hospital first.");
+    }
+
+    const bytes = Buffer.from(dataBase64, "base64");
+    if (!bytes.length) throw new ApiError(400, "The attachment is empty.");
+    if (bytes.length > 25 * 1024 * 1024) throw new ApiError(400, "Attachment too large — 25 MB max.");
+
+    const kind = mimeType.startsWith("image/") ? ("image" as const) : ("document" as const);
+    const safeName = filename.replace(/[^\w.\-]+/g, "_").slice(-120) || "attachment";
+    const storageKey = `whatsapp-media/${context.tenantId}/${createId("wamedia")}-${safeName}`;
+
+    // Store first (S3 presigned PUT; local-disk handler in dev), then hand Meta
+    // a presigned GET link — Meta fetches the file once at send time.
+    const uploadUrl = await this.storage.getUploadUrl(storageKey, mimeType);
+    const putResponse = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": mimeType },
+      body: bytes
+    });
+    if (!putResponse.ok) {
+      throw new ApiError(502, `Could not store the attachment (${putResponse.status}).`);
+    }
+    const link = await this.storage.getDownloadUrl(storageKey);
+
+    const result = await sendWhatsAppCloudMedia({ phoneNumberId: wc.phoneNumberId, accessToken: wc.accessToken }, to, {
+      kind,
+      link,
+      caption,
+      ...(kind === "document" ? { filename } : {})
+    });
+
+    const log: MessageLog = {
+      id: createId("msg"),
+      tenantId: context.tenantId,
+      to,
+      channel: "whatsapp_cloud",
+      type: "transactional",
+      direction: "outbound",
+      status: result.ok ? "sent" : "failed",
+      ...(context.source === "staff_session" || context.source === "demo_headers"
+        ? { origin: "staff" as const, senderName: context.displayName }
+        : { origin: "workflow" as const }),
+      body: caption ?? `📎 ${filename}`,
+      media: { kind, filename, storageKey },
+      ...(result.ok && result.providerId ? { providerId: result.providerId } : {}),
+      ...(result.ok ? {} : { error: result.error }),
+      createdAt: nowIso()
+    };
+    this.data.messages.push(log);
+    await this.persistence.saveCollection("messages", this.data.messages);
+    await this.audit(context, "message.send", "message", log.id, undefined, {
+      channel: "whatsapp_cloud",
+      type: "transactional",
+      status: log.status,
+      media: kind
+    });
+
+    return {
+      ok: result.ok,
+      channel: "whatsapp_cloud",
+      messageId: log.id,
+      providerId: result.ok ? result.providerId : undefined,
+      error: result.ok ? undefined : result.error
+    };
+  }
+
+  /** Short-lived download URL for a message attachment (inbound or outbound). */
+  async getMessageMediaUrl(context: RequestContext, messageId: string) {
+    const message = this.data.messages.find((m) => m.tenantId === context.tenantId && m.id === messageId);
+    if (!message?.media?.storageKey) {
+      throw new ApiError(404, "No attachment on this message.");
+    }
+    return {
+      url: await this.storage.getDownloadUrl(message.media.storageKey),
+      kind: message.media.kind,
+      filename: message.media.filename
+    };
   }
 
   listMessages(context: RequestContext, limit = 25, filters: { templateId?: string } = {}) {
@@ -2750,6 +2913,59 @@ export class CoreService {
       throw new ApiError(400, "WhatsApp Cloud API is not configured for this hospital.");
     }
     return wc;
+  }
+
+  /** Business-initiated (template) sends in the trailing 24h — what Meta's daily tier counts. */
+  private businessInitiatedLast24h(tenantId: string): number {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return this.data.messages.filter(
+      (m) =>
+        m.tenantId === tenantId &&
+        m.channel === "whatsapp_cloud" &&
+        m.direction !== "inbound" &&
+        Boolean(m.waTemplate) &&
+        m.status !== "failed" &&
+        new Date(m.createdAt).getTime() >= cutoff
+    ).length;
+  }
+
+  private static readonly WA_TIER_LIMITS: Record<string, number | null> = {
+    TIER_50: 50,
+    TIER_250: 250,
+    TIER_1K: 1000,
+    TIER_10K: 10000,
+    TIER_100K: 100000,
+    TIER_UNLIMITED: null // null = unlimited
+  };
+
+  /**
+   * Number health straight from Meta: quality rating, messaging-limit tier and
+   * month-to-date spend — plus our own count of template sends in the last 24h
+   * so campaigns can be planned against the remaining daily allowance. Meta has
+   * no wallet-balance API for card-billed accounts; spend is the signal.
+   */
+  async getWhatsAppHealth(context: RequestContext) {
+    const wc = this.requireWhatsAppCloud(context);
+    const now = new Date();
+    const monthStartTs = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000);
+    const health = await fetchWhatsAppCloudHealth(
+      { phoneNumberId: wc.phoneNumberId, wabaId: wc.wabaId, accessToken: wc.accessToken },
+      { startTs: monthStartTs, endTs: Math.floor(now.getTime() / 1000) }
+    );
+    if (!health.ok) {
+      throw new ApiError(502, health.error);
+    }
+    const tier = health.phone.messagingLimitTier;
+    const dailyLimit = tier ? (CoreService.WA_TIER_LIMITS[tier] ?? null) : null;
+    const usedToday = this.businessInitiatedLast24h(context.tenantId);
+    return {
+      ...health.phone,
+      dailyLimit,
+      usedToday,
+      remainingToday: dailyLimit === null ? null : Math.max(0, dailyLimit - usedToday),
+      monthSpend: health.spend ?? null,
+      checkedAt: nowIso()
+    };
   }
 
   /** Live list of the WABA's message templates (approved + pending + rejected). */
@@ -2914,6 +3130,29 @@ export class CoreService {
         if (!isPlainRecord(change) || !isPlainRecord(change.value)) continue;
         const value = change.value as Record<string, unknown>;
 
+        // -- Template review decisions (APPROVED/REJECTED/PAUSED) pushed by Meta —
+        //    keeps library statuses fresh without anyone clicking "Sync Meta". --
+        if (change.field === "message_template_status_update") {
+          const event = typeof value.event === "string" ? value.event : undefined;
+          const metaName =
+            typeof value.message_template_name === "string" ? value.message_template_name : undefined;
+          if (event && metaName) {
+            const template = this.data.templates.find(
+              (t) => t.tenantId === tenantId && t.meta?.name === metaName
+            );
+            if (template?.meta) {
+              template.meta.status = event;
+              const reason = typeof value.reason === "string" && value.reason !== "NONE" ? value.reason : undefined;
+              if (reason) template.meta.rejectionReason = reason;
+              template.meta.syncedAt = nowIso();
+              template.updatedAt = nowIso();
+              await this.persistence.saveCollection("templates", this.data.templates);
+              handled += 1;
+            }
+          }
+          continue;
+        }
+
         // -- Status callbacks: upgrade outbound log rows (sent→delivered→read). --
         const statuses = Array.isArray(value.statuses) ? value.statuses : [];
         for (const status of statuses) {
@@ -2966,6 +3205,49 @@ export class CoreService {
               ? contact.profile.name
               : undefined;
 
+          // Patient-sent media: download from Meta (media URLs are token-gated
+          // and expire) and keep our own copy so the inbox can render it.
+          let media: MessageLog["media"];
+          let caption = "";
+          const mediaType = (["image", "document", "video", "audio"] as const).find(
+            (kind) => message.type === kind && isPlainRecord(message[kind])
+          );
+          if (mediaType) {
+            const mediaPayload = message[mediaType] as Record<string, unknown>;
+            caption = typeof mediaPayload.caption === "string" ? mediaPayload.caption : "";
+            const filename =
+              typeof mediaPayload.filename === "string" && mediaPayload.filename
+                ? mediaPayload.filename
+                : `${mediaType}-${wamid.slice(-8)}`;
+            const mediaId = typeof mediaPayload.id === "string" ? mediaPayload.id : undefined;
+            if (mediaId) {
+              const download = await downloadWhatsAppCloudMedia(
+                { phoneNumberId: wc.phoneNumberId, accessToken: wc.accessToken },
+                mediaId
+              );
+              if (download.ok) {
+                const safeName = filename.replace(/[^\w.\-]+/g, "_").slice(-120) || "attachment";
+                const storageKey = `whatsapp-media/${tenantId}/in-${createId("wamedia")}-${safeName}`;
+                const uploadUrl = await this.storage.getUploadUrl(storageKey, download.mimeType);
+                const put = await fetch(uploadUrl, {
+                  method: "PUT",
+                  headers: { "content-type": download.mimeType },
+                  body: download.bytes
+                });
+                if (put.ok) {
+                  media = { kind: mediaType === "image" ? "image" : "document", filename, storageKey };
+                }
+              }
+            }
+          }
+
+          const body =
+            text ||
+            caption ||
+            (media
+              ? `📎 ${media.filename}`
+              : `[${typeof message.type === "string" ? message.type : "unsupported"} message]`);
+
           const inbound: MessageLog = {
             id: createId("msg"),
             tenantId,
@@ -2974,7 +3256,8 @@ export class CoreService {
             type: "transactional",
             direction: "inbound",
             status: "received",
-            body: text || `[${typeof message.type === "string" ? message.type : "unsupported"} message]`,
+            body,
+            ...(media ? { media } : {}),
             providerId: wamid,
             createdAt: nowIso()
           };
@@ -2982,7 +3265,13 @@ export class CoreService {
           messagesMutated = true;
           handled += 1;
 
-          await this.handleInboundWhatsApp(context, wc, from, text, profileName);
+          if (media && !text && !caption) {
+            // Pure attachment — nothing for the assistant to answer; hand the
+            // conversation to a human directly.
+            await this.createInboxHandoff(context, from, body, profileName);
+          } else {
+            await this.handleInboundWhatsApp(context, wc, from, text || caption, profileName);
+          }
         }
       }
     }
@@ -3019,6 +3308,7 @@ export class CoreService {
         type: "transactional",
         direction: "outbound",
         status: result.ok ? "sent" : "failed",
+        origin: "assistant",
         body,
         ...(result.ok && result.providerId ? { providerId: result.providerId } : {}),
         ...(result.ok ? {} : { error: result.error }),
@@ -3097,7 +3387,11 @@ export class CoreService {
         normalizePhone(i.from ?? "") === normalized
     );
     if (open) {
-      open.body = `${open.body}\n[${new Date().toLocaleString("en-IN")}] ${text}`;
+      // Latest message becomes the list preview; the conversation itself is
+      // rendered from the per-message log (whatsappInboxThread), so the body
+      // must stay a single message — never a concatenated transcript.
+      open.body = text;
+      open.receivedAt = nowIso();
       await this.persistence.saveCollection("interactions", this.data.interactions);
       return;
     }
@@ -3433,14 +3727,23 @@ export class CoreService {
     return { match: "none" as const };
   }
 
-  listVisits(context: RequestContext, filters: { status?: string; patientId?: string; date?: string } = {}) {
-    const day = typeof filters.date === "string" && filters.date.trim() ? filters.date.trim() : undefined;
+  listVisits(
+    context: RequestContext,
+    filters: { status?: string; patientId?: string; date?: string; from?: string; to?: string; doctorId?: string } = {}
+  ) {
+    const clean = (v?: string) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+    const day = clean(filters.date);
+    const from = clean(filters.from);
+    const to = clean(filters.to);
     return this.data.visits
       .filter((visit) => visit.tenantId === context.tenantId)
       .filter((visit) => this.canAccessBranch(context, visit.branchId ?? "default-branch"))
       .filter((visit) => (filters.status ? visit.status === filters.status : true))
       .filter((visit) => (filters.patientId ? visit.patientId === filters.patientId : true))
+      .filter((visit) => (clean(filters.doctorId) ? visit.doctorId === filters.doctorId : true))
       .filter((visit) => (day ? visit.registeredAt.slice(0, 10) === day : true))
+      .filter((visit) => (from ? visit.registeredAt.slice(0, 10) >= from : true))
+      .filter((visit) => (to ? visit.registeredAt.slice(0, 10) <= to : true))
       .sort((a, b) => b.registeredAt.localeCompare(a.registeredAt))
       .map((visit) => this.visitView(context, visit));
   }
@@ -3659,6 +3962,75 @@ export class CoreService {
     await this.audit(context, "visit.update", "visit", visit.id, visit.patientId, {
       status: visit.status,
       diagnosisCount: visit.diagnosis?.length ?? 0
+    });
+    return this.visitView(context, visit);
+  }
+
+  /**
+   * Save the structured clinical observations and — unless `complete: false` —
+   * finish the visit in the same step (there is no separate "start consult"):
+   * a disposition is derived from the observations (revisit → follow_up with the
+   * revisit date; procedure/admission advised → advised_surgery; else prescribed)
+   * so the existing completion path still drives workflows (visit_completed,
+   * visit_end-anchored stages) and the linked appointment.
+   */
+  async updateVisitClinical(context: RequestContext, visitId: string, input: Record<string, unknown>) {
+    const visit = this.ensureVisibleVisit(context, visitId);
+    const current = visit.clinical ?? {};
+    const text = (v: unknown, prev?: string) =>
+      v === undefined ? prev : typeof v === "string" && v.trim() ? v.trim() : undefined;
+
+    const clinical: VisitClinical = {
+      chiefComplaints: text(input.chiefComplaints, current.chiefComplaints),
+      preExistingDiseases: text(input.preExistingDiseases, current.preExistingDiseases),
+      diagnosisText: text(input.diagnosisText, current.diagnosisText),
+      advisePharmacy: text(input.advisePharmacy, current.advisePharmacy),
+      adviseDiagnostics: text(input.adviseDiagnostics, current.adviseDiagnostics),
+      adviseProcedureAdmission: text(input.adviseProcedureAdmission, current.adviseProcedureAdmission),
+      revisitAdvised:
+        input.revisitAdvised === undefined ? current.revisitAdvised : input.revisitAdvised === true,
+      revisitDate: text(input.revisitDate, current.revisitDate),
+      prescriptionDocumentIds: current.prescriptionDocumentIds,
+      updatedBy: context.actorId,
+      updatedAt: nowIso()
+    };
+    // Attach (never detach) prescription documents; dedupe ids.
+    if (Array.isArray(input.prescriptionDocumentIds)) {
+      const ids = new Set(clinical.prescriptionDocumentIds ?? []);
+      for (const id of input.prescriptionDocumentIds) {
+        if (typeof id === "string" && id.trim()) ids.add(id.trim());
+      }
+      clinical.prescriptionDocumentIds = Array.from(ids);
+    }
+    visit.clinical = clinical;
+    // Chief complaints stay mirrored on the intake field so older list views keep working.
+    if (clinical.chiefComplaints) {
+      visit.chiefComplaint = clinical.chiefComplaints;
+    }
+
+    const complete = input.complete !== false && visit.status !== "completed";
+    if (complete) {
+      visit.disposition = visit.disposition ?? {
+        outcome: clinical.revisitAdvised
+          ? "follow_up"
+          : clinical.adviseProcedureAdmission
+            ? "advised_surgery"
+            : "prescribed",
+        ...(clinical.revisitDate ? { nextActionDate: clinical.revisitDate } : {}),
+        ...(clinical.diagnosisText ? { notes: clinical.diagnosisText } : {})
+      };
+      visit.consultedBy = visit.consultedBy ?? context.actorId;
+      visit.consultedAt = visit.consultedAt ?? nowIso();
+      visit.status = "completed";
+      await this.syncLinkedAppointment(context, visit);
+    }
+
+    visit.updatedAt = nowIso();
+    await this.persistence.saveCollection("visits", this.data.visits);
+    await this.audit(context, "visit.update", "visit", visit.id, visit.patientId, {
+      clinical: true,
+      completed: visit.status === "completed",
+      revisitAdvised: clinical.revisitAdvised ?? false
     });
     return this.visitView(context, visit);
   }
@@ -4092,16 +4464,25 @@ export class CoreService {
           due: formatDue(task.dueAt),
           reason: task.reason
         })),
-      inbox: interactions.slice(0, 8).map((interaction) => ({
-        id: interaction.id,
-        channel: staffChannel(interaction.channel),
-        patient: patientName(this.data.patients, interaction.patientId),
-        preview: interaction.body,
-        intent: interaction.intent ?? interaction.subject,
-        status: staffInteractionStatus(interaction.status),
-        age: formatAge(interaction.receivedAt),
-        assignee: interaction.createdTaskIds.length ? "Assigned" : "Unassigned"
-      })),
+      inbox: [...interactions]
+        .sort((a, b) => (b.receivedAt ?? "").localeCompare(a.receivedAt ?? ""))
+        .slice(0, 8)
+        .map((interaction) => {
+        const patient = patientName(this.data.patients, interaction.patientId);
+        return {
+          id: interaction.id,
+          channel: staffChannel(interaction.channel),
+          patient,
+          phone: interaction.from,
+          lastPatientAt: this.lastInboundWhatsAppAt(context.tenantId, interaction.from),
+          preview: interaction.body,
+          intent: interaction.intent ?? interaction.subject,
+          status: staffInteractionStatus(interaction.status),
+          age: formatAge(interaction.receivedAt),
+          assignee: interaction.createdTaskIds.length ? "Assigned" : "Unassigned",
+          thread: this.whatsappInboxThread(interaction, patient)
+        };
+      }),
       patient360: primarySummary
         ? {
             id: primarySummary.id,
@@ -8383,6 +8764,23 @@ export class CoreService {
       clinicPhone: branch?.phone ?? ""
     };
 
+    // Messaging-limit guard: Meta caps business-initiated conversations per
+    // 24h by tier. Warn — never block — when a run may exceed what's left.
+    let tierWarning: string | undefined;
+    if (provider === "whatsapp_cloud" && eligible.length > 0) {
+      try {
+        const health = await this.getWhatsAppHealth(context);
+        if (health.remainingToday !== null && eligible.length > health.remainingToday) {
+          tierWarning =
+            `This run targets ${eligible.length} recipients but only ~${health.remainingToday} ` +
+            `business-initiated sends remain in the current 24h window (tier limit ${health.dailyLimit}/day). ` +
+            `Sends beyond the limit will fail until the window rolls over.`;
+        }
+      } catch {
+        // The limit check is advisory — never stall a campaign on it.
+      }
+    }
+
     let sent = 0;
     let failed = 0;
     const newlyContacted: string[] = [];
@@ -8444,7 +8842,7 @@ export class CoreService {
       failed,
       skipped
     });
-    return { sent, failed, skipped, audienceSize: resolved.length };
+    return { sent, failed, skipped, audienceSize: resolved.length, ...(tierWarning ? { tierWarning } : {}) };
   }
 
   /**
@@ -8578,6 +8976,7 @@ export class CoreService {
       name,
       channel,
       kind,
+      ...(input.rich !== undefined ? { rich: parseTemplateRich(input.rich) } : {}),
       status: input.status === "archived" ? "archived" : "active",
       createdAt: timestamp,
       updatedAt: timestamp
@@ -8599,6 +8998,13 @@ export class CoreService {
     const template = this.ensureTemplate(context, templateId);
     if (typeof input.name === "string" && input.name.trim()) {
       template.name = input.name.trim();
+    }
+    if (input.rich !== undefined) {
+      // The header image key survives edits — it's managed by its own endpoint.
+      const keepImageKey = template.rich?.headerImageKey;
+      template.rich =
+        parseTemplateRich(input.rich, keepImageKey) ??
+        (keepImageKey ? { headerImageKey: keepImageKey } : undefined);
     }
     const { channel, kind } = this.resolveTemplateChannelKind(input, template);
     template.channel = channel;
@@ -8656,6 +9062,35 @@ export class CoreService {
    * sample values are attached for Meta's review. Re-submitting after a body edit
    * creates/updates the same WABA template name.
    */
+  /** Attach a header image to a template (stored our side; Meta gets it at submit + on sends). */
+  async setTemplateHeaderImage(context: RequestContext, templateId: string, input: Record<string, unknown>) {
+    const template = this.ensureTemplate(context, templateId);
+    if (template.channel !== "whatsapp" || template.kind !== "text") {
+      throw new ApiError(400, "Header images apply to WhatsApp text templates only.");
+    }
+    const remove = input.remove === true;
+    if (remove) {
+      if (template.rich) delete template.rich.headerImageKey;
+    } else {
+      const mimeType = ensureString(input.mimeType, "mimeType");
+      const dataBase64 = ensureString(input.data, "data");
+      if (!/^image\/(jpeg|png)$/i.test(mimeType)) {
+        throw new ApiError(400, "Header images must be JPEG or PNG (Meta requirement).");
+      }
+      const bytes = Buffer.from(dataBase64, "base64");
+      if (!bytes.length) throw new ApiError(400, "The image is empty.");
+      if (bytes.length > 5 * 1024 * 1024) throw new ApiError(400, "Header images must be under 5 MB.");
+      const storageKey = `wa-template-headers/${context.tenantId}/${template.id}-${Date.now().toString(36)}`;
+      const uploadUrl = await this.storage.getUploadUrl(storageKey, mimeType);
+      const put = await fetch(uploadUrl, { method: "PUT", headers: { "content-type": mimeType }, body: bytes });
+      if (!put.ok) throw new ApiError(502, `Could not store the header image (${put.status}).`);
+      template.rich = { ...(template.rich ?? {}), headerImageKey: storageKey };
+    }
+    template.updatedAt = nowIso();
+    await this.persistence.saveCollection("templates", this.data.templates);
+    return { ...template, usageCount: this.templateUsageCount(context.tenantId, template.id) };
+  }
+
   async submitTemplateToMeta(context: RequestContext, templateId: string, input: Record<string, unknown>) {
     const template = this.ensureTemplate(context, templateId);
     if (template.channel !== "whatsapp" || template.kind !== "text" || !template.body?.trim()) {
@@ -8674,6 +9109,35 @@ export class CoreService {
     if (!metaName) {
       throw new ApiError(400, "Template name must contain letters or numbers.");
     }
+
+    // Image header: Meta reviews a SAMPLE image, referenced by an Upload-API
+    // handle — upload our stored copy first. Needs the Meta App ID.
+    let headerImageHandle: string | undefined;
+    if (template.rich?.headerImageKey) {
+      if (!wc.appId) {
+        throw new ApiError(
+          400,
+          "Image-header templates need the Meta App ID saved in the WhatsApp (Meta) settings — it's on the app dashboard, App settings → Basic."
+        );
+      }
+      const imageUrl = await this.storage.getDownloadUrl(template.rich.headerImageKey);
+      const imageResponse = await fetch(imageUrl);
+      if (!imageResponse.ok) {
+        throw new ApiError(502, "Could not read the stored header image.");
+      }
+      const uploaded = await uploadWhatsAppSampleMedia(
+        { appId: wc.appId, accessToken: wc.accessToken },
+        {
+          bytes: Buffer.from(await imageResponse.arrayBuffer()),
+          mimeType: imageResponse.headers.get("content-type") ?? "image/jpeg"
+        }
+      );
+      if (!uploaded.ok) {
+        throw new ApiError(502, uploaded.error);
+      }
+      headerImageHandle = uploaded.handle;
+    }
+
     const { text, paramTokens } = toMetaTemplateBody(template.body);
     const result = await createWhatsAppCloudTemplate(
       { wabaId: wc.wabaId, accessToken: wc.accessToken },
@@ -8682,7 +9146,11 @@ export class CoreService {
         category,
         language,
         body: text,
-        sampleParams: paramTokens.length > 0 ? paramTokens.map(sampleValueForToken) : undefined
+        sampleParams: paramTokens.length > 0 ? paramTokens.map(sampleValueForToken) : undefined,
+        headerText: headerImageHandle ? undefined : template.rich?.headerText,
+        headerImageHandle,
+        footerText: template.rich?.footerText,
+        buttons: template.rich?.buttons
       }
     );
     if (!result.ok) {
@@ -9047,6 +9515,79 @@ export class CoreService {
         permissions: caregiver.permissions
       }))
     };
+  }
+
+  /** Latest inbound Cloud API message from this phone — anchors the 24h service window. */
+  private lastInboundWhatsAppAt(tenantId: string, from?: string): string | undefined {
+    if (!from) return undefined;
+    const phone = normalizePhone(from);
+    let latest: string | undefined;
+    for (const m of this.data.messages) {
+      if (
+        m.tenantId === tenantId &&
+        m.channel === "whatsapp_cloud" &&
+        m.direction === "inbound" &&
+        normalizePhone(m.to) === phone &&
+        (!latest || m.createdAt > latest)
+      ) {
+        latest = m.createdAt;
+      }
+    }
+    return latest;
+  }
+
+  /** Approved WABA templates, readable by inbox staff (for out-of-window replies). */
+  listApprovedWaTemplates(context: RequestContext) {
+    return this.data.templates
+      .filter(
+        (t) =>
+          t.tenantId === context.tenantId &&
+          t.status === "active" &&
+          t.channel === "whatsapp" &&
+          t.meta?.status === "APPROVED"
+      )
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        body: t.body ?? "",
+        meta: { name: t.meta!.name, language: t.meta!.language, paramTokens: t.meta!.paramTokens }
+      }));
+  }
+
+  /** Rebuild a WhatsApp conversation as individual bubbles from the message log. */
+  private whatsappInboxThread(interaction: Interaction, patientDisplayName: string) {
+    if (interaction.channel !== "whatsapp" || !interaction.from) return undefined;
+    const phone = normalizePhone(interaction.from);
+    const thread = this.data.messages
+      .filter(
+        (entry) =>
+          entry.tenantId === interaction.tenantId &&
+          // Only the two-way Cloud API conversation — UltraMsg workflow
+          // reminders to the same phone are delivery traffic, not this chat.
+          entry.channel === "whatsapp_cloud" &&
+          // A failed attempt never reached the patient — don't render it as sent.
+          entry.status !== "failed" &&
+          Boolean(entry.body) &&
+          normalizePhone(entry.to) === phone
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((entry) => ({
+        id: entry.id,
+        author: entry.direction === "inbound" ? ("patient" as const) : ("staff" as const),
+        authorName:
+          entry.direction === "inbound"
+            ? patientDisplayName
+            : entry.origin === "assistant"
+              ? "Assistant"
+              : entry.senderName ?? "Care team",
+        at: `${formatAge(entry.createdAt)} ago`,
+        body: entry.body as string,
+        ...(entry.direction === "inbound"
+          ? {}
+          : { origin: entry.origin ?? "workflow", status: entry.status }),
+        ...(entry.media ? { media: { kind: entry.media.kind, filename: entry.media.filename } } : {})
+      }));
+    return thread.length > 0 ? thread : undefined;
   }
 
   private inboxThreadView(context: RequestContext, interaction: Interaction) {

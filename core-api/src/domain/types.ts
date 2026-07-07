@@ -223,6 +223,8 @@ export type WhatsAppCloudConfig = {
   appSecret?: string;
   /** Arbitrary string the hospital also enters in Meta's webhook config. */
   verifyToken?: string;
+  /** Meta App ID — needed only for image-header template submissions (sample upload). */
+  appId?: string;
   enabled: boolean;
 };
 
@@ -264,6 +266,12 @@ export type MessageLog = {
   waTemplate?: string;
   providerId?: string;
   error?: string;
+  /** Outbound authorship: the AI assistant, a human staff member, or an automated workflow. */
+  origin?: "assistant" | "staff" | "workflow";
+  /** Display name of the human sender — inbox attribution for staff replies. */
+  senderName?: string;
+  /** Present when the message carried an attachment. */
+  media?: { kind: "image" | "document"; filename?: string; storageKey?: string };
   createdAt: string;
   updatedAt?: string;
 };
@@ -313,6 +321,24 @@ export type TemplateKind = "text" | "form";
  * which named token sits behind each positional param, so campaign sends can
  * personalize params per recipient automatically.
  */
+export type TemplateRichButton =
+  | { type: "quick_reply"; text: string }
+  | { type: "url"; text: string; url: string }
+  | { type: "phone"; text: string; phone: string };
+
+/**
+ * Optional WhatsApp template extras beyond the body: header (text OR image),
+ * footer, and up to 3 buttons. Submitted to Meta as components; the header
+ * image doubles as the default image attached on sends.
+ */
+export type TemplateRich = {
+  headerText?: string;
+  /** Storage key of the header image (Meta approval sample + send-time image). */
+  headerImageKey?: string;
+  footerText?: string;
+  buttons?: TemplateRichButton[];
+};
+
 export type TemplateMetaSync = {
   /** Template name on the WABA (slugified from the library name). */
   name: string;
@@ -337,6 +363,8 @@ export type CommTemplate = {
   body?: string;
   /** kind="form": references a LeadForm (forms collection). */
   formId?: string;
+  /** Optional header/footer/buttons — see TemplateRich. */
+  rich?: TemplateRich;
   /** Present when this template has been submitted to the tenant's WABA. */
   meta?: TemplateMetaSync;
   status: "active" | "archived";
@@ -1092,6 +1120,28 @@ export type VisitDisposition = {
   nextActionDate?: string;
 };
 
+/**
+ * Structured clinical observations captured after the consult — plain text by
+ * design: staff/doctors type (or dictate) fast, and prescription processing will
+ * later auto-fill these from the uploaded document. Saving this block completes
+ * the visit (no separate "start consult" step).
+ */
+export type VisitClinical = {
+  chiefComplaints?: string;
+  preExistingDiseases?: string;
+  diagnosisText?: string;
+  advisePharmacy?: string;
+  adviseDiagnostics?: string;
+  adviseProcedureAdmission?: string;
+  revisitAdvised?: boolean;
+  /** ISO date (YYYY-MM-DD) the patient was asked to return. */
+  revisitDate?: string;
+  /** Uploaded prescription documents (DocumentMetadata ids) for this visit. */
+  prescriptionDocumentIds?: string[];
+  updatedBy?: string;
+  updatedAt?: string;
+};
+
 /** An OPD encounter — a walk-in (or appointment-backed) clinical visit. */
 export type Visit = {
   id: string;
@@ -1116,6 +1166,8 @@ export type Visit = {
   // post-consult:
   diagnosis?: ClinicalCondition[];
   disposition?: VisitDisposition;
+  /** Structured clinical observations (chief complaints → advise → revisit). */
+  clinical?: VisitClinical;
   consultNotes?: string;
   consultedBy?: string;
   consultedAt?: string;

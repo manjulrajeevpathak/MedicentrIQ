@@ -167,6 +167,69 @@ describe("OPD walk-in visits contract", () => {
     assert.equal(res.status, 400);
   });
 
+  it("saves clinical observations and completes the visit in one step (no start-consult)", async () => {
+    const create = await authed("/visits", {
+      method: "POST",
+      body: JSON.stringify({ patientId: "patient_demo_001", chiefComplaint: "Blurred vision" })
+    });
+    const visitId = String(((await create.json()) as { data: JsonObject }).data.id);
+
+    const res = await authed(`/visits/${visitId}/clinical`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        chiefComplaints: "Blurred vision in right eye, 2 weeks",
+        preExistingDiseases: "Type 2 diabetes (8 years)",
+        diagnosisText: "Early cataract, right eye",
+        advisePharmacy: "Lubricant eye drops BD",
+        adviseDiagnostics: "HbA1c, fasting sugar",
+        revisitAdvised: true,
+        revisitDate: "2026-08-07",
+        prescriptionDocumentIds: ["doc_test_rx_1"]
+      })
+    });
+    assert.equal(res.status, 200);
+    const visit = ((await res.json()) as { data: JsonObject }).data;
+    // Saving observations completes the visit directly from "registered".
+    assert.equal(visit.status, "completed");
+    const clinical = visit.clinical as JsonObject;
+    assert.equal(clinical.diagnosisText, "Early cataract, right eye");
+    assert.equal(clinical.revisitAdvised, true);
+    assert.deepEqual(clinical.prescriptionDocumentIds, ["doc_test_rx_1"]);
+    // Disposition derived from the observations: revisit → follow_up + date.
+    const disposition = visit.disposition as JsonObject;
+    assert.equal(disposition.outcome, "follow_up");
+    assert.equal(disposition.nextActionDate, "2026-08-07");
+    // Chief complaints mirror onto the intake field for list views.
+    assert.equal(visit.chiefComplaint, "Blurred vision in right eye, 2 weeks");
+  });
+
+  it("derives advised_surgery when procedure/admission is advised (no revisit)", async () => {
+    const create = await authed("/visits", {
+      method: "POST",
+      body: JSON.stringify({ patientId: "patient_demo_002", chiefComplaint: "Cataract review" })
+    });
+    const visitId = String(((await create.json()) as { data: JsonObject }).data.id);
+    const res = await authed(`/visits/${visitId}/clinical`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        diagnosisText: "Mature cataract, left eye",
+        adviseProcedureAdmission: "Phaco + IOL, left eye — schedule within 3 weeks"
+      })
+    });
+    const visit = ((await res.json()) as { data: JsonObject }).data;
+    assert.equal(visit.status, "completed");
+    assert.equal((visit.disposition as JsonObject).outcome, "advised_surgery");
+  });
+
+  it("filters visits by from/to date range", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const inRange = (await (await authed(`/visits?from=${today}&to=${today}`)).json()) as { data: JsonObject[] };
+    assert.ok(inRange.data.length >= 1);
+    assert.ok(inRange.data.every((v) => String(v.registeredAt).slice(0, 10) === today));
+    const outOfRange = (await (await authed(`/visits?from=2020-01-01&to=2020-01-02`)).json()) as { data: JsonObject[] };
+    assert.equal(outOfRange.data.length, 0);
+  });
+
   it("filters visits by date (registeredAt day)", async () => {
     const today = new Date().toISOString().slice(0, 10);
     const body = (await (await authed(`/visits?date=${today}`)).json()) as { data: JsonObject[] };

@@ -117,6 +117,12 @@ const createRoutes = (service: CoreService): Route[] => [
   ),
   route("POST", "/tenant/lead-sheet/sync", "tenant:settings:manage", ({ auth }) => service.syncLeadSheet(auth)),
   route("POST", "/messages/send", "messages:send", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
+  route("POST", "/messages/send-attachment", "messages:send", ({ auth, body }) =>
+    service.sendMessageAttachment(auth, toRecord(body))
+  ),
+  route("GET", "/messages/:messageId/media-url", "interactions:read", ({ auth, params }) =>
+    service.getMessageMediaUrl(auth, params.messageId)
+  ),
   route("POST", "/messages/test", "tenant:settings:manage", ({ auth, body }) => service.sendMessage(auth, toRecord(body))),
   route("GET", "/messages", "tenant:settings:manage", ({ auth, query }) =>
     service.listMessages(auth, Number.parseInt(query.get("limit") ?? "25", 10), {
@@ -468,6 +474,8 @@ const createRoutes = (service: CoreService): Route[] => [
 
   // Communication Workflows — config/data layer (org admin). Tenant-settings gated.
   route("GET", "/templates", "tenant:settings:manage", ({ auth }) => service.listTemplates(auth)),
+  // NOTE: must precede "/templates/:id" — inbox staff use this for out-of-window replies.
+  route("GET", "/templates/wa-approved", "interactions:read", ({ auth }) => service.listApprovedWaTemplates(auth)),
   route("POST", "/templates", "tenant:settings:manage", ({ auth, body }) => service.createTemplate(auth, toRecord(body))),
   route("GET", "/templates/:id", "tenant:settings:manage", ({ auth, params }) => service.getTemplate(auth, params.id)),
   route("PATCH", "/templates/:id", "tenant:settings:manage", ({ auth, params, body }) =>
@@ -505,13 +513,21 @@ const createRoutes = (service: CoreService): Route[] => [
     service.listVisits(auth, {
       status: query.get("status") ?? undefined,
       patientId: query.get("patientId") ?? undefined,
-      date: query.get("date") ?? undefined
+      date: query.get("date") ?? undefined,
+      from: query.get("from") ?? undefined,
+      to: query.get("to") ?? undefined,
+      doctorId: query.get("doctorId") ?? undefined
     }), "patients"
   ),
   route("POST", "/visits", "visits:manage", ({ auth, body }) => service.createVisit(auth, toRecord(body)), "patients"),
   route("GET", "/visits/:visitId", "visits:read", ({ auth, params }) => service.getVisit(auth, params.visitId), "patients"),
   route("PATCH", "/visits/:visitId", "visits:manage", ({ auth, params, body }) =>
     service.updateVisit(auth, params.visitId, toRecord(body)), "patients"
+  ),
+  // Structured clinical observations — saving completes the visit (no separate
+  // "start consult" step); disposition is derived so workflows keep firing.
+  route("PATCH", "/visits/:visitId/clinical", "visits:manage", ({ auth, params, body }) =>
+    service.updateVisitClinical(auth, params.visitId, toRecord(body)), "patients"
   ),
 
   route("POST", "/service-events/integration", "service_events:ingest", ({ auth, body }) =>
@@ -524,11 +540,15 @@ const createRoutes = (service: CoreService): Route[] => [
   // ---- WhatsApp Cloud API (Meta) ------------------------------------------
   // WABA template management (live against the Graph API).
   route("GET", "/tenant/whatsapp/templates", "tenant:settings:manage", ({ auth }) => service.listWaTemplates(auth)),
+  route("GET", "/tenant/whatsapp/health", "tenant:settings:manage", ({ auth }) => service.getWhatsAppHealth(auth)),
   route("POST", "/tenant/whatsapp/templates", "tenant:settings:manage", ({ auth, body }) =>
     service.createWaTemplate(auth, toRecord(body))
   ),
   // Unified library ⇄ Meta sync: submit a library template for approval, refresh
   // statuses (+ list WABA-only templates), import a WABA-only template.
+  route("POST", "/templates/:id/header-image", "tenant:settings:manage", ({ auth, params, body }) =>
+    service.setTemplateHeaderImage(auth, params.id, toRecord(body))
+  ),
   route("POST", "/templates/:id/submit-meta", "tenant:settings:manage", ({ auth, params, body }) =>
     service.submitTemplateToMeta(auth, params.id, toRecord(body))
   ),
