@@ -1,82 +1,117 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import Link from "next/link";
 import {
   Activity,
   CheckCircle2,
-  ClipboardPlus,
+  ClipboardList,
   Clock,
-  FileText,
   Loader2,
   Phone,
-  Stethoscope,
-  Upload,
   UserPlus,
   X
 } from "lucide-react";
 import { Panel, SectionTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { Segmented } from "@/components/ui/segmented";
 import { EmptyState } from "@/components/ui/empty";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import {
-  DISPOSITION_OUTCOMES,
-  DISPOSITION_OUTCOME_LABELS,
   GENDER_OPTIONS,
-  QUEUE_FILTERS,
-  VISIT_DOCUMENT_TYPES,
+  REGISTER_STATUS_FILTERS,
   VISIT_STATUS_LABELS,
-  VISIT_STATUS_TONE,
   formatTime,
-  visitMeta,
-  type ConditionCatalogEntry,
-  type Disposition,
-  type IntakeCondition,
+  isoDateDaysAgo,
   type IntakeDoctor,
   type IntakeLookupResult,
   type IntakeTodayAppointment,
   type Visit,
+  type VisitListFilters,
   type VisitStatus,
   type Vitals
 } from "@/lib/opd-types";
 import {
   intakeLookupAction,
+  listVisitsAction,
   loadVisitAction,
-  refreshVisitsAction,
-  registerVisitAction,
-  updateVisitAction,
-  uploadVisitDocumentAction
+  registerVisitAction
 } from "@/app/(app)/opd/actions";
+import { HighlightMenu, OpdRegisterList, useRowHighlights } from "@/components/opd/opd-register-list";
+import { ClinicalObservationsForm } from "@/components/opd/clinical-observations-form";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
 
-const textareaClass =
-  "w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200";
+type DateMode = "today" | "week" | "all" | "custom";
+
+const DATE_MODE_OPTIONS: { value: DateMode; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "week", label: "Last 7 days" },
+  { value: "all", label: "All" },
+  { value: "custom", label: "Custom" }
+];
 
 type Props = {
   today: string;
   visits: Visit[];
   doctors: IntakeDoctor[];
-  conditionCatalog: ConditionCatalogEntry[];
 };
 
-export function OpdWorkspace({ today, visits: initialVisits, doctors, conditionCatalog }: Props) {
+export function OpdWorkspace({ today, visits: initialVisits, doctors }: Props) {
   const { toast } = useToast();
   const [visits, setVisits] = useState<Visit[]>(initialVisits);
-  const [filter, setFilter] = useState<VisitStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<VisitStatus | "all">("all");
+  const [dateMode, setDateMode] = useState<DateMode>("today");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [doctorId, setDoctorId] = useState("");
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [consultVisit, setConsultVisit] = useState<Visit | null>(null);
-  const [, startRefresh] = useTransition();
+  const [observationsVisit, setObservationsVisit] = useState<Visit | null>(null);
+  const [refreshing, startRefresh] = useTransition();
+  const { rules, setRule } = useRowHighlights();
 
-  async function refresh() {
-    const result = await refreshVisitsAction(today);
-    if (result.ok && result.data) setVisits(result.data);
+  // Date-range + doctor filter server-side (GET /visits); the status chips
+  // filter client-side so every chip keeps a live count for the loaded range.
+  function serverFilters(): VisitListFilters {
+    const filters: VisitListFilters = {};
+    if (dateMode === "today") {
+      filters.date = today;
+    } else if (dateMode === "week") {
+      filters.from = isoDateDaysAgo(6);
+      filters.to = today;
+    } else if (dateMode === "custom") {
+      if (customFrom) filters.from = customFrom;
+      if (customTo) filters.to = customTo;
+    }
+    if (doctorId) filters.doctorId = doctorId;
+    return filters;
   }
+
+  function refresh() {
+    startRefresh(async () => {
+      const result = await listVisitsAction(serverFilters());
+      if (!result.ok || !result.data) {
+        toast(result.error ?? "Could not load the register.", "error");
+        return;
+      }
+      setVisits(result.data);
+    });
+  }
+
+  // Refetch when the server-side filters change. The first render already has
+  // today's list from the server, so skip it.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateMode, customFrom, customTo, doctorId]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: visits.length };
@@ -85,26 +120,14 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors, conditionC
   }, [visits]);
 
   const filtered = useMemo(
-    () => (filter === "all" ? visits : visits.filter((v) => v.status === filter)),
-    [visits, filter]
+    () => (statusFilter === "all" ? visits : visits.filter((v) => v.status === statusFilter)),
+    [visits, statusFilter]
   );
 
-  function progressStatus(visit: Visit, status: VisitStatus) {
-    startRefresh(async () => {
-      const result = await updateVisitAction(visit.id, { status });
-      if (!result.ok) {
-        toast(result.error ?? "Could not update the visit.", "error");
-        return;
-      }
-      toast(status === "in_consult" ? "Consult started." : "Visit updated.", "success");
-      await refresh();
-    });
-  }
-
-  async function openConsult(visit: Visit) {
-    // Pull the freshest copy so the drawer shows persisted diagnosis/disposition.
+  async function openObservations(visit: Visit) {
+    // Pull the freshest copy so the form shows the persisted observations.
     const result = await loadVisitAction(visit.id);
-    setConsultVisit(result.ok && result.data ? result.data : visit);
+    setObservationsVisit(result.ok && result.data ? result.data : visit);
   }
 
   return (
@@ -112,24 +135,26 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors, conditionC
       <div className="space-y-5">
         <Panel>
           <SectionTitle
-            icon={<ClipboardPlus className="size-4" />}
-            title="OPD walk-in intake"
-            subtitle="Register walk-ins, run the queue and capture the consult"
+            icon={<ClipboardList className="size-4" />}
+            title="OPD register"
+            subtitle="The OPD register — every visit, its clinical record and prescriptions"
             action={
               <Button onClick={() => setRegisterOpen(true)}>
                 <UserPlus className="size-3.5" /> Register walk-in
               </Button>
             }
           />
-          <div className="mt-4 flex flex-wrap gap-2">
-            {QUEUE_FILTERS.map((f) => (
+
+          {/* Status chips */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {REGISTER_STATUS_FILTERS.map((f) => (
               <button
                 key={f.value}
                 type="button"
-                onClick={() => setFilter(f.value)}
+                onClick={() => setStatusFilter(f.value)}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition",
-                  filter === f.value
+                  statusFilter === f.value
                     ? "bg-brand-600 text-white ring-brand-600"
                     : "bg-surface text-ink-soft ring-line-strong hover:bg-surface-muted"
                 )}
@@ -138,40 +163,82 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors, conditionC
                 <span
                   className={cn(
                     "rounded-full px-1.5 text-[10px]",
-                    filter === f.value ? "bg-white/20" : "bg-fill text-ink-muted"
+                    statusFilter === f.value ? "bg-white/20" : "bg-fill text-ink-muted"
                   )}
                 >
                   {counts[f.value] ?? 0}
                 </span>
               </button>
             ))}
+            <div className="ml-auto">
+              <HighlightMenu rules={rules} setRule={setRule} />
+            </div>
+          </div>
+
+          {/* Date range + doctor */}
+          <div className="mt-3 flex flex-wrap items-center gap-2.5">
+            <Segmented options={DATE_MODE_OPTIONS} value={dateMode} onChange={setDateMode} size="sm" />
+            {dateMode === "custom" ? (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="date"
+                  value={customFrom}
+                  max={customTo || undefined}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  aria-label="From date"
+                  className="h-8 w-36 px-2 text-xs"
+                />
+                <span className="text-xs text-ink-faint">to</span>
+                <Input
+                  type="date"
+                  value={customTo}
+                  min={customFrom || undefined}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  aria-label="To date"
+                  className="h-8 w-36 px-2 text-xs"
+                />
+              </div>
+            ) : null}
+            <select
+              value={doctorId}
+              onChange={(e) => setDoctorId(e.target.value)}
+              aria-label="Filter by doctor"
+              className={cn(selectClass, "h-8 w-auto min-w-40 py-0 text-xs")}
+            >
+              <option value="">All doctors</option>
+              {doctors.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                  {d.specialty ? ` — ${d.specialty}` : ""}
+                </option>
+              ))}
+            </select>
+            {refreshing ? <Loader2 className="size-4 animate-spin text-ink-faint" aria-label="Loading visits" /> : null}
           </div>
         </Panel>
 
         {filtered.length === 0 ? (
           <Panel>
             <EmptyState
-              icon={<ClipboardPlus className="size-5" />}
-              title={filter === "all" ? "No walk-ins today" : `Nothing ${VISIT_STATUS_LABELS[filter].toLowerCase()}`}
+              icon={<ClipboardList className="size-5" />}
+              title={
+                statusFilter !== "all"
+                  ? `No ${VISIT_STATUS_LABELS[statusFilter].toLowerCase()} visits here`
+                  : dateMode === "today"
+                    ? "No visits registered today"
+                    : "No visits in this range"
+              }
               description={
-                filter === "all"
-                  ? "Register your first walk-in to start the OPD queue for today."
-                  : "Switch filters or register a new walk-in."
+                statusFilter === "all" && dateMode === "today"
+                  ? "Register a walk-in to add the first visit to today's page of the register."
+                  : "Adjust the filters — every registered visit stays in the register."
               }
             />
           </Panel>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((visit) => (
-              <QueueCard
-                key={visit.id}
-                visit={visit}
-                busy={false}
-                onStart={() => progressStatus(visit, "in_consult")}
-                onConsult={() => openConsult(visit)}
-              />
-            ))}
-          </div>
+          <Panel className="p-0">
+            <OpdRegisterList visits={filtered} rules={rules} onObservations={openObservations} />
+          </Panel>
         )}
       </div>
 
@@ -179,109 +246,25 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors, conditionC
         open={registerOpen}
         onClose={() => setRegisterOpen(false)}
         doctors={doctors}
-        onRegistered={async () => {
+        onRegistered={() => {
           setRegisterOpen(false);
           toast("Walk-in registered.", "success");
-          await refresh();
+          refresh();
         }}
       />
 
-      {consultVisit ? (
-        <ConsultDrawer
-          key={consultVisit.id}
-          visit={consultVisit}
-          conditionCatalog={conditionCatalog}
-          onClose={() => setConsultVisit(null)}
-          onSaved={async () => {
-            setConsultVisit(null);
-            await refresh();
+      {observationsVisit ? (
+        <ClinicalObservationsForm
+          key={observationsVisit.id}
+          visit={observationsVisit}
+          onClose={() => setObservationsVisit(null)}
+          onSaved={() => {
+            setObservationsVisit(null);
+            refresh();
           }}
         />
       ) : null}
     </>
-  );
-}
-
-// ---- Queue card ------------------------------------------------------------
-
-function QueueCard({
-  visit,
-  busy,
-  onStart,
-  onConsult
-}: {
-  visit: Visit;
-  busy: boolean;
-  onStart: () => void;
-  onConsult: () => void;
-}) {
-  const meta = visitMeta(visit);
-  return (
-    <Panel className="flex flex-col">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-ink">{visit.patientName ?? "Walk-in patient"}</p>
-          <p className="mt-0.5 text-xs text-ink-muted">{meta || "No details"}</p>
-        </div>
-        <Badge tone={VISIT_STATUS_TONE[visit.status] ?? "neutral"} dot>
-          {VISIT_STATUS_LABELS[visit.status] ?? visit.status}
-        </Badge>
-      </div>
-
-      {visit.chiefComplaint?.trim() ? (
-        <p className="mt-3 line-clamp-2 text-sm text-ink-soft">{visit.chiefComplaint}</p>
-      ) : (
-        <p className="mt-3 text-sm italic text-ink-faint">Reason not captured yet</p>
-      )}
-
-      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-        {visit.doctorName || visit.department ? (
-          <span className="inline-flex items-center gap-1.5">
-            <Stethoscope className="size-3.5 text-ink-faint" />
-            {visit.doctorName ?? visit.department}
-            {visit.doctorName && visit.department ? ` · ${visit.department}` : ""}
-          </span>
-        ) : null}
-        <span className="inline-flex items-center gap-1.5">
-          <Clock className="size-3.5 text-ink-faint" /> {formatTime(visit.registeredAt ?? visit.createdAt)}
-        </span>
-      </div>
-
-      <div className="mt-4 flex items-center justify-end gap-2 border-t border-line pt-3">
-        {visit.status === "registered" ? (
-          <Button size="sm" onClick={onStart} disabled={busy}>
-            <Activity className="size-3.5" /> Start consult
-          </Button>
-        ) : null}
-        {visit.status === "in_consult" ? (
-          <Button size="sm" onClick={onConsult}>
-            <ClipboardPlus className="size-3.5" /> Record consult
-          </Button>
-        ) : null}
-        {visit.status === "completed" ? (
-          <div className="flex w-full items-center justify-between gap-2">
-            <span className="text-xs text-ink-soft">
-              {visit.disposition ? (
-                <>
-                  Outcome:{" "}
-                  <span className="font-medium text-ink">
-                    {DISPOSITION_OUTCOME_LABELS[visit.disposition.outcome] ?? visit.disposition.outcome}
-                  </span>
-                </>
-              ) : (
-                "Completed"
-              )}
-            </span>
-            <Link
-              href={`/patients/${visit.patientId}`}
-              className="text-xs font-medium text-brand-700 hover:underline"
-            >
-              Open patient
-            </Link>
-          </div>
-        ) : null}
-      </div>
-    </Panel>
   );
 }
 
@@ -369,7 +352,7 @@ function RegisterModal({
         if (data.patient.gender) setGender(data.patient.gender);
         setRecentCount(data.recentVisits?.length ?? 0);
         // Reflect today's appointment(s): default to linking the first, and adopt
-        // its doctor so the walk-in lands in the right queue.
+        // its doctor so the visit registers under the right doctor.
         const appts = data.todaysAppointments ?? [];
         setTodaysAppts(appts);
         if (appts.length > 0) {
@@ -433,7 +416,7 @@ function RegisterModal({
           <h2 id="opd-register-title" className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink">
             <UserPlus className="size-4 text-brand-600" /> Register walk-in
           </h2>
-          <p className="mt-1 text-xs text-ink-muted">Just register the patient — the doctor captures the rest at the consult.</p>
+          <p className="mt-1 text-xs text-ink-muted">Just register the patient — the doctor or staff capture the clinical observations after.</p>
         </div>
         <button type="button" onClick={close} className="rounded-lg p-1.5 text-ink-faint hover:bg-surface-muted hover:text-ink" aria-label="Close">
           <X className="size-4" />
@@ -601,325 +584,6 @@ function RegisterModal({
         </Button>
       </div>
     </Modal>
-  );
-}
-
-// ---- Consult drawer --------------------------------------------------------
-
-function ConsultDrawer({
-  visit,
-  conditionCatalog,
-  onClose,
-  onSaved
-}: {
-  /** Always non-null — the parent keys this component by visit id. */
-  visit: Visit;
-  conditionCatalog: ConditionCatalogEntry[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { toast } = useToast();
-  const [chiefComplaint, setChiefComplaint] = useState(visit.chiefComplaint ?? "");
-  const [diagnosis, setDiagnosis] = useState<IntakeCondition[]>(visit.diagnosis ?? []);
-  const [outcome, setOutcome] = useState(visit.disposition?.outcome ?? DISPOSITION_OUTCOMES[0]?.value ?? "");
-  const [dispNotes, setDispNotes] = useState(visit.disposition?.notes ?? "");
-  const [revisitAdvised, setRevisitAdvised] = useState(Boolean(visit.disposition?.nextActionDate));
-  const [nextActionDate, setNextActionDate] = useState(visit.disposition?.nextActionDate ?? "");
-  const [vitals, setVitals] = useState<Vitals>(visit.vitals ?? {});
-  const [consultNotes, setConsultNotes] = useState(visit.consultNotes ?? "");
-  const [saving, startSaving] = useTransition();
-
-  function complete() {
-    if (!outcome) {
-      toast("Pick a disposition outcome to complete the visit.", "error");
-      return;
-    }
-    const revisitOn = revisitAdvised ? nextActionDate : "";
-    const disposition: Disposition = {
-      outcome,
-      ...(dispNotes.trim() ? { notes: dispNotes.trim() } : {}),
-      ...(revisitOn ? { nextStep: "revisit", nextActionDate: revisitOn } : {})
-    };
-    startSaving(async () => {
-      const result = await updateVisitAction(visit.id, {
-        status: "completed",
-        chiefComplaint,
-        diagnosis,
-        disposition,
-        vitals: Object.keys(vitals).length ? vitals : undefined,
-        consultNotes: consultNotes || undefined
-      });
-      if (!result.ok) {
-        toast(result.error ?? "Could not complete the visit.", "error");
-        return;
-      }
-      toast("Visit completed.", "success");
-      onSaved();
-    });
-  }
-
-  return (
-    <div className="fixed inset-0 z-[70] flex justify-end">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Record consult"
-        className="animate-in relative flex h-full w-full max-w-xl flex-col overflow-hidden border-l border-line bg-surface shadow-pop"
-      >
-        <div className="flex items-center justify-between border-b border-line p-5">
-          <div>
-            <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight text-ink">
-              <ClipboardPlus className="size-4 text-brand-600" /> Record consult
-            </h2>
-            <p className="mt-1 text-xs text-ink-muted">
-              {visit.patientName ?? "Walk-in patient"}
-              {visit.chiefComplaint ? ` · ${visit.chiefComplaint}` : ""}
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-ink-faint hover:bg-surface-muted hover:text-ink" aria-label="Close">
-            <X className="size-4" />
-          </button>
-        </div>
-
-        <div className="flex-1 space-y-5 overflow-y-auto p-5">
-          {/* Reason for visit (chief complaint) — captured at the encounter */}
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-ink-soft">Reason for visit</p>
-            <textarea
-              value={chiefComplaint}
-              onChange={(e) => setChiefComplaint(e.target.value)}
-              rows={2}
-              placeholder="What brings the patient in today…"
-              className={textareaClass}
-            />
-          </div>
-
-          {/* Diagnosis */}
-          <ConditionPicker
-            label="Diagnosis"
-            catalog={conditionCatalog}
-            value={diagnosis}
-            onChange={setDiagnosis}
-            placeholder="Add a diagnosis — search ICD-10 code or name…"
-          />
-
-          {/* Disposition */}
-          <div className="rounded-xl border border-line p-3.5">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-soft">Disposition *</p>
-            <Field label="Outcome" htmlFor="opd-disp-outcome">
-              <select id="opd-disp-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} className={selectClass}>
-                {DISPOSITION_OUTCOMES.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            {/* Revisit advised → date */}
-            <div className="mt-3 rounded-lg border border-line bg-surface-muted p-3">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
-                <input
-                  type="checkbox"
-                  checked={revisitAdvised}
-                  onChange={(e) => setRevisitAdvised(e.target.checked)}
-                  className="size-4 rounded border-line-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-200"
-                />
-                <span className="font-medium">Revisit advised</span>
-              </label>
-              {revisitAdvised ? (
-                <div className="mt-3">
-                  <Field label="Revisit on" htmlFor="opd-disp-date">
-                    <Input id="opd-disp-date" type="date" value={nextActionDate} onChange={(e) => setNextActionDate(e.target.value)} />
-                  </Field>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-3">
-              <Field label="Notes" htmlFor="opd-disp-notes">
-                <textarea id="opd-disp-notes" value={dispNotes} onChange={(e) => setDispNotes(e.target.value)} rows={2} placeholder="Disposition notes…" className={textareaClass} />
-              </Field>
-            </div>
-          </div>
-
-          {/* Vitals */}
-          <div className="rounded-xl border border-line p-3.5">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-soft">Vitals</p>
-            <VitalsFields value={vitals} onChange={setVitals} />
-          </div>
-
-          {/* Consult notes */}
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-ink-soft">Consult notes</p>
-            <textarea value={consultNotes} onChange={(e) => setConsultNotes(e.target.value)} rows={3} placeholder="Clinical notes from the consult…" className={textareaClass} />
-          </div>
-
-          {/* Documents */}
-          <VisitDocuments visit={visit} />
-        </div>
-
-        <div className="flex justify-end gap-2 border-t border-line p-4">
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Close
-          </Button>
-          <Button onClick={complete} disabled={saving}>
-            <CheckCircle2 className="size-3.5" /> {saving ? "Completing…" : "Complete visit"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---- Visit documents (reuses the patient documents upload flow) ------------
-
-function VisitDocuments({ visit }: { visit: Visit }) {
-  const { toast } = useToast();
-  const [type, setType] = useState<string>("prescription");
-  const [uploading, startUpload] = useTransition();
-  const [uploaded, setUploaded] = useState<string[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  function upload() {
-    const file = fileRef.current?.files?.[0];
-    if (!file) {
-      toast("Choose a file to upload.", "error");
-      return;
-    }
-    const fd = new FormData();
-    fd.set("patientId", visit.patientId);
-    fd.set("visitId", visit.id);
-    fd.set("type", type);
-    fd.set("file", file);
-    startUpload(async () => {
-      const result = await uploadVisitDocumentAction(fd);
-      if (!result.ok) {
-        toast(result.error ?? "Could not upload the document.", "error");
-        return;
-      }
-      toast(result.message ?? "Document uploaded.", "success");
-      setUploaded((prev) => [...prev, file.name]);
-      if (fileRef.current) fileRef.current.value = "";
-    });
-  }
-
-  return (
-    <div className="rounded-xl border border-line p-3.5">
-      <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">
-        <FileText className="size-3.5 text-ink-faint" /> Documents
-      </p>
-      {uploaded.length > 0 ? (
-        <ul className="mb-3 space-y-1.5">
-          {uploaded.map((n, i) => (
-            <li key={`${n}-${i}`} className="flex items-center gap-2 rounded-lg bg-surface-muted px-3 py-1.5 text-xs text-ink-soft">
-              <CheckCircle2 className="size-3.5 text-[var(--color-good)]" /> {n}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <select value={type} onChange={(e) => setType(e.target.value)} className={cn(selectClass, "sm:w-48")}>
-          {VISIT_DOCUMENT_TYPES.map((d) => (
-            <option key={d.value} value={d.value}>
-              {d.label}
-            </option>
-          ))}
-        </select>
-        <input
-          ref={fileRef}
-          type="file"
-          className="flex-1 text-xs text-ink-soft file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-xs file:font-medium file:text-brand-700 hover:file:bg-brand-100"
-        />
-        <Button onClick={upload} disabled={uploading}>
-          <Upload className="size-3.5" /> {uploading ? "Uploading…" : "Upload"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ---- Shared: ICD-10 condition picker ---------------------------------------
-
-function ConditionPicker({
-  label,
-  catalog,
-  value,
-  onChange,
-  placeholder = "Add a condition — search ICD-10 code or name…"
-}: {
-  label: string;
-  catalog: ConditionCatalogEntry[];
-  value: IntakeCondition[];
-  onChange: (next: IntakeCondition[]) => void;
-  placeholder?: string;
-}) {
-  const [query, setQuery] = useState("");
-
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return catalog
-      .filter(
-        (c) =>
-          !value.some((existing) => existing.icd10Code === c.icd10Code) &&
-          (c.icd10Code.toLowerCase().includes(q) || c.label.toLowerCase().includes(q))
-      )
-      .slice(0, 8);
-  }, [catalog, query, value]);
-
-  return (
-    <div>
-      <p className="mb-1.5 text-xs font-medium text-ink-soft">{label}</p>
-      {value.length > 0 ? (
-        <ul className="mb-2 space-y-1.5">
-          {value.map((c) => (
-            <li
-              key={c.icd10Code}
-              className="flex items-center justify-between gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2"
-            >
-              <span className="min-w-0 text-sm text-ink">
-                <span className="font-mono text-xs text-brand-700">{c.icd10Code}</span>{" "}
-                <span className="text-ink-soft">{c.label}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => onChange(value.filter((x) => x.icd10Code !== c.icd10Code))}
-                className="rounded p-1 text-ink-faint transition hover:bg-surface hover:text-[var(--color-critical)]"
-                aria-label={`Remove ${c.label}`}
-              >
-                <X className="size-3.5" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="relative">
-        <Input placeholder={placeholder} value={query} onChange={(e) => setQuery(e.target.value)} autoComplete="off" />
-        {matches.length > 0 ? (
-          <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-line bg-surface shadow-lg">
-            {matches.map((m) => (
-              <li key={m.icd10Code}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onChange([...value, { icd10Code: m.icd10Code, label: m.label }]);
-                    setQuery("");
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink-soft transition hover:bg-surface-muted"
-                >
-                  <span className="font-mono text-xs text-brand-700">{m.icd10Code}</span>
-                  <span className="min-w-0 truncate">{m.label}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : query.trim() ? (
-          <p className="mt-1 px-1 text-[11px] text-ink-muted">No catalog match for “{query}”.</p>
-        ) : null}
-      </div>
-    </div>
   );
 }
 

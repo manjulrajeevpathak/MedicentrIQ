@@ -1,10 +1,10 @@
 import { coreApi } from "./users-api";
 import type { ApiResult } from "./users-types";
 import type {
-  ConditionCatalogEntry,
   IntakeDoctor,
   IntakeLookupResult,
-  Visit
+  Visit,
+  VisitListFilters
 } from "./opd-types";
 
 /**
@@ -16,14 +16,13 @@ import type {
 
 export type { ApiResult } from "./users-types";
 
-export async function fetchVisits(filter?: {
-  status?: string;
-  date?: string;
-  patientId?: string;
-}): Promise<ApiResult<Visit[]>> {
+export async function fetchVisits(filter?: VisitListFilters): Promise<ApiResult<Visit[]>> {
   const params = new URLSearchParams();
   if (filter?.status) params.set("status", filter.status);
   if (filter?.date) params.set("date", filter.date);
+  if (filter?.from) params.set("from", filter.from);
+  if (filter?.to) params.set("to", filter.to);
+  if (filter?.doctorId) params.set("doctorId", filter.doctorId);
   if (filter?.patientId) params.set("patientId", filter.patientId);
   const qs = params.toString();
   return coreApi<Visit[]>(`/visits${qs ? `?${qs}` : ""}`);
@@ -36,10 +35,6 @@ export async function fetchVisit(id: string): Promise<ApiResult<Visit>> {
 /** core-api returns `[{id,name,specialty,status}]` for the OPD doctor select. */
 export async function fetchIntakeDoctors(): Promise<ApiResult<IntakeDoctor[]>> {
   return coreApi<IntakeDoctor[]>("/doctors");
-}
-
-export async function fetchConditionCatalog(): Promise<ApiResult<ConditionCatalogEntry[]>> {
-  return coreApi<ConditionCatalogEntry[]>("/clinical/conditions");
 }
 
 export async function lookupIntake(phone: string): Promise<ApiResult<IntakeLookupResult>> {

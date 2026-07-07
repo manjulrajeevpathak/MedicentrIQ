@@ -36,6 +36,30 @@ export type Disposition = {
   nextActionDate?: string;
 };
 
+// ---- Clinical observations ---------------------------------------------------
+
+/**
+ * Structured clinical observations captured after the consult. Saving these via
+ * PATCH /visits/:visitId/clinical completes the visit (unless `complete: false`
+ * is sent for a draft) — the backend derives the disposition and fires
+ * workflows, so the UI never PATCHes status itself.
+ */
+export type VisitClinical = {
+  chiefComplaints?: string;
+  preExistingDiseases?: string;
+  diagnosisText?: string;
+  advisePharmacy?: string;
+  adviseDiagnostics?: string;
+  adviseProcedureAdmission?: string;
+  revisitAdvised?: boolean;
+  /** ISO date (YYYY-MM-DD) the patient was asked to return. */
+  revisitDate?: string;
+  /** Uploaded prescription documents (document ids) for this visit. */
+  prescriptionDocumentIds?: string[];
+  updatedBy?: string;
+  updatedAt?: string;
+};
+
 // ---- Visit -----------------------------------------------------------------
 
 export type VisitStatus = "registered" | "in_consult" | "completed" | "left_without_seen";
@@ -58,12 +82,27 @@ export type Visit = {
   intakeNotes?: string;
   diagnosis?: IntakeCondition[];
   disposition?: Disposition;
+  /** Structured clinical observations (chief complaints → advise → revisit). */
+  clinical?: VisitClinical;
   consultNotes?: string;
   registeredAt?: string;
   createdAt?: string;
-  /** Carried through from the intake form for queue presentation. */
+  /** Carried through from the intake form for register presentation. */
   age?: number;
   gender?: string;
+};
+
+/** Filters the register list sends to GET /visits. */
+export type VisitListFilters = {
+  status?: VisitStatus;
+  patientId?: string;
+  /** Single day (YYYY-MM-DD). */
+  date?: string;
+  /** Range start (YYYY-MM-DD, inclusive). */
+  from?: string;
+  /** Range end (YYYY-MM-DD, inclusive). */
+  to?: string;
+  doctorId?: string;
 };
 
 // ---- Intake lookup ---------------------------------------------------------
@@ -149,12 +188,16 @@ export const VISIT_STATUS_TONE: Record<VisitStatus, "neutral" | "brand" | "good"
   left_without_seen: "high"
 };
 
-/** The status filters shown across the OPD queue. */
-export const QUEUE_FILTERS: { value: VisitStatus | "all"; label: string }[] = [
+/**
+ * The status chips shown on the OPD register. `in_consult` is intentionally
+ * absent — the register has no "start consult" step (the enum survives only for
+ * legacy rows).
+ */
+export const REGISTER_STATUS_FILTERS: { value: VisitStatus | "all"; label: string }[] = [
   { value: "all", label: "All" },
   { value: "registered", label: "Registered" },
-  { value: "in_consult", label: "In consult" },
-  { value: "completed", label: "Completed" }
+  { value: "completed", label: "Completed" },
+  { value: "left_without_seen", label: "Left without seen" }
 ];
 
 export const DISPOSITION_OUTCOMES: { value: string; label: string }[] = [
@@ -201,18 +244,44 @@ export function todayIsoDate(): string {
   return `${y}-${m}-${d}`;
 }
 
+/** The date `days` before today as YYYY-MM-DD in local timezone. */
+export function isoDateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
 export function formatTime(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata",  hour: "numeric", minute: "2-digit" });
 }
 
 export function formatDate(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata",  day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Date + time for register rows — year shown only when it isn't the current one. */
+export function formatDateTime(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit"
+  });
 }
 
 export function visitMeta(visit: Visit): string {
