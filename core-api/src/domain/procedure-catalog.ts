@@ -1,11 +1,12 @@
 /**
- * Curated procedure catalog for the OPD "Advise → Procedure / Admission" picker.
- * Ophthalmology-first (launch vertical) plus common admission/referral actions.
+ * Curated procedure catalog for the OPD "Advise → Procedure" picker.
+ * Ophthalmology-first (launch vertical) plus common referral actions. Admission
+ * is intentionally out of scope here — it moves to the IPD feature.
  *
  * Procedures are coded with CPT where a standard code exists (CPT is the
  * procedure-coding standard for outpatient/surgical work); ICD-10-PCS is
  * deliberately NOT used — it is inpatient-only and its descriptions are unusable
- * in a clinician picker. Admission/referral rows carry a short internal code.
+ * in a clinician picker. Referral rows carry a short internal code.
  * A fuller CPT set can replace this array behind the same endpoint later.
  */
 export type ProcedureCatalogEntry = {
@@ -60,11 +61,7 @@ export const PROCEDURE_CATALOG: ProcedureCatalogEntry[] = [
   { code: "65205", label: "Removal of corneal / conjunctival foreign body", category: "Procedure" },
   { code: "68840", label: "Lacrimal syringing / irrigation", category: "Procedure" },
 
-  // ---- Admission / referral ------------------------------------------------
-  { code: "ADM-DAYCARE", label: "Day-care admission (same-day procedure)", category: "Admission" },
-  { code: "ADM-IPD", label: "Inpatient admission", category: "Admission" },
-  { code: "ADM-OBS", label: "Admit for observation", category: "Admission" },
-  { code: "ADM-EMERG", label: "Emergency admission", category: "Admission" },
+  // ---- Referral (admission itself moves to the IPD feature) ----------------
   { code: "REF-SPECIALIST", label: "Refer to specialist / super-speciality", category: "Referral" },
   { code: "REF-HIGHER", label: "Refer to higher centre", category: "Referral" },
   { code: "REF-PHYSICIAN", label: "Refer to physician (systemic work-up)", category: "Referral" }

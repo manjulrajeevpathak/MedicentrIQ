@@ -53,7 +53,8 @@ export type VisitOutcome =
   | "discharged"
   | "observation";
 
-export const VISIT_OUTCOME_OPTIONS: { value: VisitOutcome; label: string }[] = [
+// Full label map — kept complete so legacy `admitted` rows still render.
+const ALL_VISIT_OUTCOMES: { value: VisitOutcome; label: string }[] = [
   { value: "medicine_advised", label: "Medicine advised" },
   { value: "surgery_advised", label: "Surgery advised" },
   { value: "revisit_advised", label: "Revisit advised" },
@@ -65,8 +66,12 @@ export const VISIT_OUTCOME_OPTIONS: { value: VisitOutcome; label: string }[] = [
 ];
 
 export const VISIT_OUTCOME_LABELS: Record<VisitOutcome, string> = Object.fromEntries(
-  VISIT_OUTCOME_OPTIONS.map((o) => [o.value, o.label])
+  ALL_VISIT_OUTCOMES.map((o) => [o.value, o.label])
 ) as Record<VisitOutcome, string>;
+
+/** Selectable outcomes in OPD. `admitted` is hidden (admission → IPD feature);
+ *  `surgery_advised` is filtered at the call site when no procedure is advised. */
+export const VISIT_OUTCOME_OPTIONS = ALL_VISIT_OUTCOMES.filter((o) => o.value !== "admitted");
 
 // ---- Clinical observations ---------------------------------------------------
 

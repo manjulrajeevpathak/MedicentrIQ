@@ -51,6 +51,7 @@ export function CommandPalette({
   const rows = useMemo<Row[]>(() => {
     const q = query.trim().toLowerCase();
     const navRows: Row[] = navItems
+      .filter((item) => !item.hidden)
       .filter((item) => !q || item.label.toLowerCase().includes(q) || item.description.toLowerCase().includes(q))
       .map((item) => ({
         type: "nav",

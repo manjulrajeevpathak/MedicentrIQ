@@ -237,12 +237,14 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
   const busy = saving || uploading || extracting;
   const attachedCount = attachedIds.length + newDocs.length;
 
-  /** Toggle the "No procedure / admission required" checkbox. */
+  /** Toggle the "Not required" (no procedure) checkbox. */
   function toggleNoProcedure(next: boolean) {
     setNoProcedure(next);
     if (next) {
       setAdviseProcedureCodes([]);
       setAdviseProcedureAdmission("None");
+      // Surgery is a procedure — drop the outcome if it was surgery.
+      if (outcome === "surgery_advised") setOutcome("");
     } else if (adviseProcedureAdmission === "None") {
       setAdviseProcedureAdmission("");
     }
@@ -568,33 +570,36 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
               />
             </div>
             <div className="rounded-lg border border-line bg-surface-muted/50 p-3">
-              <NoteLabel>Procedure / Admission</NoteLabel>
-              <ProcedurePicker
-                value={adviseProcedureCodes}
-                onChange={setAdviseProcedureCodes}
-                disabled={noProcedure}
-                placeholder="Search a procedure — cataract, DCR, admission…"
-              />
-              <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-xs text-ink-soft">
-                <input
-                  type="checkbox"
-                  checked={noProcedure}
-                  onChange={(e) => toggleNoProcedure(e.target.checked)}
-                  className="size-4 rounded border-line-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-200"
-                />
-                <span className="font-medium">No procedure / admission required</span>
-              </label>
-              <input
-                type="text"
-                value={noProcedure ? "" : adviseProcedureAdmission}
-                onChange={(e) => setAdviseProcedureAdmission(e.target.value)}
-                disabled={noProcedure}
-                placeholder="Extra detail — laterality, urgency, prep…"
-                className={cn(
-                  "mt-2.5 h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200",
-                  noProcedure && "cursor-not-allowed opacity-60"
-                )}
-              />
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <NoteLabel>Procedure</NoteLabel>
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-soft">
+                  <input
+                    type="checkbox"
+                    checked={noProcedure}
+                    onChange={(e) => toggleNoProcedure(e.target.checked)}
+                    className="size-4 rounded border-line-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-200"
+                  />
+                  <span className="font-medium">Not required</span>
+                </label>
+              </div>
+              {noProcedure ? (
+                <p className="text-xs text-ink-muted">No procedure advised.</p>
+              ) : (
+                <>
+                  <ProcedurePicker
+                    value={adviseProcedureCodes}
+                    onChange={setAdviseProcedureCodes}
+                    placeholder="Search a procedure — cataract, DCR, trabeculectomy…"
+                  />
+                  <input
+                    type="text"
+                    value={adviseProcedureAdmission}
+                    onChange={(e) => setAdviseProcedureAdmission(e.target.value)}
+                    placeholder="Extra detail — laterality, urgency, prep…"
+                    className="mt-2.5 h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+                  />
+                </>
+              )}
             </div>
           </div>
         </Section>
@@ -615,7 +620,7 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
                 className={selectClass}
               >
                 <option value="">Select an outcome…</option>
-                {VISIT_OUTCOME_OPTIONS.map((o) => (
+                {VISIT_OUTCOME_OPTIONS.filter((o) => !(noProcedure && o.value === "surgery_advised")).map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>

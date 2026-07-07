@@ -70,13 +70,14 @@ export type VisitOutcome =
   | "discharged"
   | "observation";
 
+/** Selectable OPD outcomes — `admitted` hidden (admission → IPD feature);
+ *  `surgery_advised` filtered at the call site when no procedure is advised. */
 export const VISIT_OUTCOME_OPTIONS: { value: VisitOutcome; label: string }[] = [
   { value: "medicine_advised", label: "Medicine advised" },
   { value: "surgery_advised", label: "Surgery advised" },
   { value: "revisit_advised", label: "Revisit advised" },
   { value: "diagnostics_advised", label: "Diagnostics advised" },
   { value: "referred", label: "Referred out" },
-  { value: "admitted", label: "Admitted" },
   { value: "discharged", label: "Discharged" },
   { value: "observation", label: "Watchful observation" }
 ];

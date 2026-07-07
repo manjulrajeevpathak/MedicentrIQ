@@ -51,6 +51,8 @@ export type NavItem = {
   badgeKey?: "inbox" | "access" | "continuity" | "workbench";
   /** Placeholder for a not-yet-built surface — shown, labelled "Soon", non-clickable. */
   comingSoon?: boolean;
+  /** Hidden from nav + command palette (the route still resolves if reached directly). */
+  hidden?: boolean;
 };
 
 export type NavGroup = {
@@ -72,7 +74,7 @@ export const navGroups: NavGroup[] = [
       { href: "/appointments", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" },
       { href: "/opd", label: "OPD", icon: ClipboardPlus, description: "Walk-in intake, queue and consult capture", module: "patients", requires: "patients:create" },
       { href: "/ipd", label: "IPD", icon: BedDouble, description: "In-patient admissions and ward management", module: "patients", comingSoon: true },
-      { href: "/patients", label: "All Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view" }
+      { href: "/patients", label: "All Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view", hidden: true }
     ]
   },
   {
@@ -121,10 +123,15 @@ export function findNavItem(pathname: string): NavItem | undefined {
  */
 export function filterNavGroups(groups: NavGroup[], enabledModules: ModuleKey[] | undefined): NavGroup[] {
   if (!enabledModules) {
-    return groups;
+    return groups
+      .map((group) => ({ ...group, items: group.items.filter((item) => !item.hidden) }))
+      .filter((group) => group.items.length > 0);
   }
   const enabled = new Set(enabledModules);
   return groups
-    .map((group) => ({ ...group, items: group.items.filter((item) => enabled.has(item.module)) }))
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !item.hidden && enabled.has(item.module))
+    }))
     .filter((group) => group.items.length > 0);
 }

@@ -247,19 +247,25 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
           <textarea rows={2} value={diagnostics} onChange={(e) => setDiagnostics(e.target.value)} placeholder="Tests / scans advised…" className={inputCls} />
         </div>
         <div>
-          <label className={labelCls}>Procedure / Admission</label>
-          <label className="mb-2 flex items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={noProcedure}
-              onChange={(e) => {
-                setNoProcedure(e.target.checked);
-                if (e.target.checked) setProcCodes([]);
-              }}
-              className="h-4 w-4"
-            />
-            No procedure / admission required
-          </label>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <label className={`${labelCls} mb-0`}>Procedure</label>
+            <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+              <input
+                type="checkbox"
+                checked={noProcedure}
+                onChange={(e) => {
+                  setNoProcedure(e.target.checked);
+                  if (e.target.checked) {
+                    setProcCodes([]);
+                    // Surgery is a procedure — clear it if the outcome was surgery.
+                    if (outcome === "surgery_advised") setOutcome("");
+                  }
+                }}
+                className="h-4 w-4"
+              />
+              Not required
+            </label>
+          </div>
           {!noProcedure ? (
             <>
               <ConditionChips
@@ -271,7 +277,9 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
               />
               <input value={procText} onChange={(e) => setProcText(e.target.value)} placeholder="Extra detail (eye, timing)…" className={`${inputCls} mt-2`} />
             </>
-          ) : null}
+          ) : (
+            <p className="text-xs text-ink-muted">No procedure advised.</p>
+          )}
         </div>
       </Section>
 
@@ -281,7 +289,7 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
           <label className={labelCls}>Outcome</label>
           <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className={inputCls}>
             <option value="">Select an outcome…</option>
-            {VISIT_OUTCOME_OPTIONS.map((o) => (
+            {VISIT_OUTCOME_OPTIONS.filter((o) => !(noProcedure && o.value === "surgery_advised")).map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
