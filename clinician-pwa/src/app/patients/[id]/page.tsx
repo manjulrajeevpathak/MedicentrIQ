@@ -5,10 +5,12 @@ import { StageChip } from "@/components/badge";
 import { ClinicalHistory } from "@/components/clinical-history";
 import { DocumentsPanel } from "@/components/documents-panel";
 import { DispositionForm } from "@/components/disposition-form";
+import { ClinicalObservationsForm } from "@/components/clinical-observations-form";
 import {
   getAppointments,
   getClinical,
   getDocuments,
+  getOpenVisit,
   getPatient,
   latestAppointment
 } from "@/lib/data";
@@ -18,11 +20,12 @@ export const dynamic = "force-dynamic";
 export default async function PatientPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const [patient, clinical, documents, appointments] = await Promise.all([
+  const [patient, clinical, documents, appointments, openVisit] = await Promise.all([
     getPatient(id),
     getClinical(id),
     getDocuments(id),
-    getAppointments(id)
+    getAppointments(id),
+    getOpenVisit(id)
   ]);
 
   if (!patient) notFound();
@@ -55,9 +58,15 @@ export default async function PatientPage({ params }: { params: Promise<{ id: st
         </section>
 
         <div className="flex flex-col gap-4">
+          {/* Open OPD visit → the clinical-observations form completes it. Without
+              one, fall back to the appointment disposition form. */}
+          {openVisit ? (
+            <ClinicalObservationsForm patientId={id} visit={openVisit} />
+          ) : (
+            <DispositionForm patientId={id} appointment={appointment} />
+          )}
           <ClinicalHistory patientId={id} clinical={clinical} />
           <DocumentsPanel patientId={id} documents={documents} />
-          <DispositionForm patientId={id} appointment={appointment} />
         </div>
       </main>
     </>

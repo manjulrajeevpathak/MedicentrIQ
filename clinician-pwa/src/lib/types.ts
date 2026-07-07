@@ -53,6 +53,30 @@ export type ConditionOption = {
   label: string;
 };
 
+/** Structured clinical observations on an OPD visit (mirrors core-api). */
+export type VisitClinical = {
+  chiefComplaints?: string;
+  preExistingDiseases?: string;
+  diagnosisText?: string;
+  advisePharmacy?: string;
+  adviseDiagnostics?: string;
+  adviseProcedureAdmission?: string;
+  revisitAdvised?: boolean;
+  revisitDate?: string;
+  prescriptionDocumentIds?: string[];
+};
+
+/** An OPD visit as served by GET /visits (subset the PWA needs). */
+export type OpdVisit = {
+  id: string;
+  patientId: string;
+  status: string;
+  chiefComplaint?: string;
+  doctorName?: string;
+  registeredAt: string;
+  clinical?: VisitClinical;
+};
+
 export const DOCUMENT_TYPES = [
   { value: "prescription", label: "Prescription" },
   { value: "discharge", label: "Discharge summary" },

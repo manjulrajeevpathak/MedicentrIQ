@@ -223,6 +223,72 @@ export async function getDocumentUrlAction(documentId: string): Promise<{ url?: 
 }
 
 // --------------------------------------------------------------------------
+// Clinical observations — save + complete the OPD visit (no start-consult step)
+// --------------------------------------------------------------------------
+
+export async function saveClinicalAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const patientId = String(formData.get("patientId") ?? "").trim();
+  const visitId = String(formData.get("visitId") ?? "").trim();
+  if (!patientId || !visitId) return { error: "Missing visit." };
+
+  const text = (name: string) => {
+    const value = String(formData.get(name) ?? "").trim();
+    return value || undefined;
+  };
+
+  // Optional prescription upload first, so its id rides along with the save.
+  const prescriptionDocumentIds: string[] = [];
+  const file = formData.get("prescription");
+  if (file instanceof File && file.size > 0) {
+    const filename = file.name || `prescription-${Date.now()}`;
+    const contentType = file.type || "application/octet-stream";
+    const presign = await coreApi<{ uploadUrl: string; key?: string; storageKey?: string }>(
+      `/patients/${encodeURIComponent(patientId)}/documents/upload-url`,
+      { method: "POST", body: { filename, contentType, type: "prescription" } }
+    );
+    if (!presign.ok || !presign.data?.uploadUrl) {
+      return { error: "Could not start the prescription upload." };
+    }
+    try {
+      const put = await fetch(presign.data.uploadUrl, {
+        method: "PUT",
+        headers: { "content-type": contentType },
+        body: new Uint8Array(await file.arrayBuffer())
+      });
+      if (!put.ok) return { error: `Prescription upload failed (${put.status}).` };
+    } catch {
+      return { error: "Prescription upload failed. Check your connection and try again." };
+    }
+    const key = presign.data.key ?? presign.data.storageKey;
+    const register = await coreApi<{ id?: string }>(`/patients/${encodeURIComponent(patientId)}/documents`, {
+      method: "POST",
+      body: { type: "prescription", filename, contentType, ...(key ? { key } : {}) }
+    });
+    if (!register.ok) return { error: register.error ?? "Uploaded, but could not save the prescription record." };
+    if (register.data?.id) prescriptionDocumentIds.push(register.data.id);
+  }
+
+  const result = await coreApi(`/visits/${encodeURIComponent(visitId)}/clinical`, {
+    method: "PATCH",
+    body: {
+      chiefComplaints: text("chiefComplaints"),
+      preExistingDiseases: text("preExistingDiseases"),
+      diagnosisText: text("diagnosisText"),
+      advisePharmacy: text("advisePharmacy"),
+      adviseDiagnostics: text("adviseDiagnostics"),
+      adviseProcedureAdmission: text("adviseProcedureAdmission"),
+      revisitAdvised: formData.get("revisitAdvised") === "on",
+      revisitDate: text("revisitDate"),
+      ...(prescriptionDocumentIds.length > 0 ? { prescriptionDocumentIds } : {})
+    }
+  });
+  if (!result.ok) return { error: result.error ?? "Could not save the clinical observations." };
+
+  revalidatePath(`/patients/${patientId}`);
+  return { ok: true };
+}
+
+// --------------------------------------------------------------------------
 // Visit disposition
 // --------------------------------------------------------------------------
 

@@ -4,6 +4,7 @@ import type {
   ClinicalDocument,
   ClinicalRecord,
   ConditionOption,
+  OpdVisit,
   Patient
 } from "./types";
 
@@ -57,6 +58,16 @@ export async function getAppointments(patientId: string): Promise<Appointment[]>
   const result = await coreApi<unknown>(`/appointments?patientId=${encodeURIComponent(patientId)}`);
   if (!result.ok) return [];
   return asArray<Appointment>(result.data, "items", "appointments", "data");
+}
+
+/** The patient's OPEN OPD visit (status registered), most recent first. */
+export async function getOpenVisit(patientId: string): Promise<OpdVisit | null> {
+  const result = await coreApi<unknown>(
+    `/visits?patientId=${encodeURIComponent(patientId)}&status=registered`
+  );
+  if (!result.ok) return null;
+  const visits = asArray<OpdVisit>(result.data, "items", "visits", "data");
+  return visits[0] ?? null;
 }
 
 export async function searchConditions(query: string): Promise<ConditionOption[]> {
