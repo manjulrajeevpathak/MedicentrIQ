@@ -303,7 +303,8 @@ export function OpdRegisterList({
             return (
               <tr key={visit.id} className={cn("transition", color ? ROW_TINT[color] : "hover:bg-surface-muted")}>
                 <td className={cn("border-l-[3px] px-4 py-3", color ? ROW_EDGE[color] : "border-l-transparent")}>
-                  <Link href={`/patients/${visit.patientId}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">
+                  {/* The visit's OWN page — Patient 360 stays a secondary link there. */}
+                  <Link href={`/opd/${visit.id}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">
                     {visit.patientName ?? "Walk-in patient"}
                   </Link>
                   <p className="mt-0.5 text-xs text-ink-muted">{meta || "No details"}</p>
@@ -337,10 +338,10 @@ export function OpdRegisterList({
                     </Button>
                   ) : visit.status === "left_without_seen" ? (
                     <Link
-                      href={`/patients/${visit.patientId}`}
+                      href={`/opd/${visit.id}`}
                       className="text-xs font-medium text-brand-700 hover:underline"
                     >
-                      Open patient
+                      View visit
                     </Link>
                   ) : (
                     // registered (and any legacy in_consult row) → capture observations.
