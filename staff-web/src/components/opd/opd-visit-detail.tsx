@@ -1,16 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  ClipboardList,
   ExternalLink,
   FileText,
+  Flag,
+  HeartPulse,
   Loader2,
   Phone,
+  Pill,
+  Sparkles,
   Stethoscope,
-  Upload
+  Upload,
+  X
 } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +25,9 @@ import { Field, Input } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { ConditionPicker } from "@/components/opd/condition-picker";
+import { ProcedurePicker } from "@/components/opd/procedure-picker";
 import {
+  extractPrescriptionAction,
   getDocumentUrlAction,
   updateVisitClinicalAction,
   uploadVisitDocumentAction,
@@ -124,6 +132,49 @@ export function OpdVisitDetail({ visit, patient }: { visit: Visit; patient: Pati
 
 // ---- Inline clinical observations form -------------------------------------
 
+/**
+ * A guided-consult section: numbered pill + bold title + one-line helper, in its
+ * own bordered block. Replaces the old micro-uppercase labels so the form reads
+ * top-to-bottom as distinct, scannable steps (founder feedback: headers were
+ * confusing).
+ */
+function Section({
+  n,
+  title,
+  helper,
+  icon,
+  children
+}: {
+  n: number;
+  title: string;
+  helper: string;
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-line bg-surface p-4 shadow-[0_1px_0_rgba(0,0,0,0.02)]">
+      <header className="mb-3.5 flex items-start gap-3">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
+          {n}
+        </span>
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold tracking-tight text-ink">
+            {icon}
+            {title}
+          </h3>
+          <p className="mt-0.5 text-xs text-ink-muted">{helper}</p>
+        </div>
+      </header>
+      {children}
+    </section>
+  );
+}
+
+/** Readable inline field label (not micro-uppercase). */
+function NoteLabel({ children }: { children: ReactNode }) {
+  return <p className="mb-1.5 text-xs font-medium text-ink-soft">{children}</p>;
+}
+
 function InlineClinicalObservations({ visit }: { visit: Visit }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -151,6 +202,15 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
   const [advisePharmacy, setAdvisePharmacy] = useState(clinical?.advisePharmacy ?? "");
   const [adviseDiagnostics, setAdviseDiagnostics] = useState(clinical?.adviseDiagnostics ?? "");
   const [adviseProcedureAdmission, setAdviseProcedureAdmission] = useState(clinical?.adviseProcedureAdmission ?? "");
+  // Coded procedures advised (picker chips → adviseProcedureCodes).
+  const [adviseProcedureCodes, setAdviseProcedureCodes] = useState<IntakeCondition[]>(
+    clinical?.adviseProcedureCodes ?? []
+  );
+  // "No procedure / admission required" — inferred when the free-text is exactly
+  // "None" with no coded procedures.
+  const [noProcedure, setNoProcedure] = useState(
+    (clinical?.adviseProcedureAdmission ?? "") === "None" && (clinical?.adviseProcedureCodes ?? []).length === 0
+  );
 
   // Revisit.
   const [revisitAdvised, setRevisitAdvised] = useState(Boolean(clinical?.revisitAdvised));
@@ -168,10 +228,25 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, startUpload] = useTransition();
 
+  // AI prescription extraction.
+  const [extracting, startExtract] = useTransition();
+  const [aiPrefilled, setAiPrefilled] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
-  const busy = saving || uploading;
+  const busy = saving || uploading || extracting;
   const attachedCount = attachedIds.length + newDocs.length;
+
+  /** Toggle the "No procedure / admission required" checkbox. */
+  function toggleNoProcedure(next: boolean) {
+    setNoProcedure(next);
+    if (next) {
+      setAdviseProcedureCodes([]);
+      setAdviseProcedureAdmission("None");
+    } else if (adviseProcedureAdmission === "None") {
+      setAdviseProcedureAdmission("");
+    }
+  }
 
   async function viewDocument(id: string) {
     const result = await getDocumentUrlAction(id);
@@ -205,6 +280,40 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
     });
   }
 
+  /**
+   * Read the latest prescription with AI vision and pre-fill the free-text fields
+   * (never the ICD chips — OCR gives text; the doctor codes it). Nothing is saved
+   * server-side; the doctor reviews, then submits. We pass the newest known
+   * document id explicitly so a just-uploaded (unsaved) prescription is read too.
+   */
+  function extract() {
+    const latestDocId = newDocs.at(-1)?.id ?? attachedIds.at(-1);
+    startExtract(async () => {
+      const result = await extractPrescriptionAction(visit.id, latestDocId);
+      if (!result.ok || !result.data) {
+        toast(result.error ?? "Could not read the prescription.", "error");
+        return;
+      }
+      const x = result.data;
+      // Overwrite only the fields the extract returned non-empty; keep the rest.
+      if (x.chiefComplaints) setChiefComplaints(x.chiefComplaints);
+      if (x.preExistingDiseases) setPreExistingDiseases(x.preExistingDiseases);
+      if (x.diagnosisText) setDiagnosisText(x.diagnosisText);
+      if (x.advisePharmacy) setAdvisePharmacy(x.advisePharmacy);
+      if (x.adviseDiagnostics) setAdviseDiagnostics(x.adviseDiagnostics);
+      if (x.adviseProcedureAdmission) {
+        setNoProcedure(false);
+        setAdviseProcedureAdmission(x.adviseProcedureAdmission);
+      }
+      if (x.suggestedOutcome) setOutcome(x.suggestedOutcome);
+      setRevisitAdvised(x.revisitAdvised);
+      if (x.revisitDate) setRevisitDate(x.revisitDate);
+      setAiPrefilled(true);
+      setError(null);
+      toast("Pre-filled from prescription — review and submit.", "success");
+    });
+  }
+
   /** asDraft → PATCH with complete:false; otherwise the backend completes the visit. */
   function save(asDraft: boolean) {
     if (!asDraft && !outcome) {
@@ -222,7 +331,8 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
       diagnosisText,
       advisePharmacy,
       adviseDiagnostics,
-      adviseProcedureAdmission,
+      adviseProcedureAdmission: noProcedure ? "None" : adviseProcedureAdmission,
+      adviseProcedureCodes: noProcedure ? [] : adviseProcedureCodes,
       chiefComplaintCodes,
       preExistingCodes,
       diagnosis: diagnosisCodes,
@@ -241,6 +351,7 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
       // Attached docs are now persisted on the visit — clear the local buffer so
       // the refreshed props don't double-list them.
       setNewDocs([]);
+      setAiPrefilled(false);
       if (asDraft) {
         toast("Draft saved — the visit stays registered.", "success");
       } else if (isCompleted) {
@@ -255,157 +366,37 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
 
   return (
     <Panel className="p-0">
-      <div className="space-y-5 p-5">
+      <div className="space-y-4 p-5">
         <div className="flex items-center gap-2">
           <Stethoscope className="size-4 text-brand-600" />
           <h2 className="text-sm font-semibold tracking-tight text-ink">Clinical observations</h2>
         </div>
 
-        {/* 1 — Outcome (the key field) */}
-        <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-3.5">
-          <Field
-            label="Outcome"
-            htmlFor="clinical-outcome"
-            hint="The clinical outcome of this visit — required to complete it."
-          >
-            <select
-              id="clinical-outcome"
-              value={outcome}
-              onChange={(e) => setOutcome(e.target.value as VisitOutcome | "")}
-              className={selectClass}
+        {/* AI pre-fill banner */}
+        {aiPrefilled ? (
+          <div className="flex items-start gap-2.5 rounded-xl border border-brand-200 bg-brand-50/60 p-3">
+            <Sparkles className="mt-0.5 size-4 shrink-0 text-brand-600" />
+            <p className="flex-1 text-xs text-ink-soft">
+              These fields were pre-filled by AI from the prescription — please review and edit before submitting.
+            </p>
+            <button
+              type="button"
+              onClick={() => setAiPrefilled(false)}
+              className="rounded-full p-0.5 text-ink-muted hover:bg-black/5 hover:text-ink"
+              aria-label="Dismiss AI pre-fill notice"
             >
-              <option value="">Select an outcome…</option>
-              {VISIT_OUTCOME_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-
-        {/* 2 — Chief Complaints */}
-        <div className="space-y-2">
-          <ConditionPicker
-            label="Chief Complaints"
-            value={chiefComplaintCodes}
-            onChange={setChiefComplaintCodes}
-            placeholder="Search a symptom — ICD-10 code or name…"
-          />
-          <textarea
-            value={chiefComplaints}
-            onChange={(e) => setChiefComplaints(e.target.value)}
-            rows={2}
-            placeholder="Free-text note — what brings the patient in…"
-            className={textareaClass}
-          />
-        </div>
-
-        {/* 3 — Pre-existing Diseases */}
-        <div className="space-y-2">
-          <ConditionPicker
-            label="Pre-existing Diseases"
-            value={preExistingCodes}
-            onChange={setPreExistingCodes}
-            placeholder="Search a comorbidity — ICD-10 code or name…"
-          />
-          <textarea
-            value={preExistingDiseases}
-            onChange={(e) => setPreExistingDiseases(e.target.value)}
-            rows={2}
-            placeholder="Free-text note — diabetes, hypertension, prior surgeries…"
-            className={textareaClass}
-          />
-        </div>
-
-        {/* 4 — Diagnosis */}
-        <div className="space-y-2">
-          <ConditionPicker
-            label="Diagnosis"
-            value={diagnosisCodes}
-            onChange={setDiagnosisCodes}
-            placeholder="Search a diagnosis — ICD-10 code or name…"
-          />
-          <textarea
-            value={diagnosisText}
-            onChange={(e) => setDiagnosisText(e.target.value)}
-            rows={2}
-            placeholder="Free-text note — clinical diagnosis…"
-            className={textareaClass}
-          />
-        </div>
-
-        {/* 5 — Advise */}
-        <div className="rounded-xl border border-line p-3.5">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-soft">Advise</p>
-          <div className="space-y-3">
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-ink-soft">Pharmacy</p>
-              <textarea
-                value={advisePharmacy}
-                onChange={(e) => setAdvisePharmacy(e.target.value)}
-                rows={2}
-                placeholder="Medicines advised…"
-                className={textareaClass}
-              />
-            </div>
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-ink-soft">Diagnostics</p>
-              <textarea
-                value={adviseDiagnostics}
-                onChange={(e) => setAdviseDiagnostics(e.target.value)}
-                rows={2}
-                placeholder="Tests / scans advised…"
-                className={textareaClass}
-              />
-            </div>
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-ink-soft">Procedure / Admission</p>
-              <textarea
-                value={adviseProcedureAdmission}
-                onChange={(e) => setAdviseProcedureAdmission(e.target.value)}
-                rows={2}
-                placeholder="Procedure or admission advised…"
-                className={textareaClass}
-              />
-            </div>
+              <X className="size-3.5" />
+            </button>
           </div>
-        </div>
+        ) : null}
 
-        {/* 6 — Revisit */}
-        <div className="rounded-xl border border-line bg-surface-muted p-3.5">
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={revisitAdvised}
-              onChange={(e) => setRevisitAdvised(e.target.checked)}
-              className="size-4 rounded border-line-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-200"
-            />
-            <span className="font-medium">Revisit advised</span>
-          </label>
-          {revisitAdvised ? (
-            <div className="mt-3 max-w-56">
-              <Field label="Revisit on" htmlFor="clinical-revisit-date">
-                <Input
-                  id="clinical-revisit-date"
-                  type="date"
-                  value={revisitDate}
-                  onChange={(e) => setRevisitDate(e.target.value)}
-                />
-              </Field>
-            </div>
-          ) : null}
-        </div>
-
-        {/* 7 — Prescriptions */}
-        <div className="rounded-xl border border-line p-3.5">
-          <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">
-            <FileText className="size-3.5 text-ink-faint" /> Prescriptions
-            {attachedCount > 0 ? (
-              <span className="rounded-full bg-brand-50 px-1.5 text-[10px] font-semibold text-brand-700">{attachedCount}</span>
-            ) : null}
-          </p>
-
+        {/* 1 — Prescription (first: upload + AI extract) */}
+        <Section
+          n={1}
+          title="Prescription"
+          helper="Attach the written prescription, then let AI pre-fill the fields below."
+          icon={<FileText className="size-3.5 text-brand-600" />}
+        >
           {attachedCount > 0 ? (
             <ul className="mb-3 space-y-1.5">
               {attachedIds.map((id, i) => (
@@ -459,8 +450,201 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
               {uploading ? "Uploading…" : "Upload"}
             </Button>
           </div>
-          <p className="mt-2 text-[11px] text-ink-muted">Image or PDF. Upload as many as needed — they attach when you save.</p>
-        </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
+            <Button onClick={extract} disabled={busy || attachedCount === 0}>
+              {extracting ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+              {extracting ? "Reading prescription…" : "Extract with AI"}
+            </Button>
+            <p className="text-[11px] text-ink-muted">
+              {attachedCount === 0
+                ? "Attach a prescription to enable AI pre-fill."
+                : "Reads the latest prescription and pre-fills the notes below for review."}
+            </p>
+          </div>
+        </Section>
+
+        {/* 2 — Chief Complaints */}
+        <Section
+          n={2}
+          title="Chief Complaints"
+          helper="What brings the patient in — code it and add a note."
+          icon={<ClipboardList className="size-3.5 text-brand-600" />}
+        >
+          <ConditionPicker
+            label="ICD-10 codes"
+            value={chiefComplaintCodes}
+            onChange={setChiefComplaintCodes}
+            placeholder="Search a symptom — ICD-10 code or name…"
+          />
+          <div className="mt-2">
+            <NoteLabel>Notes</NoteLabel>
+            <textarea
+              value={chiefComplaints}
+              onChange={(e) => setChiefComplaints(e.target.value)}
+              rows={2}
+              placeholder="Free-text note — what brings the patient in…"
+              className={textareaClass}
+            />
+          </div>
+        </Section>
+
+        {/* 3 — Pre-existing Diseases */}
+        <Section
+          n={3}
+          title="Pre-existing Diseases"
+          helper="Known comorbidities and prior history."
+          icon={<HeartPulse className="size-3.5 text-brand-600" />}
+        >
+          <ConditionPicker
+            label="ICD-10 codes"
+            value={preExistingCodes}
+            onChange={setPreExistingCodes}
+            placeholder="Search a comorbidity — ICD-10 code or name…"
+          />
+          <div className="mt-2">
+            <NoteLabel>Notes</NoteLabel>
+            <textarea
+              value={preExistingDiseases}
+              onChange={(e) => setPreExistingDiseases(e.target.value)}
+              rows={2}
+              placeholder="Free-text note — diabetes, hypertension, prior surgeries…"
+              className={textareaClass}
+            />
+          </div>
+        </Section>
+
+        {/* 4 — Diagnosis */}
+        <Section
+          n={4}
+          title="Diagnosis"
+          helper="The clinical diagnosis for this encounter."
+          icon={<Stethoscope className="size-3.5 text-brand-600" />}
+        >
+          <ConditionPicker
+            label="ICD-10 codes"
+            value={diagnosisCodes}
+            onChange={setDiagnosisCodes}
+            placeholder="Search a diagnosis — ICD-10 code or name…"
+          />
+          <div className="mt-2">
+            <NoteLabel>Notes</NoteLabel>
+            <textarea
+              value={diagnosisText}
+              onChange={(e) => setDiagnosisText(e.target.value)}
+              rows={2}
+              placeholder="Free-text note — clinical diagnosis…"
+              className={textareaClass}
+            />
+          </div>
+        </Section>
+
+        {/* 5 — Advise */}
+        <Section
+          n={5}
+          title="Advise"
+          helper="What the patient should do next — pharmacy, diagnostics, procedure."
+          icon={<Pill className="size-3.5 text-brand-600" />}
+        >
+          <div className="space-y-3.5">
+            <div>
+              <NoteLabel>Pharmacy</NoteLabel>
+              <textarea
+                value={advisePharmacy}
+                onChange={(e) => setAdvisePharmacy(e.target.value)}
+                rows={2}
+                placeholder="Medicines advised…"
+                className={textareaClass}
+              />
+            </div>
+            <div>
+              <NoteLabel>Diagnostics</NoteLabel>
+              <textarea
+                value={adviseDiagnostics}
+                onChange={(e) => setAdviseDiagnostics(e.target.value)}
+                rows={2}
+                placeholder="Tests / scans advised…"
+                className={textareaClass}
+              />
+            </div>
+            <div className="rounded-lg border border-line bg-surface-muted/50 p-3">
+              <NoteLabel>Procedure / Admission</NoteLabel>
+              <ProcedurePicker
+                value={adviseProcedureCodes}
+                onChange={setAdviseProcedureCodes}
+                disabled={noProcedure}
+                placeholder="Search a procedure — cataract, DCR, admission…"
+              />
+              <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-xs text-ink-soft">
+                <input
+                  type="checkbox"
+                  checked={noProcedure}
+                  onChange={(e) => toggleNoProcedure(e.target.checked)}
+                  className="size-4 rounded border-line-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-200"
+                />
+                <span className="font-medium">No procedure / admission required</span>
+              </label>
+              <input
+                type="text"
+                value={noProcedure ? "" : adviseProcedureAdmission}
+                onChange={(e) => setAdviseProcedureAdmission(e.target.value)}
+                disabled={noProcedure}
+                placeholder="Extra detail — laterality, urgency, prep…"
+                className={cn(
+                  "mt-2.5 h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-ink-faint focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200",
+                  noProcedure && "cursor-not-allowed opacity-60"
+                )}
+              />
+            </div>
+          </div>
+        </Section>
+
+        {/* 6 — Outcome & Revisit */}
+        <Section
+          n={6}
+          title="Outcome & Revisit"
+          helper="The visit outcome (required to complete) drives revisit reminders and campaigns."
+          icon={<Flag className="size-3.5 text-brand-600" />}
+        >
+          <div className="rounded-lg border border-brand-200 bg-brand-50/50 p-3">
+            <Field label="Outcome" htmlFor="clinical-outcome" hint="Required to complete the visit.">
+              <select
+                id="clinical-outcome"
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value as VisitOutcome | "")}
+                className={selectClass}
+              >
+                <option value="">Select an outcome…</option>
+                {VISIT_OUTCOME_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={revisitAdvised}
+              onChange={(e) => setRevisitAdvised(e.target.checked)}
+              className="size-4 rounded border-line-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-200"
+            />
+            <span className="font-medium">Revisit advised</span>
+          </label>
+          {revisitAdvised ? (
+            <div className="mt-3 max-w-56">
+              <Field label="Revisit on" htmlFor="clinical-revisit-date">
+                <Input
+                  id="clinical-revisit-date"
+                  type="date"
+                  value={revisitDate}
+                  onChange={(e) => setRevisitDate(e.target.value)}
+                />
+              </Field>
+            </div>
+          ) : null}
+        </Section>
 
         {error ? <p className="text-xs font-medium text-[var(--color-critical)]">{error}</p> : null}
       </div>
@@ -473,8 +657,14 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
           </Button>
         ) : null}
         <Button onClick={() => save(false)} disabled={busy}>
-          <Stethoscope className="size-3.5" />
-          {saving ? "Saving…" : isCompleted ? "Save observations" : "Save & complete visit"}
+          {aiPrefilled ? <Sparkles className="size-3.5" /> : <Stethoscope className="size-3.5" />}
+          {saving
+            ? "Saving…"
+            : aiPrefilled
+              ? "Validate & submit"
+              : isCompleted
+                ? "Save observations"
+                : "Save & complete visit"}
         </Button>
       </div>
     </Panel>

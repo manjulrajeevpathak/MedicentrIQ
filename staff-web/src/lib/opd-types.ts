@@ -87,6 +87,12 @@ export type VisitClinical = {
   chiefComplaintCodes?: IntakeCondition[];
   /** ICD-10 coded comorbidities (the free-text `preExistingDiseases` note rides alongside). */
   preExistingCodes?: IntakeCondition[];
+  /**
+   * Coded procedures advised (from the curated procedure catalog). The picker maps
+   * a catalog `{code,label}` onto the `IntakeCondition` shape (code → icd10Code),
+   * so a `{code:"66984"}` catalog entry becomes `{icd10Code:"66984", label}`.
+   */
+  adviseProcedureCodes?: IntakeCondition[];
   /** The clinical outcome that completes the visit. */
   outcome?: VisitOutcome;
   revisitAdvised?: boolean;
@@ -200,6 +206,37 @@ export type ConditionCatalogEntry = {
   label: string;
   category?: string;
   kind?: "symptom" | "diagnosis" | "comorbidity";
+};
+
+/**
+ * An entry in the curated procedure catalog (GET /clinical/procedures?q=). The
+ * "Advise → Procedure / Admission" picker maps a chosen entry onto the shared
+ * `IntakeCondition` shape (`code` → `icd10Code`) for storage in
+ * `VisitClinical.adviseProcedureCodes`.
+ */
+export type ProcedureCatalogEntry = {
+  code: string;
+  label: string;
+  category: string;
+};
+
+/**
+ * What POST /visits/:visitId/extract-prescription returns — AI-read suggestions
+ * from an uploaded prescription. Nothing is saved server-side; the doctor
+ * reviews the pre-filled free-text fields before submitting.
+ */
+export type PrescriptionExtract = {
+  chiefComplaints: string;
+  preExistingDiseases: string;
+  diagnosisText: string;
+  advisePharmacy: string;
+  adviseDiagnostics: string;
+  adviseProcedureAdmission: string;
+  revisitAdvised: boolean;
+  /** YYYY-MM-DD or "". */
+  revisitDate: string;
+  suggestedOutcome: VisitOutcome | null;
+  documentId: string;
 };
 
 // ---- Documents (reuses the patient document contract) ----------------------

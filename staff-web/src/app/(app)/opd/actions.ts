@@ -8,6 +8,8 @@ import type {
   ConditionCatalogEntry,
   IntakeCondition,
   IntakeLookupResult,
+  PrescriptionExtract,
+  ProcedureCatalogEntry,
   Visit,
   VisitListFilters,
   VisitOutcome,
@@ -129,6 +131,8 @@ export type VisitClinicalInput = {
   preExistingCodes?: IntakeCondition[];
   /** ICD-10 coded diagnosis (goes to Visit.diagnosis). */
   diagnosis?: IntakeCondition[];
+  /** Coded procedures advised (goes to Visit.clinical.adviseProcedureCodes). */
+  adviseProcedureCodes?: IntakeCondition[];
   /** The clinical outcome — required to complete the visit. */
   outcome?: VisitOutcome;
   revisitAdvised?: boolean;
@@ -165,6 +169,7 @@ export async function updateVisitClinicalAction(
   if (input.chiefComplaintCodes !== undefined) body.chiefComplaintCodes = input.chiefComplaintCodes;
   if (input.preExistingCodes !== undefined) body.preExistingCodes = input.preExistingCodes;
   if (input.diagnosis !== undefined) body.diagnosis = input.diagnosis;
+  if (input.adviseProcedureCodes !== undefined) body.adviseProcedureCodes = input.adviseProcedureCodes;
   if (input.outcome) body.outcome = input.outcome;
   if (input.revisitAdvised !== undefined) body.revisitAdvised = input.revisitAdvised;
   if (input.prescriptionDocumentIds?.length) body.prescriptionDocumentIds = input.prescriptionDocumentIds;
@@ -191,6 +196,42 @@ export async function searchConditionsAction(q: string): Promise<ActionState<Con
   const path = query ? `/clinical/conditions?q=${encodeURIComponent(query)}` : "/clinical/conditions";
   const result = await coreApi<ConditionCatalogEntry[]>(path);
   if (!result.ok) return { ok: false, error: result.error ?? "Could not search conditions." };
+  return { ok: true, data: result.data };
+}
+
+// ---- Procedure catalog search (Advise → Procedure / Admission picker) -------
+
+/**
+ * Search the curated procedure catalog (GET /clinical/procedures?q=). Token-AND
+ * over code + label, ~40 items; an empty query returns the full list. Powers the
+ * procedure typeahead in the clinical "Advise" section.
+ */
+export async function searchProceduresAction(q: string): Promise<ActionState<ProcedureCatalogEntry[]>> {
+  const query = q.trim();
+  const path = query ? `/clinical/procedures?q=${encodeURIComponent(query)}` : "/clinical/procedures";
+  const result = await coreApi<ProcedureCatalogEntry[]>(path);
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not search procedures." };
+  return { ok: true, data: result.data };
+}
+
+// ---- AI prescription extraction --------------------------------------------
+
+/**
+ * Read an uploaded prescription with AI vision (POST /visits/:id/extract-prescription).
+ * Returns structured suggestions WITHOUT saving them — the doctor reviews the
+ * pre-filled fields, then submits. `documentId` targets a specific prescription;
+ * omit it and the backend reads the visit's latest. Surfaces the backend's
+ * message so 503 (AI off) / 400 (no prescription) / 502 (read error) read clearly.
+ */
+export async function extractPrescriptionAction(
+  visitId: string,
+  documentId?: string
+): Promise<ActionState<PrescriptionExtract>> {
+  const result = await coreApi<PrescriptionExtract>(
+    `/visits/${encodeURIComponent(visitId)}/extract-prescription`,
+    { method: "POST", body: documentId ? { documentId } : {} }
+  );
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not read the prescription." };
   return { ok: true, data: result.data };
 }
 
