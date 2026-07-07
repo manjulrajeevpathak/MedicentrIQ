@@ -1,205 +1,314 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { CheckCircle2, Stethoscope } from "lucide-react";
-import { saveClinicalAction, type ActionResult } from "@/app/actions";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { CheckCircle2, FileUp, Sparkles, Stethoscope } from "lucide-react";
+import {
+  extractPrescriptionAction,
+  saveClinicalObjectAction,
+  searchProceduresAction
+} from "@/app/actions";
 import { ConditionChips } from "@/components/condition-chips";
-import { VISIT_OUTCOME_OPTIONS, type OpdVisit } from "@/lib/types";
+import { VISIT_OUTCOME_OPTIONS, type CodedCondition, type OpdVisit } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
 const inputCls =
   "w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-brand-400";
 const labelCls = "mb-1 block text-sm font-medium text-ink-soft";
 
-/**
- * Clinical observations for the patient's OPEN OPD visit. Saving completes the
- * visit — there is no separate "start consult" step. Same structure as the
- * staff console's form: Chief Complaints → Pre-existing Diseases → Diagnosis →
- * Advise (Pharmacy / Diagnostics / Procedure-Admission) → Revisit → Prescription.
- */
-export function ClinicalObservationsForm({
-  patientId,
-  visit
+/** A numbered, titled section block — clear visual separation on the consult form. */
+function Section({
+  n,
+  title,
+  hint,
+  children
 }: {
-  patientId: string;
-  visit: OpdVisit;
+  n: number;
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
 }) {
-  const [state, formAction, pending] = useActionState<ActionResult, FormData>(saveClinicalAction, {});
-  const [revisit, setRevisit] = useState(Boolean(visit.clinical?.revisitAdvised));
-
   return (
     <section className="surface-card p-4">
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex items-start gap-2.5">
+        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
+          {n}
+        </span>
+        <div>
+          <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
+          {hint ? <p className="text-xs text-ink-muted">{hint}</p> : null}
+        </div>
+      </div>
+      <div className="flex flex-col gap-3">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * OPD clinical observations — Rx-first: upload the prescription, optionally let AI
+ * pre-fill the fields, then the doctor reviews/edits and completes the visit.
+ * Fields are ordered Prescription → Complaints → Pre-existing → Diagnosis →
+ * Advise → Outcome/Revisit. Controlled state so AI extraction can pre-fill.
+ */
+export function ClinicalObservationsForm({ patientId, visit }: { patientId: string; visit: OpdVisit }) {
+  const router = useRouter();
+  const c = visit.clinical;
+
+  // Prescription (uploaded immediately so AI can read it before save).
+  const [docs, setDocs] = useState<{ id: string; name: string }[]>(
+    (c?.prescriptionDocumentIds ?? []).map((id, i) => ({ id, name: `Prescription ${i + 1}` }))
+  );
+  const [uploading, startUpload] = useTransition();
+  const [extracting, startExtract] = useTransition();
+  const [aiFilled, setAiFilled] = useState(false);
+
+  // Coded + free-text fields (controlled).
+  const [chiefCodes, setChiefCodes] = useState<CodedCondition[]>(c?.chiefComplaintCodes ?? []);
+  const [chiefText, setChiefText] = useState(c?.chiefComplaints ?? visit.chiefComplaint ?? "");
+  const [preCodes, setPreCodes] = useState<CodedCondition[]>(c?.preExistingCodes ?? []);
+  const [preText, setPreText] = useState(c?.preExistingDiseases ?? "");
+  const [dxCodes, setDxCodes] = useState<CodedCondition[]>(visit.diagnosis ?? []);
+  const [dxText, setDxText] = useState(c?.diagnosisText ?? "");
+  const [pharmacy, setPharmacy] = useState(c?.advisePharmacy ?? "");
+  const [diagnostics, setDiagnostics] = useState(c?.adviseDiagnostics ?? "");
+  const [procCodes, setProcCodes] = useState<CodedCondition[]>(c?.adviseProcedureCodes ?? []);
+  const [procText, setProcText] = useState(c?.adviseProcedureAdmission ?? "");
+  const [noProcedure, setNoProcedure] = useState(c?.adviseProcedureAdmission === "None");
+  const [outcome, setOutcome] = useState(c?.outcome ?? "");
+  const [revisit, setRevisit] = useState(Boolean(c?.revisitAdvised));
+  const [revisitDate, setRevisitDate] = useState(c?.revisitDate ?? "");
+
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [saving, startSaving] = useTransition();
+
+  function upload(file: File) {
+    startUpload(async () => {
+      const fd = new FormData();
+      fd.set("patientId", patientId);
+      fd.set("file", file);
+      const { uploadPrescriptionAction } = await import("@/app/actions");
+      const res = await uploadPrescriptionAction({}, fd);
+      if (!res.ok || !res.doc) {
+        setError(res.error ?? "Upload failed.");
+        return;
+      }
+      setDocs((prev) => [...prev, res.doc!]);
+      setError(null);
+    });
+  }
+
+  function extract() {
+    const doc = docs[docs.length - 1];
+    if (!doc) return;
+    startExtract(async () => {
+      const res = await extractPrescriptionAction(visit.id, doc.id);
+      if (!res.ok || !res.data) {
+        setError(res.error ?? "Could not read the prescription.");
+        return;
+      }
+      const d = res.data;
+      // Pre-fill the free-text fields + outcome + revisit; the doctor adds ICD chips.
+      if (d.chiefComplaints) setChiefText(d.chiefComplaints);
+      if (d.preExistingDiseases) setPreText(d.preExistingDiseases);
+      if (d.diagnosisText) setDxText(d.diagnosisText);
+      if (d.advisePharmacy) setPharmacy(d.advisePharmacy);
+      if (d.adviseDiagnostics) setDiagnostics(d.adviseDiagnostics);
+      if (d.adviseProcedureAdmission) {
+        setProcText(d.adviseProcedureAdmission);
+        setNoProcedure(false);
+      }
+      if (d.suggestedOutcome) setOutcome(d.suggestedOutcome);
+      if (d.revisitAdvised) setRevisit(true);
+      if (d.revisitDate) setRevisitDate(d.revisitDate);
+      setAiFilled(true);
+      setError(null);
+    });
+  }
+
+  function save() {
+    startSaving(async () => {
+      const res = await saveClinicalObjectAction({
+        patientId,
+        visitId: visit.id,
+        chiefComplaintCodes: chiefCodes,
+        chiefComplaints: chiefText,
+        preExistingCodes: preCodes,
+        preExistingDiseases: preText,
+        diagnosis: dxCodes,
+        diagnosisText: dxText,
+        advisePharmacy: pharmacy,
+        adviseDiagnostics: diagnostics,
+        adviseProcedureAdmission: noProcedure ? "None" : procText,
+        adviseProcedureCodes: noProcedure ? [] : procCodes,
+        outcome: outcome || undefined,
+        revisitAdvised: revisit,
+        revisitDate,
+        prescriptionDocumentIds: docs.map((x) => x.id)
+      });
+      if (!res.ok) {
+        setError(res.error ?? "Could not save.");
+        return;
+      }
+      setDone(true);
+      router.refresh();
+    });
+  }
+
+  if (done) {
+    return (
+      <section className="surface-card p-4">
+        <div className="flex items-center gap-2 rounded-xl bg-good-soft px-3 py-3 text-sm font-medium text-good">
+          <CheckCircle2 className="h-5 w-5" /> Observations saved — visit completed.
+        </div>
+      </section>
+    );
+  }
+
+  const busy = saving || uploading || extracting;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2 px-1">
         <Stethoscope className="h-4.5 w-4.5 text-brand-600" />
         <h2 className="text-[15px] font-semibold text-ink">Clinical observations</h2>
+        <span className="ml-auto text-xs text-ink-muted">
+          Registered {formatDateTime(visit.registeredAt)}
+        </span>
       </div>
-      <p className="mb-3 text-xs text-ink-muted">
-        OPD visit registered {formatDateTime(visit.registeredAt)}
-        {visit.doctorName ? ` · ${visit.doctorName}` : ""} — saving completes the visit.
-      </p>
 
-      {state.ok ? (
-        <div className="flex items-center gap-2 rounded-xl bg-good-soft px-3 py-3 text-sm font-medium text-good">
-          <CheckCircle2 className="h-5 w-5" />
-          Observations saved — visit completed.
+      {aiFilled ? (
+        <div className="flex items-start gap-2 rounded-xl bg-brand-50 px-3 py-2.5 text-xs text-brand-700">
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Pre-filled by AI from the prescription — please review and edit before submitting.</span>
         </div>
-      ) : (
-        <form action={formAction} className="flex flex-col gap-3">
-          <input type="hidden" name="patientId" value={patientId} />
-          <input type="hidden" name="visitId" value={visit.id} />
+      ) : null}
 
-          <div>
-            <label htmlFor="co-outcome" className={labelCls}>Outcome</label>
-            <select
-              id="co-outcome"
-              name="outcome"
-              defaultValue={visit.clinical?.outcome ?? ""}
-              className={inputCls}
-            >
-              <option value="">Select an outcome…</option>
-              {VISIT_OUTCOME_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-ink-muted">Used to re-engage the patient later (e.g. surgery advised).</p>
-          </div>
-
-          <ConditionChips
-            name="chiefComplaintCodes"
-            label="Chief Complaints"
-            value={visit.clinical?.chiefComplaintCodes}
-            placeholder="Search symptom / ICD-10…"
+      {/* 1. Prescription (first — the OCR source) */}
+      <Section n={1} title="Prescription" hint="Upload the prescription; AI can read it to pre-fill the fields below.">
+        {docs.length > 0 ? (
+          <ul className="flex flex-wrap gap-1.5">
+            {docs.map((d) => (
+              <li key={d.id} className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-ink-soft">
+                {d.name}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong px-3 py-3 text-sm font-medium text-ink-soft">
+          <FileUp className="h-4 w-4" /> {uploading ? "Uploading…" : "Upload prescription (photo / PDF)"}
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) upload(f);
+              e.target.value = "";
+            }}
           />
-          <div>
-            <label htmlFor="co-chief" className={labelCls}>Chief complaint notes</label>
-            <textarea
-              id="co-chief"
-              name="chiefComplaints"
-              rows={2}
-              defaultValue={visit.clinical?.chiefComplaints ?? ""}
-              placeholder="e.g. Blurred vision in right eye, 2 weeks"
-              className={inputCls}
-            />
-          </div>
+        </label>
+        <button
+          type="button"
+          onClick={extract}
+          disabled={docs.length === 0 || extracting}
+          className="flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          <Sparkles className="h-4 w-4" /> {extracting ? "Reading prescription…" : "Extract with AI"}
+        </button>
+      </Section>
 
-          <ConditionChips
-            name="preExistingCodes"
-            label="Pre-existing Diseases"
-            value={visit.clinical?.preExistingCodes}
-            placeholder="Search comorbidity / ICD-10…"
-          />
+      {/* 2. Chief Complaints */}
+      <Section n={2} title="Chief Complaints" hint="Presenting symptoms.">
+        <ConditionChips label="ICD-10 / symptom" value={chiefCodes} onChange={setChiefCodes} placeholder="Search symptom / ICD-10…" />
+        <textarea rows={2} value={chiefText} onChange={(e) => setChiefText(e.target.value)} placeholder="Notes…" className={inputCls} />
+      </Section>
 
-          <ConditionChips
-            name="diagnosis"
-            label="Diagnosis"
-            value={visit.diagnosis}
-            placeholder="Search diagnosis / ICD-10…"
-          />
-          <div>
-            <label htmlFor="co-dx" className={labelCls}>Diagnosis notes</label>
-            <textarea
-              id="co-dx"
-              name="diagnosisText"
-              rows={2}
-              defaultValue={visit.clinical?.diagnosisText ?? ""}
-              placeholder="e.g. Early cataract, right eye"
-              className={inputCls}
-            />
-          </div>
+      {/* 3. Pre-existing Diseases */}
+      <Section n={3} title="Pre-existing Diseases" hint="Comorbidities / history.">
+        <ConditionChips label="ICD-10 / comorbidity" value={preCodes} onChange={setPreCodes} placeholder="Search comorbidity / ICD-10…" />
+        <textarea rows={2} value={preText} onChange={(e) => setPreText(e.target.value)} placeholder="Notes…" className={inputCls} />
+      </Section>
 
-          <fieldset className="rounded-xl border border-line p-3">
-            <legend className="px-1 text-sm font-medium text-ink-soft">Advise</legend>
-            <div className="flex flex-col gap-2.5">
-              <div>
-                <label htmlFor="co-rx" className={labelCls}>Pharmacy</label>
-                <input
-                  id="co-rx"
-                  name="advisePharmacy"
-                  defaultValue={visit.clinical?.advisePharmacy ?? ""}
-                  placeholder="e.g. Lubricant eye drops BD × 4 weeks"
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label htmlFor="co-diag" className={labelCls}>Diagnostics</label>
-                <input
-                  id="co-diag"
-                  name="adviseDiagnostics"
-                  defaultValue={visit.clinical?.adviseDiagnostics ?? ""}
-                  placeholder="e.g. HbA1c, fasting sugar"
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label htmlFor="co-proc" className={labelCls}>Procedure / Admission</label>
-                <input
-                  id="co-proc"
-                  name="adviseProcedureAdmission"
-                  defaultValue={visit.clinical?.adviseProcedureAdmission ?? ""}
-                  placeholder="e.g. Phaco + IOL, left eye"
-                  className={inputCls}
-                />
-              </div>
-            </div>
-          </fieldset>
+      {/* 4. Diagnosis */}
+      <Section n={4} title="Diagnosis" hint="Working / final diagnosis.">
+        <ConditionChips label="ICD-10 / diagnosis" value={dxCodes} onChange={setDxCodes} placeholder="Search diagnosis / ICD-10…" />
+        <textarea rows={2} value={dxText} onChange={(e) => setDxText(e.target.value)} placeholder="Notes…" className={inputCls} />
+      </Section>
 
-          <div className="rounded-xl border border-line p-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-ink">
-              <input
-                type="checkbox"
-                name="revisitAdvised"
-                checked={revisit}
-                onChange={(e) => setRevisit(e.target.checked)}
-                className="h-4 w-4"
-              />
-              Revisit Advised
-            </label>
-            {revisit ? (
-              <div className="mt-2.5">
-                <label htmlFor="co-revisit" className={labelCls}>Revisit date</label>
-                <input
-                  id="co-revisit"
-                  type="date"
-                  name="revisitDate"
-                  defaultValue={visit.clinical?.revisitDate ?? ""}
-                  className={inputCls}
-                />
-              </div>
-            ) : null}
-          </div>
-
-          <div>
-            <label htmlFor="co-file" className={labelCls}>
-              Upload prescription
-              {visit.clinical?.prescriptionDocumentIds?.length
-                ? ` (${visit.clinical.prescriptionDocumentIds.length} attached)`
-                : ""}
-            </label>
+      {/* 5. Advise */}
+      <Section n={5} title="Advise" hint="Pharmacy, diagnostics and any procedure / admission.">
+        <div>
+          <label className={labelCls}>Pharmacy</label>
+          <textarea rows={2} value={pharmacy} onChange={(e) => setPharmacy(e.target.value)} placeholder="Medicines advised…" className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Diagnostics</label>
+          <textarea rows={2} value={diagnostics} onChange={(e) => setDiagnostics(e.target.value)} placeholder="Tests / scans advised…" className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Procedure / Admission</label>
+          <label className="mb-2 flex items-center gap-2 text-sm text-ink">
             <input
-              id="co-file"
-              type="file"
-              name="prescription"
-              accept="image/*,application/pdf"
-              className="block w-full text-sm text-ink-muted file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-700"
+              type="checkbox"
+              checked={noProcedure}
+              onChange={(e) => {
+                setNoProcedure(e.target.checked);
+                if (e.target.checked) setProcCodes([]);
+              }}
+              className="h-4 w-4"
             />
-            <p className="mt-1 text-xs text-ink-muted">
-              Photo or PDF — we&rsquo;ll process it to auto-fill these fields in future.
-            </p>
-          </div>
-
-          {state.error ? (
-            <p className="rounded-xl bg-critical-soft px-3 py-2 text-sm font-medium text-critical">{state.error}</p>
+            No procedure / admission required
+          </label>
+          {!noProcedure ? (
+            <>
+              <ConditionChips
+                label=""
+                value={procCodes}
+                search={searchProceduresAction}
+                onChange={setProcCodes}
+                placeholder="Search procedure (e.g. phaco, trabeculectomy)…"
+              />
+              <input value={procText} onChange={(e) => setProcText(e.target.value)} placeholder="Extra detail (eye, timing)…" className={`${inputCls} mt-2`} />
+            </>
           ) : null}
+        </div>
+      </Section>
 
-          <button
-            type="submit"
-            disabled={pending}
-            className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-          >
-            {pending ? "Saving…" : "Save & complete visit"}
-          </button>
-        </form>
-      )}
-    </section>
+      {/* 6. Outcome & Revisit */}
+      <Section n={6} title="Outcome & Revisit" hint="Used to re-engage the patient later (e.g. surgery advised).">
+        <div>
+          <label className={labelCls}>Outcome</label>
+          <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className={inputCls}>
+            <option value="">Select an outcome…</option>
+            {VISIT_OUTCOME_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" checked={revisit} onChange={(e) => setRevisit(e.target.checked)} className="h-4 w-4" /> Revisit advised
+        </label>
+        {revisit ? (
+          <div>
+            <label className={labelCls}>Revisit date</label>
+            <input type="date" value={revisitDate} onChange={(e) => setRevisitDate(e.target.value)} className={inputCls} />
+          </div>
+        ) : null}
+      </Section>
+
+      {error ? (
+        <p className="rounded-xl bg-critical-soft px-3 py-2 text-sm font-medium text-critical">{error}</p>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={save}
+        disabled={busy}
+        className="sticky bottom-3 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-lg disabled:opacity-60"
+      >
+        {saving ? "Saving…" : aiFilled ? "Validate & submit" : "Save & complete visit"}
+      </button>
+    </div>
   );
 }

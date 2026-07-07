@@ -91,10 +91,25 @@ export type VisitClinical = {
   advisePharmacy?: string;
   adviseDiagnostics?: string;
   adviseProcedureAdmission?: string;
+  adviseProcedureCodes?: CodedCondition[];
   outcome?: VisitOutcome;
   revisitAdvised?: boolean;
   revisitDate?: string;
   prescriptionDocumentIds?: string[];
+};
+
+/** AI-extracted suggestions from a prescription (POST /visits/:id/extract-prescription). */
+export type PrescriptionExtract = {
+  chiefComplaints: string;
+  preExistingDiseases: string;
+  diagnosisText: string;
+  advisePharmacy: string;
+  adviseDiagnostics: string;
+  adviseProcedureAdmission: string;
+  revisitAdvised: boolean;
+  revisitDate: string;
+  suggestedOutcome: VisitOutcome | null;
+  documentId: string;
 };
 
 /** An OPD visit as served by GET /visits (subset the PWA needs). */

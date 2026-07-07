@@ -5,23 +5,33 @@ import { Plus, X } from "lucide-react";
 import { searchConditionsAction } from "@/app/actions";
 import type { CodedCondition } from "@/lib/types";
 
+// (default catalog search kept as the default `search` prop below)
+
 /**
  * ICD-10 chip picker for the clinical form: type to search the catalog, tap a
  * result to add a coded chip. The selection is emitted as a JSON string in a
  * hidden input (named `name`) so it rides the surrounding <form> action.
  */
 export function ConditionChips({
-  name,
   label,
   value = [],
-  placeholder = "Search ICD-10 or condition…"
+  placeholder = "Search ICD-10 or condition…",
+  search = searchConditionsAction,
+  onChange
 }: {
-  name: string;
   label: string;
   value?: CodedCondition[];
   placeholder?: string;
+  /** Catalog search (defaults to ICD-10 conditions; pass a procedure search to reuse). */
+  search?: (q: string) => Promise<{ icd10Code: string; label: string }[]>;
+  /** Controlled: emit the selected chips to the parent. */
+  onChange?: (chips: CodedCondition[]) => void;
 }) {
-  const [chips, setChips] = useState<CodedCondition[]>(value);
+  const [chips, setChipsState] = useState<CodedCondition[]>(value);
+  const setChips = (next: CodedCondition[]) => {
+    setChipsState(next);
+    onChange?.(next);
+  };
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CodedCondition[]>([]);
   const [open, setOpen] = useState(false);
@@ -35,7 +45,7 @@ export function ConditionChips({
     }
     let alive = true;
     const t = setTimeout(async () => {
-      const found = await searchConditionsAction(q);
+      const found = await search(q);
       if (alive) {
         setResults(found.map((f) => ({ icd10Code: f.icd10Code, label: f.label })));
         setOpen(true);
@@ -66,7 +76,6 @@ export function ConditionChips({
   return (
     <div ref={boxRef} className="relative">
       <label className="mb-1 block text-sm font-medium text-ink-soft">{label}</label>
-      <input type="hidden" name={name} value={JSON.stringify(chips)} />
 
       {chips.length > 0 ? (
         <div className="mb-2 flex flex-wrap gap-1.5">

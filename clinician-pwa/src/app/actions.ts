@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { SESSION_COOKIE } from "@/lib/constants";
 import { API_BASE, coreApi, sessionToken } from "@/lib/core-api";
-import type { ClinicalRecord } from "@/lib/types";
+import type { ClinicalRecord, PrescriptionExtract } from "@/lib/types";
 
 /**
  * Central Server Actions for the clinician PWA. Form-bound actions return a
@@ -211,6 +211,13 @@ export async function uploadDocumentAction(_prev: ActionResult, formData: FormDa
   return { ok: true };
 }
 
+function asArrayData(data: unknown): Record<string, unknown>[] {
+  if (Array.isArray(data)) return data as Record<string, unknown>[];
+  const o = data as { items?: unknown[]; conditions?: unknown[]; data?: unknown[] } | null;
+  const inner = o?.items ?? o?.conditions ?? o?.data ?? [];
+  return Array.isArray(inner) ? (inner as Record<string, unknown>[]) : [];
+}
+
 /** ICD-10 catalog search for the clinical chip pickers (typeahead). */
 export async function searchConditionsAction(
   query: string
@@ -218,15 +225,103 @@ export async function searchConditionsAction(
   const qs = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
   const result = await coreApi<unknown>(`/clinical/conditions${qs}`);
   if (!result.ok) return [];
-  const arr = Array.isArray(result.data)
-    ? result.data
-    : ((result.data as { items?: unknown[]; conditions?: unknown[]; data?: unknown[] })?.items ??
-        (result.data as { conditions?: unknown[] })?.conditions ??
-        (result.data as { data?: unknown[] })?.data ??
-        []);
-  return (arr as Record<string, unknown>[])
+  return asArrayData(result.data)
     .filter((c) => typeof c.icd10Code === "string" && typeof c.label === "string")
     .map((c) => ({ icd10Code: c.icd10Code as string, label: c.label as string, category: c.category as string | undefined }));
+}
+
+/** Procedure catalog search — mapped to the coded-condition chip shape (code→icd10Code). */
+export async function searchProceduresAction(
+  query: string
+): Promise<{ icd10Code: string; label: string; category?: string }[]> {
+  const qs = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
+  const result = await coreApi<unknown>(`/clinical/procedures${qs}`);
+  if (!result.ok) return [];
+  return asArrayData(result.data)
+    .filter((p) => typeof p.code === "string" && typeof p.label === "string")
+    .map((p) => ({ icd10Code: p.code as string, label: p.label as string, category: p.category as string | undefined }));
+}
+
+/** Upload a prescription immediately (before extraction) → returns the document id. */
+export async function uploadPrescriptionAction(
+  _prev: { ok?: boolean; error?: string; doc?: { id: string; name: string } },
+  formData: FormData
+): Promise<{ ok?: boolean; error?: string; doc?: { id: string; name: string } }> {
+  const patientId = String(formData.get("patientId") ?? "").trim();
+  const file = formData.get("file");
+  if (!patientId) return { error: "Missing patient." };
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a prescription to upload." };
+  const filename = file.name || `prescription-${Date.now()}`;
+  const contentType = file.type || "application/octet-stream";
+  const presign = await coreApi<{ uploadUrl: string; key?: string; storageKey?: string }>(
+    `/patients/${encodeURIComponent(patientId)}/documents/upload-url`,
+    { method: "POST", body: { filename, contentType, type: "prescription" } }
+  );
+  if (!presign.ok) return { error: presign.error ?? "Could not start the upload." };
+  if (!presign.data?.uploadUrl) return { error: "Could not start the upload." };
+  try {
+    const put = await fetch(presign.data.uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": contentType },
+      body: new Uint8Array(await file.arrayBuffer())
+    });
+    if (!put.ok) return { error: `Upload failed (${put.status}).` };
+  } catch {
+    return { error: "Upload failed. Check your connection and try again." };
+  }
+  const key = presign.data.key ?? presign.data.storageKey;
+  const register = await coreApi<{ id?: string }>(`/patients/${encodeURIComponent(patientId)}/documents`, {
+    method: "POST",
+    body: { type: "prescription", filename, contentType, ...(key ? { key } : {}) }
+  });
+  if (!register.ok) return { error: register.error ?? "Uploaded, but could not save the record." };
+  if (!register.data?.id) return { error: "Uploaded, but could not save the record." };
+  revalidatePath(`/patients/${patientId}`);
+  return { ok: true, doc: { id: register.data.id, name: filename } };
+}
+
+/** AI vision: extract structured fields from an uploaded prescription (not saved). */
+export async function extractPrescriptionAction(
+  visitId: string,
+  documentId: string
+): Promise<{ ok: boolean; error?: string; data?: PrescriptionExtract }> {
+  const result = await coreApi<PrescriptionExtract>(
+    `/visits/${encodeURIComponent(visitId)}/extract-prescription`,
+    { method: "POST", body: { documentId } }
+  );
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not read the prescription." };
+  return { ok: true, data: result.data };
+}
+
+/** Save clinical observations from a plain object (controlled form) and complete the visit. */
+export async function saveClinicalObjectAction(input: {
+  patientId: string;
+  visitId: string;
+  chiefComplaintCodes?: { icd10Code: string; label: string }[];
+  chiefComplaints?: string;
+  preExistingCodes?: { icd10Code: string; label: string }[];
+  preExistingDiseases?: string;
+  diagnosis?: { icd10Code: string; label: string }[];
+  diagnosisText?: string;
+  advisePharmacy?: string;
+  adviseDiagnostics?: string;
+  adviseProcedureAdmission?: string;
+  adviseProcedureCodes?: { icd10Code: string; label: string }[];
+  outcome?: string;
+  revisitAdvised?: boolean;
+  revisitDate?: string;
+  prescriptionDocumentIds?: string[];
+  complete?: boolean;
+}): Promise<ActionResult> {
+  const { patientId, visitId, ...rest } = input;
+  if (!patientId || !visitId) return { error: "Missing visit." };
+  const result = await coreApi(`/visits/${encodeURIComponent(visitId)}/clinical`, {
+    method: "PATCH",
+    body: { ...rest }
+  });
+  if (!result.ok) return { error: result.error ?? "Could not save the clinical observations." };
+  revalidatePath(`/patients/${patientId}`);
+  return { ok: true };
 }
 
 /** Resolve a download URL for a document, then hand it back to the client. */
