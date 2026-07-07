@@ -6,6 +6,22 @@ const host = process.env.HOST ?? "127.0.0.1";
 const service = await createCoreService();
 const server = createApiServer(service);
 
+// Under `node --watch`, restarts race the old process for the port: the new
+// child can hit EADDRINUSE before the old listener closes, die, and leave the
+// watcher idling with NO server until the next file change. Retry instead of
+// dying — the port frees within a moment.
+const LISTEN_RETRIES = 20;
+let listenAttempts = 0;
+server.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EADDRINUSE" && listenAttempts < LISTEN_RETRIES) {
+    listenAttempts += 1;
+    console.warn(`[boot] port ${port} still in use — retry ${listenAttempts}/${LISTEN_RETRIES} in 500ms`);
+    setTimeout(() => server.listen(port, host), 500);
+    return;
+  }
+  throw error;
+});
+
 server.listen(port, host, () => {
   console.log(`core-api listening on http://${host}:${port}`);
 });

@@ -198,7 +198,7 @@ export const createSeedData = (): SeedData => ({
     {
       id: "platform_admin_root",
       email: "superadmin@healthos.local",
-      displayName: "HealthOS Root Admin",
+      displayName: "HealthFlow Root Admin",
       roles: ["platform_admin"],
       status: "active",
       ...DEMO_PLATFORM_CRED,

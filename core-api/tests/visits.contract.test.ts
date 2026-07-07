@@ -203,6 +203,38 @@ describe("OPD walk-in visits contract", () => {
     assert.equal(visit.chiefComplaint, "Blurred vision in right eye, 2 weeks");
   });
 
+  it("stores coded conditions + a root outcome, merging diagnosis/comorbidities into the record", async () => {
+    const create = await authed("/visits", {
+      method: "POST",
+      body: JSON.stringify({ patientId: "patient_demo_002", chiefComplaint: "Cataract review" })
+    });
+    const visitId = String(((await create.json()) as { data: JsonObject }).data.id);
+
+    const res = await authed(`/visits/${visitId}/clinical`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        chiefComplaintCodes: [{ icd10Code: "H53.8", label: "Blurred / diminished vision" }],
+        preExistingCodes: [{ icd10Code: "E11.9", label: "Type 2 diabetes mellitus" }],
+        diagnosis: [{ icd10Code: "H25.9", label: "Age-related cataract, unspecified" }],
+        outcome: "surgery_advised"
+      })
+    });
+    assert.equal(res.status, 200);
+    const visit = ((await res.json()) as { data: JsonObject }).data;
+    assert.equal(visit.status, "completed");
+    assert.equal((visit.clinical as JsonObject).outcome, "surgery_advised");
+    // outcome maps onto the legacy disposition so workflows keep firing.
+    assert.equal((visit.disposition as JsonObject).outcome, "advised_surgery");
+
+    // Diagnosis + comorbidity landed on the patient's problem list (segmentable).
+    const clinical = (await (await authed("/patients/patient_demo_002/clinical")).json()) as {
+      data: { conditions: { icd10Code: string }[] };
+    };
+    const codes = clinical.data.conditions.map((c) => c.icd10Code);
+    assert.ok(codes.includes("H25.9"));
+    assert.ok(codes.includes("E11.9"));
+  });
+
   it("derives advised_surgery when procedure/admission is advised (no revisit)", async () => {
     const create = await authed("/visits", {
       method: "POST",

@@ -28,7 +28,7 @@ import {
 import { placeCall } from "../integrations/channels/telephony.js";
 import { assistantAvailable, generateAssistantReply, type AssistantTurn } from "../integrations/assistant-llm.js";
 import { createStorageService, type StorageService } from "../integrations/storage.js";
-import { OPHTHALMOLOGY_CONDITION_CATALOG } from "../domain/clinical-catalog.js";
+import { searchConditionCatalog } from "../domain/clinical-catalog.js";
 import type {
   AccessRequest,
   Appointment,
@@ -107,6 +107,7 @@ import type {
   TimelineEvent,
   Visit,
   VisitClinical,
+  VisitOutcome,
   VisitDisposition,
   VisitStatus,
   VisitType,
@@ -535,6 +536,8 @@ type CampaignAudienceInput = {
   leadSources?: unknown;
   patientStages?: unknown;
   conditionCodes?: unknown;
+  visitOutcomes?: unknown;
+  visitWithinDays?: unknown;
   tags?: unknown;
 };
 
@@ -1110,6 +1113,44 @@ const maskPhone = (phone?: string) => {
 };
 
 const normalizePhone = (phone?: string) => phone?.replace(/\D/g, "").slice(-10);
+
+const VISIT_OUTCOMES: VisitOutcome[] = [
+  "medicine_advised",
+  "surgery_advised",
+  "revisit_advised",
+  "diagnostics_advised",
+  "referred",
+  "admitted",
+  "discharged",
+  "observation"
+];
+
+const validVisitOutcome = (value: unknown): VisitOutcome | undefined =>
+  typeof value === "string" && (VISIT_OUTCOMES as string[]).includes(value) ? (value as VisitOutcome) : undefined;
+
+/** Map the root outcome onto a legacy disposition code so the existing completion
+ *  path keeps driving workflows (advised_surgery / follow_up / prescribed / discharged). */
+const legacyDispositionForOutcome = (outcome: VisitOutcome | undefined, clinical: VisitClinical): string => {
+  switch (outcome) {
+    case "surgery_advised":
+    case "admitted":
+      return "advised_surgery";
+    case "revisit_advised":
+      return "follow_up";
+    case "referred":
+    case "discharged":
+      return "discharged";
+    case "medicine_advised":
+    case "diagnostics_advised":
+    case "observation":
+      return "prescribed";
+    default:
+      // No explicit outcome — infer from the advise/revisit fields (back-compat).
+      if (clinical.revisitAdvised) return "follow_up";
+      if (clinical.adviseProcedureAdmission) return "advised_surgery";
+      return "prescribed";
+  }
+};
 
 /** Verify Meta's X-Hub-Signature-256 header: "sha256=" + HMAC-SHA256(appSecret, rawBody). */
 const verifyMetaSignature = (rawBody: string, signature: string, appSecret: string): boolean => {
@@ -3979,16 +4020,26 @@ export class CoreService {
     const current = visit.clinical ?? {};
     const text = (v: unknown, prev?: string) =>
       v === undefined ? prev : typeof v === "string" && v.trim() ? v.trim() : undefined;
+    const codes = (v: unknown, prev?: ClinicalCondition[]) =>
+      v === undefined ? prev : this.sanitizeConditions(v);
+
+    const outcome = validVisitOutcome(input.outcome) ?? current.outcome;
 
     const clinical: VisitClinical = {
+      chiefComplaintCodes: codes(input.chiefComplaintCodes, current.chiefComplaintCodes),
       chiefComplaints: text(input.chiefComplaints, current.chiefComplaints),
+      preExistingCodes: codes(input.preExistingCodes, current.preExistingCodes),
       preExistingDiseases: text(input.preExistingDiseases, current.preExistingDiseases),
       diagnosisText: text(input.diagnosisText, current.diagnosisText),
       advisePharmacy: text(input.advisePharmacy, current.advisePharmacy),
       adviseDiagnostics: text(input.adviseDiagnostics, current.adviseDiagnostics),
       adviseProcedureAdmission: text(input.adviseProcedureAdmission, current.adviseProcedureAdmission),
+      outcome,
+      // outcome=revisit_advised implies a revisit even if the flag wasn't set.
       revisitAdvised:
-        input.revisitAdvised === undefined ? current.revisitAdvised : input.revisitAdvised === true,
+        input.revisitAdvised === undefined
+          ? outcome === "revisit_advised" || current.revisitAdvised
+          : input.revisitAdvised === true,
       revisitDate: text(input.revisitDate, current.revisitDate),
       prescriptionDocumentIds: current.prescriptionDocumentIds,
       updatedBy: context.actorId,
@@ -4003,19 +4054,29 @@ export class CoreService {
       clinical.prescriptionDocumentIds = Array.from(ids);
     }
     visit.clinical = clinical;
-    // Chief complaints stay mirrored on the intake field so older list views keep working.
-    if (clinical.chiefComplaints) {
-      visit.chiefComplaint = clinical.chiefComplaints;
+
+    // Coded diagnosis lives on Visit.diagnosis (already merges into the record).
+    if (input.diagnosis !== undefined) {
+      const diagnosis = this.sanitizeConditions(input.diagnosis);
+      visit.diagnosis = diagnosis.length > 0 ? diagnosis : undefined;
+    }
+    // Diagnosis + pre-existing comorbidities become the patient's problem list so
+    // campaigns can segment by ICD-10 (conditionCodes). Complaints are NOT merged.
+    const toMerge = [...(visit.diagnosis ?? []), ...(clinical.preExistingCodes ?? [])];
+    if (toMerge.length > 0) {
+      await this.mergeClinicalIntake(context, visit.patientId, toMerge, []);
+    }
+    // Keep a readable chief-complaint string on the visit for list views.
+    const complaintText =
+      clinical.chiefComplaints ?? clinical.chiefComplaintCodes?.map((c) => c.label).join(", ");
+    if (complaintText) {
+      visit.chiefComplaint = complaintText;
     }
 
     const complete = input.complete !== false && visit.status !== "completed";
     if (complete) {
-      visit.disposition = visit.disposition ?? {
-        outcome: clinical.revisitAdvised
-          ? "follow_up"
-          : clinical.adviseProcedureAdmission
-            ? "advised_surgery"
-            : "prescribed",
+      visit.disposition = {
+        outcome: legacyDispositionForOutcome(outcome, clinical),
         ...(clinical.revisitDate ? { nextActionDate: clinical.revisitDate } : {}),
         ...(clinical.diagnosisText ? { notes: clinical.diagnosisText } : {})
       };
@@ -4030,7 +4091,7 @@ export class CoreService {
     await this.audit(context, "visit.update", "visit", visit.id, visit.patientId, {
       clinical: true,
       completed: visit.status === "completed",
-      revisitAdvised: clinical.revisitAdvised ?? false
+      outcome: clinical.outcome ?? null
     });
     return this.visitView(context, visit);
   }
@@ -6231,8 +6292,8 @@ export class CoreService {
   // ---- Clinical history (ICD-10 conditions) ---------------------------------
 
   /** Static, curated ophthalmology ICD-10 condition catalog for the UI picker. */
-  listConditionCatalog() {
-    return OPHTHALMOLOGY_CONDITION_CATALOG;
+  listConditionCatalog(query?: string) {
+    return searchConditionCatalog(query ?? "", 100);
   }
 
   /** Returns the patient's clinical record, or an empty shell if none exists yet. */
@@ -8386,11 +8447,19 @@ export class CoreService {
     const patientStages = sanitizeStringArray(raw.patientStages);
     const conditionCodes = sanitizeStringArray(raw.conditionCodes);
     const tags = sanitizeStringArray(raw.tags);
+    const visitOutcomes = sanitizeStringArray(raw.visitOutcomes)?.filter(validVisitOutcome) as
+      | VisitOutcome[]
+      | undefined;
     if (leadStages) audience.leadStages = leadStages;
     if (leadSources) audience.leadSources = leadSources;
     if (patientStages) audience.patientStages = patientStages;
     if (conditionCodes) audience.conditionCodes = conditionCodes;
     if (tags) audience.tags = tags;
+    if (visitOutcomes && visitOutcomes.length > 0) {
+      audience.visitOutcomes = visitOutcomes;
+      const days = Number((raw as Record<string, unknown>).visitWithinDays);
+      audience.visitWithinDays = Number.isFinite(days) && days > 0 ? Math.floor(days) : 90;
+    }
     return audience;
   }
 
@@ -8428,6 +8497,11 @@ export class CoreService {
       const patientStages = audience.patientStages;
       const tags = audience.tags;
       const conditionCodes = audience.conditionCodes;
+      const visitOutcomes = audience.visitOutcomes;
+      const outcomeCutoff =
+        visitOutcomes && visitOutcomes.length > 0
+          ? Date.now() - (audience.visitWithinDays ?? 90) * 86_400_000
+          : undefined;
       for (const patient of this.data.patients.filter((entry) => entry.tenantId === context.tenantId)) {
         if (patientStages && !patientStages.includes(this.patientLifecycle(context, patient.id).stage)) continue;
         if (tags && !tags.some((tag) => patient.tags.includes(tag))) continue;
@@ -8437,6 +8511,18 @@ export class CoreService {
           );
           const codes = record?.conditions.map((condition) => condition.icd10Code) ?? [];
           if (!conditionCodes.some((code) => codes.includes(code))) continue;
+        }
+        // Retargeting: patient had an OPD visit with one of these outcomes recently.
+        if (outcomeCutoff !== undefined) {
+          const hit = this.data.visits.some(
+            (visit) =>
+              visit.tenantId === context.tenantId &&
+              visit.patientId === patient.id &&
+              visit.clinical?.outcome !== undefined &&
+              visitOutcomes!.includes(visit.clinical.outcome) &&
+              new Date(visit.registeredAt).getTime() >= outcomeCutoff
+          );
+          if (!hit) continue;
         }
         if (!patient.primaryPhone || !patient.primaryPhone.trim()) continue;
         push({ name: patient.displayName, phone: patient.primaryPhone, kind: "patient", id: patient.id });

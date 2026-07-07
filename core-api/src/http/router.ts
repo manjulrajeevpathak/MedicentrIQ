@@ -295,7 +295,9 @@ const createRoutes = (service: CoreService): Route[] => [
   ),
 
   // Clinical history (ICD-10 conditions) per patient.
-  route("GET", "/clinical/conditions", "clinical:read", () => service.listConditionCatalog()),
+  route("GET", "/clinical/conditions", "clinical:read", ({ query }) =>
+    service.listConditionCatalog(query.get("q") ?? undefined)
+  ),
   route("GET", "/patients/:patientId/clinical", "clinical:read", ({ auth, params }) =>
     service.getClinicalRecord(auth, params.patientId)
   ),

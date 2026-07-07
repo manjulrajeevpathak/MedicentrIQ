@@ -95,6 +95,39 @@ describe("campaigns contract", () => {
     assert.ok(body.data.sample.every((r) => r.kind === "lead"));
   });
 
+  it("targets patients by recent OPD visit outcome (retargeting)", async () => {
+    // Register + complete a visit for patient_demo_001 with outcome surgery_advised.
+    const create = await authed("/visits", {
+      method: "POST",
+      body: JSON.stringify({ patientId: "patient_demo_001", chiefComplaint: "Cataract" })
+    });
+    const visitId = String(((await create.json()) as { data: JsonObject }).data.id);
+    await authed(`/visits/${visitId}/clinical`, {
+      method: "PATCH",
+      body: JSON.stringify({ outcome: "surgery_advised" })
+    });
+
+    // A campaign audience of "surgery advised in the last 30 days" includes them.
+    const hit = await authed("/campaigns/preview-audience", {
+      method: "POST",
+      body: JSON.stringify({
+        audience: { include: "patients", visitOutcomes: ["surgery_advised"], visitWithinDays: 30 }
+      })
+    });
+    const hitBody = (await hit.json()) as { data: { size: number } };
+    assert.ok(hitBody.data.size >= 1);
+
+    // A different outcome excludes them.
+    const miss = await authed("/campaigns/preview-audience", {
+      method: "POST",
+      body: JSON.stringify({
+        audience: { include: "patients", visitOutcomes: ["discharged"], visitWithinDays: 30 }
+      })
+    });
+    const missBody = (await miss.json()) as { data: { size: number } };
+    assert.equal(missBody.data.size, 0);
+  });
+
   it("previews a patient audience filtered by tag", async () => {
     const res = await authed("/campaigns/preview-audience", {
       method: "POST",

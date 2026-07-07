@@ -107,7 +107,7 @@ export const createEmailService = (): EmailService => {
 export const otpEmail = (to: string, code: string): EmailMessage => ({
   to,
   kind: "otp",
-  subject: "Your HealthOS login code",
+  subject: "Your HealthFlow login code",
   text: `Your one-time login code is ${code}. It expires in 10 minutes. If you did not try to sign in, ignore this email.`,
   meta: { code }
 });
@@ -115,7 +115,7 @@ export const otpEmail = (to: string, code: string): EmailMessage => ({
 export const passwordResetEmail = (to: string, link: string): EmailMessage => ({
   to,
   kind: "password_reset",
-  subject: "Reset your HealthOS password",
+  subject: "Reset your HealthFlow password",
   text: `Reset your password using this link (valid 30 minutes): ${link}. If you did not request this, ignore this email.`,
   meta: { link }
 });
@@ -123,7 +123,7 @@ export const passwordResetEmail = (to: string, link: string): EmailMessage => ({
 export const inviteEmail = (to: string, link: string, tempPassword: string): EmailMessage => ({
   to,
   kind: "invite",
-  subject: "Your HealthOS account is ready",
+  subject: "Your HealthFlow account is ready",
   text: `An account has been created for you. Sign in at ${link} with the temporary password "${tempPassword}". You'll be asked to set your own password on first login.`,
   meta: { link, tempPassword }
 });

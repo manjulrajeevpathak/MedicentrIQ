@@ -652,6 +652,10 @@ export type CampaignAudience = {
   patientStages?: string[];
   /** Patients having any of these ICD-10 codes (from clinicalRecords). */
   conditionCodes?: string[];
+  /** Patients whose recent OPD visit had one of these outcomes (retargeting). */
+  visitOutcomes?: VisitOutcome[];
+  /** Look-back window (days) for `visitOutcomes`. Defaults to 90. */
+  visitWithinDays?: number;
   /** Patients having any of these tags. */
   tags?: string[];
 };
@@ -1121,18 +1125,42 @@ export type VisitDisposition = {
 };
 
 /**
- * Structured clinical observations captured after the consult — plain text by
- * design: staff/doctors type (or dictate) fast, and prescription processing will
- * later auto-fill these from the uploaded document. Saving this block completes
- * the visit (no separate "start consult" step).
+ * Root-level OPD outcome — the single explicit disposition the front office and
+ * campaigns segment on ("re-target everyone advised surgery in the last 30 days").
+ * Distinct from a diagnosis: two cataract patients can have different outcomes.
+ */
+export type VisitOutcome =
+  | "medicine_advised"
+  | "surgery_advised"
+  | "revisit_advised"
+  | "diagnostics_advised"
+  | "referred"
+  | "admitted"
+  | "discharged"
+  | "observation";
+
+/**
+ * Structured clinical observations captured after the consult. The medical fields
+ * are ICD-10-coded (searchable chips) so patients are segmentable by condition,
+ * each with an optional free-text note; prescription processing will later
+ * auto-fill these from the uploaded document. Saving this block completes the
+ * visit (no separate "start consult" step).
  */
 export type VisitClinical = {
+  /** ICD-10-coded presenting complaints (symptoms). */
+  chiefComplaintCodes?: ClinicalCondition[];
+  /** Free-text complaint notes (nuance not in a code). */
   chiefComplaints?: string;
+  /** ICD-10-coded comorbidities (merged into the patient problem list). */
+  preExistingCodes?: ClinicalCondition[];
   preExistingDiseases?: string;
+  /** Free-text diagnosis note; the CODED diagnosis lives on Visit.diagnosis. */
   diagnosisText?: string;
   advisePharmacy?: string;
   adviseDiagnostics?: string;
   adviseProcedureAdmission?: string;
+  /** The root outcome used for retargeting. Falls back to derived on older rows. */
+  outcome?: VisitOutcome;
   revisitAdvised?: boolean;
   /** ISO date (YYYY-MM-DD) the patient was asked to return. */
   revisitDate?: string;
