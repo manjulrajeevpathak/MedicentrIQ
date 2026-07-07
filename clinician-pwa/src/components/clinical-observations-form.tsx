@@ -3,7 +3,8 @@
 import { useActionState, useState } from "react";
 import { CheckCircle2, Stethoscope } from "lucide-react";
 import { saveClinicalAction, type ActionResult } from "@/app/actions";
-import type { OpdVisit } from "@/lib/types";
+import { ConditionChips } from "@/components/condition-chips";
+import { VISIT_OUTCOME_OPTIONS, type OpdVisit } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
 const inputCls =
@@ -48,31 +49,54 @@ export function ClinicalObservationsForm({
           <input type="hidden" name="visitId" value={visit.id} />
 
           <div>
-            <label htmlFor="co-chief" className={labelCls}>Chief Complaints</label>
+            <label htmlFor="co-outcome" className={labelCls}>Outcome</label>
+            <select
+              id="co-outcome"
+              name="outcome"
+              defaultValue={visit.clinical?.outcome ?? ""}
+              className={inputCls}
+            >
+              <option value="">Select an outcome…</option>
+              {VISIT_OUTCOME_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-ink-muted">Used to re-engage the patient later (e.g. surgery advised).</p>
+          </div>
+
+          <ConditionChips
+            name="chiefComplaintCodes"
+            label="Chief Complaints"
+            value={visit.clinical?.chiefComplaintCodes}
+            placeholder="Search symptom / ICD-10…"
+          />
+          <div>
+            <label htmlFor="co-chief" className={labelCls}>Chief complaint notes</label>
             <textarea
               id="co-chief"
               name="chiefComplaints"
               rows={2}
-              defaultValue={visit.clinical?.chiefComplaints ?? visit.chiefComplaint ?? ""}
+              defaultValue={visit.clinical?.chiefComplaints ?? ""}
               placeholder="e.g. Blurred vision in right eye, 2 weeks"
               className={inputCls}
             />
           </div>
 
-          <div>
-            <label htmlFor="co-pre" className={labelCls}>Pre-existing Diseases</label>
-            <textarea
-              id="co-pre"
-              name="preExistingDiseases"
-              rows={2}
-              defaultValue={visit.clinical?.preExistingDiseases ?? ""}
-              placeholder="e.g. Type 2 diabetes (8 years), hypertension"
-              className={inputCls}
-            />
-          </div>
+          <ConditionChips
+            name="preExistingCodes"
+            label="Pre-existing Diseases"
+            value={visit.clinical?.preExistingCodes}
+            placeholder="Search comorbidity / ICD-10…"
+          />
 
+          <ConditionChips
+            name="diagnosis"
+            label="Diagnosis"
+            value={visit.diagnosis}
+            placeholder="Search diagnosis / ICD-10…"
+          />
           <div>
-            <label htmlFor="co-dx" className={labelCls}>Diagnosis</label>
+            <label htmlFor="co-dx" className={labelCls}>Diagnosis notes</label>
             <textarea
               id="co-dx"
               name="diagnosisText"

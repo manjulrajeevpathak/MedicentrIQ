@@ -53,14 +53,45 @@ export type ConditionOption = {
   label: string;
 };
 
+/** An ICD-10-coded condition as core-api stores it (chief complaints, diagnosis…). */
+export type CodedCondition = {
+  icd10Code: string;
+  label: string;
+};
+
+/** Root OPD outcome — the disposition campaigns retarget on. */
+export type VisitOutcome =
+  | "medicine_advised"
+  | "surgery_advised"
+  | "revisit_advised"
+  | "diagnostics_advised"
+  | "referred"
+  | "admitted"
+  | "discharged"
+  | "observation";
+
+export const VISIT_OUTCOME_OPTIONS: { value: VisitOutcome; label: string }[] = [
+  { value: "medicine_advised", label: "Medicine advised" },
+  { value: "surgery_advised", label: "Surgery advised" },
+  { value: "revisit_advised", label: "Revisit advised" },
+  { value: "diagnostics_advised", label: "Diagnostics advised" },
+  { value: "referred", label: "Referred out" },
+  { value: "admitted", label: "Admitted" },
+  { value: "discharged", label: "Discharged" },
+  { value: "observation", label: "Watchful observation" }
+];
+
 /** Structured clinical observations on an OPD visit (mirrors core-api). */
 export type VisitClinical = {
+  chiefComplaintCodes?: CodedCondition[];
   chiefComplaints?: string;
+  preExistingCodes?: CodedCondition[];
   preExistingDiseases?: string;
   diagnosisText?: string;
   advisePharmacy?: string;
   adviseDiagnostics?: string;
   adviseProcedureAdmission?: string;
+  outcome?: VisitOutcome;
   revisitAdvised?: boolean;
   revisitDate?: string;
   prescriptionDocumentIds?: string[];
@@ -74,6 +105,8 @@ export type OpdVisit = {
   chiefComplaint?: string;
   doctorName?: string;
   registeredAt: string;
+  /** Coded diagnosis (ClinicalCondition[]). */
+  diagnosis?: CodedCondition[];
   clinical?: VisitClinical;
 };
 

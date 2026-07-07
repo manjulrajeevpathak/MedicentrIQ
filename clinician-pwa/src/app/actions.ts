@@ -211,6 +211,24 @@ export async function uploadDocumentAction(_prev: ActionResult, formData: FormDa
   return { ok: true };
 }
 
+/** ICD-10 catalog search for the clinical chip pickers (typeahead). */
+export async function searchConditionsAction(
+  query: string
+): Promise<{ icd10Code: string; label: string; category?: string }[]> {
+  const qs = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
+  const result = await coreApi<unknown>(`/clinical/conditions${qs}`);
+  if (!result.ok) return [];
+  const arr = Array.isArray(result.data)
+    ? result.data
+    : ((result.data as { items?: unknown[]; conditions?: unknown[]; data?: unknown[] })?.items ??
+        (result.data as { conditions?: unknown[] })?.conditions ??
+        (result.data as { data?: unknown[] })?.data ??
+        []);
+  return (arr as Record<string, unknown>[])
+    .filter((c) => typeof c.icd10Code === "string" && typeof c.label === "string")
+    .map((c) => ({ icd10Code: c.icd10Code as string, label: c.label as string, category: c.category as string | undefined }));
+}
+
 /** Resolve a download URL for a document, then hand it back to the client. */
 export async function getDocumentUrlAction(documentId: string): Promise<{ url?: string; error?: string }> {
   const result = await coreApi<{ downloadUrl?: string; url?: string }>(
@@ -268,15 +286,34 @@ export async function saveClinicalAction(_prev: ActionResult, formData: FormData
     if (register.data?.id) prescriptionDocumentIds.push(register.data.id);
   }
 
+  // Coded ICD-10 chips arrive as JSON strings from hidden inputs.
+  const codes = (name: string): { icd10Code: string; label: string }[] => {
+    const raw = String(formData.get(name) ?? "").trim();
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter((c) => c && typeof c.icd10Code === "string" && typeof c.label === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  };
+  const outcome = String(formData.get("outcome") ?? "").trim() || undefined;
+
   const result = await coreApi(`/visits/${encodeURIComponent(visitId)}/clinical`, {
     method: "PATCH",
     body: {
+      chiefComplaintCodes: codes("chiefComplaintCodes"),
       chiefComplaints: text("chiefComplaints"),
+      preExistingCodes: codes("preExistingCodes"),
       preExistingDiseases: text("preExistingDiseases"),
+      diagnosis: codes("diagnosis"),
       diagnosisText: text("diagnosisText"),
       advisePharmacy: text("advisePharmacy"),
       adviseDiagnostics: text("adviseDiagnostics"),
       adviseProcedureAdmission: text("adviseProcedureAdmission"),
+      ...(outcome ? { outcome } : {}),
       revisitAdvised: formData.get("revisitAdvised") === "on",
       revisitDate: text("revisitDate"),
       ...(prescriptionDocumentIds.length > 0 ? { prescriptionDocumentIds } : {})
