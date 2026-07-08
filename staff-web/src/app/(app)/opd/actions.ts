@@ -214,6 +214,28 @@ export async function searchProceduresAction(q: string): Promise<ActionState<Pro
   return { ok: true, data: result.data };
 }
 
+// ---- AI note → ICD-10 coding -----------------------------------------------
+
+/**
+ * Map a field's free-text notes onto ICD-10 codes with AI (POST
+ * /clinical/code-conditions), catalog-normalised. `kind` biases the model toward
+ * symptoms / comorbidities / diagnoses. Powers the per-field "Auto-code from
+ * notes" action — the doctor reviews the chips before saving. Nothing is saved.
+ */
+export async function codeConditionsAction(
+  text: string,
+  kind?: "symptom" | "comorbidity" | "diagnosis"
+): Promise<ActionState<IntakeCondition[]>> {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, data: [] };
+  const result = await coreApi<{ conditions: IntakeCondition[] }>("/clinical/code-conditions", {
+    method: "POST",
+    body: { text: trimmed, ...(kind ? { kind } : {}) }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not code the notes." };
+  return { ok: true, data: result.data?.conditions ?? [] };
+}
+
 // ---- AI prescription extraction --------------------------------------------
 
 /**

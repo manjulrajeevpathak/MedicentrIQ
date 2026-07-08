@@ -242,6 +242,28 @@ export async function searchProceduresAction(
     .map((p) => ({ icd10Code: p.code as string, label: p.label as string, category: p.category as string | undefined }));
 }
 
+/**
+ * Map a field's free-text notes → ICD-10 codes with AI (POST
+ * /clinical/code-conditions), catalog-normalised. `kind` biases the model toward
+ * symptoms / comorbidities / diagnoses. Powers the "Auto-code from notes" action;
+ * the doctor reviews the chips before saving. Returns [] on any failure.
+ */
+export async function codeConditionsAction(
+  text: string,
+  kind?: "symptom" | "comorbidity" | "diagnosis"
+): Promise<{ icd10Code: string; label: string }[]> {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const result = await coreApi<unknown>("/clinical/code-conditions", {
+    method: "POST",
+    body: { text: trimmed, ...(kind ? { kind } : {}) }
+  });
+  if (!result.ok) return [];
+  return asArrayData(result.data)
+    .filter((c) => typeof c.icd10Code === "string" && typeof c.label === "string")
+    .map((c) => ({ icd10Code: c.icd10Code as string, label: c.label as string }));
+}
+
 /** Upload a prescription immediately (before extraction) → returns the document id. */
 export async function uploadPrescriptionAction(
   _prev: { ok?: boolean; error?: string; doc?: { id: string; name: string } },

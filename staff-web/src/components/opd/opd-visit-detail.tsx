@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { ConditionPicker } from "@/components/opd/condition-picker";
 import { ProcedurePicker } from "@/components/opd/procedure-picker";
 import {
+  codeConditionsAction,
   extractPrescriptionAction,
   getDocumentUrlAction,
   updateVisitClinicalAction,
@@ -174,6 +175,65 @@ function Section({
 /** Readable inline field label (not micro-uppercase). */
 function NoteLabel({ children }: { children: ReactNode }) {
   return <p className="mb-1.5 text-xs font-medium text-ink-soft">{children}</p>;
+}
+
+/**
+ * "Accept the notes → auto-fill ICD-10." Sends the field's free-text note to the
+ * AI coder and merges the returned codes into that field's chips (de-duped). Sits
+ * under each coded section's notes; disabled when the note is empty or busy.
+ */
+function CodeFromNotesButton({
+  text,
+  kind,
+  value,
+  onChange,
+  disabled
+}: {
+  text: string;
+  kind: "symptom" | "comorbidity" | "diagnosis";
+  value: IntakeCondition[];
+  onChange: (next: IntakeCondition[]) => void;
+  disabled?: boolean;
+}) {
+  const { toast } = useToast();
+  const [coding, startCoding] = useTransition();
+  const empty = text.trim().length === 0;
+
+  function run() {
+    startCoding(async () => {
+      const result = await codeConditionsAction(text, kind);
+      if (!result.ok) {
+        toast(result.error ?? "Could not code the notes.", "error");
+        return;
+      }
+      const suggestions = result.data ?? [];
+      if (suggestions.length === 0) {
+        toast("No ICD-10 match found in the notes.", "info");
+        return;
+      }
+      const existing = new Set(value.map((c) => c.icd10Code));
+      const added = suggestions.filter((c) => !existing.has(c.icd10Code));
+      if (added.length === 0) {
+        toast("Those codes are already added.", "info");
+        return;
+      }
+      onChange([...value, ...added]);
+      toast(`Added ${added.length} ICD-10 code${added.length === 1 ? "" : "s"} — review before saving.`, "success");
+    });
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={disabled || coding || empty}
+      title={empty ? "Add a note first, then code it" : "Read the note above and add matching ICD-10 codes"}
+      className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1 text-xs font-medium text-ink-soft transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {coding ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5 text-brand-600" />}
+      {coding ? "Coding…" : "Auto-code from notes"}
+    </button>
+  );
 }
 
 function InlineClinicalObservations({ visit }: { visit: Visit }) {
@@ -503,6 +563,13 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
               placeholder="Free-text note — what brings the patient in…"
               className={textareaClass}
             />
+            <CodeFromNotesButton
+              text={chiefComplaints}
+              kind="symptom"
+              value={chiefComplaintCodes}
+              onChange={setChiefComplaintCodes}
+              disabled={busy}
+            />
           </div>
         </Section>
 
@@ -528,6 +595,13 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
               placeholder="Free-text note — diabetes, hypertension, prior surgeries…"
               className={textareaClass}
             />
+            <CodeFromNotesButton
+              text={preExistingDiseases}
+              kind="comorbidity"
+              value={preExistingCodes}
+              onChange={setPreExistingCodes}
+              disabled={busy}
+            />
           </div>
         </Section>
 
@@ -552,6 +626,13 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
               rows={2}
               placeholder="Free-text note — clinical diagnosis…"
               className={textareaClass}
+            />
+            <CodeFromNotesButton
+              text={diagnosisText}
+              kind="diagnosis"
+              value={diagnosisCodes}
+              onChange={setDiagnosisCodes}
+              disabled={busy}
             />
           </div>
         </Section>

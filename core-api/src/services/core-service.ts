@@ -29,11 +29,12 @@ import { placeCall } from "../integrations/channels/telephony.js";
 import {
   assistantAvailable,
   extractFromDocument,
+  extractJsonFromText,
   generateAssistantReply,
   type AssistantTurn
 } from "../integrations/assistant-llm.js";
 import { createStorageService, type StorageService } from "../integrations/storage.js";
-import { searchConditionCatalog } from "../domain/clinical-catalog.js";
+import { lookupCondition, searchConditionCatalog } from "../domain/clinical-catalog.js";
 import { searchProcedureCatalog } from "../domain/procedure-catalog.js";
 import type {
   AccessRequest,
@@ -6375,6 +6376,67 @@ export class CoreService {
 
   listConditionCatalog(query?: string) {
     return searchConditionCatalog(query ?? "", 100);
+  }
+
+  /**
+   * Map free-text clinical notes (as read from a prescription) onto ICD-10-CM
+   * codes with Claude, then normalise each against the catalog (canonical label
+   * when the code is known). Powers the "Auto-code from notes" action on the OPD
+   * form — the doctor reviews the chips before saving. Best-effort: unreadable
+   * text → empty list; requires ANTHROPIC_API_KEY (else 503).
+   */
+  async codeConditions(input: Record<string, unknown>) {
+    if (!assistantAvailable()) {
+      throw new ApiError(503, "AI coding is not configured on this platform.");
+    }
+    const text = typeof input.text === "string" ? input.text.trim() : "";
+    if (!text) return { conditions: [] as { icd10Code: string; label: string }[] };
+
+    const kind =
+      input.kind === "symptom" || input.kind === "comorbidity" || input.kind === "diagnosis"
+        ? input.kind
+        : undefined;
+    const kindHint =
+      kind === "symptom"
+        ? "presenting symptoms / chief complaints"
+        : kind === "comorbidity"
+          ? "pre-existing diseases / comorbidities"
+          : kind === "diagnosis"
+            ? "clinical diagnoses"
+            : "clinical conditions";
+
+    const prompt = [
+      `Map the following ${kindHint}, written by a clinician, to ICD-10-CM codes.`,
+      "Return ONLY a JSON object: {\"conditions\": [{\"icd10Code\": string, \"label\": string}]}.",
+      "Use valid ICD-10-CM codes (e.g. H25.9, E11.9, I10). One entry per distinct condition.",
+      "Do NOT invent conditions that are not in the text. If nothing is codeable, return an empty array.",
+      "",
+      "Text:",
+      text
+    ].join("\n");
+
+    const result = await extractJsonFromText(prompt);
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    const raw = isPlainRecord(result.json) ? result.json : {};
+    const rawList = Array.isArray(raw.conditions) ? raw.conditions : [];
+    const conditions: { icd10Code: string; label: string }[] = [];
+    const seen = new Set<string>();
+    for (const item of rawList) {
+      if (!isPlainRecord(item)) continue;
+      const code = typeof item.icd10Code === "string" ? item.icd10Code.trim().toUpperCase() : "";
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      // Prefer the catalog's canonical entry; fall back to the model's label.
+      const canonical = lookupCondition(code);
+      const modelLabel = typeof item.label === "string" ? item.label.trim() : "";
+      conditions.push({
+        icd10Code: canonical?.icd10Code ?? code,
+        label: canonical?.label || modelLabel || code
+      });
+    }
+    return { conditions };
   }
 
   /** Returns the patient's clinical record, or an empty shell if none exists yet. */

@@ -301,6 +301,10 @@ const createRoutes = (service: CoreService): Route[] => [
   route("GET", "/clinical/procedures", "clinical:read", ({ query }) =>
     service.listProcedureCatalog(query.get("q") ?? undefined)
   ),
+  // Map free-text notes → ICD-10 codes (AI, catalog-normalised) for the OPD form.
+  route("POST", "/clinical/code-conditions", "clinical:read", ({ body }) =>
+    service.codeConditions(toRecord(body))
+  ),
   route("GET", "/patients/:patientId/clinical", "clinical:read", ({ auth, params }) =>
     service.getClinicalRecord(auth, params.patientId)
   ),

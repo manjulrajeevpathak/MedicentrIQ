@@ -110,6 +110,18 @@ export const conditionCatalogSize = INDEX.length;
 
 const strip = ({ common, haystack, ...entry }: IndexedEntry): ConditionCatalogEntry => entry;
 
+const BY_CODE = new Map(INDEX.map((entry) => [entry.icd10Code.toUpperCase(), entry]));
+
+/**
+ * Exact ICD-10 code lookup (case-insensitive). Used to normalise AI-suggested
+ * codes against the catalog — canonical label when the code is known, so a
+ * `H25.9` guess carries the official "Age-related cataract, unspecified" label.
+ */
+export const lookupCondition = (code: string): ConditionCatalogEntry | undefined => {
+  const entry = BY_CODE.get(code.trim().toUpperCase());
+  return entry ? strip(entry) : undefined;
+};
+
 /**
  * Case-insensitive search over code + label across the FULL ICD-10-CM set.
  * Ranking: exact code, then curated-common, then code prefix, then everything else.

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, FileUp, RefreshCw, Sparkles, Stethoscope } from "lucide-react";
 import {
+  codeConditionsAction,
   extractPrescriptionAction,
   saveClinicalObjectAction,
   searchProceduresAction
@@ -41,6 +42,60 @@ function Section({
       </div>
       <div className="flex flex-col gap-3">{children}</div>
     </section>
+  );
+}
+
+/**
+ * "Accept the notes → auto-fill ICD-10." Sends the field's free-text note to the
+ * AI coder and merges the returned codes into the chips (de-duped). Sits under
+ * each coded field; disabled when the note is empty or the form is busy.
+ */
+function CodeFromNotes({
+  text,
+  kind,
+  value,
+  onChange,
+  onNotice,
+  disabled
+}: {
+  text: string;
+  kind: "symptom" | "comorbidity" | "diagnosis";
+  value: CodedCondition[];
+  onChange: (next: CodedCondition[]) => void;
+  onNotice: (message: string | null) => void;
+  disabled?: boolean;
+}) {
+  const [coding, startCoding] = useTransition();
+  const empty = text.trim().length === 0;
+
+  function run() {
+    onNotice(null);
+    startCoding(async () => {
+      const suggestions = await codeConditionsAction(text, kind);
+      if (suggestions.length === 0) {
+        onNotice("No ICD-10 match found in the notes.");
+        return;
+      }
+      const existing = new Set(value.map((c) => c.icd10Code));
+      const added = suggestions.filter((c) => !existing.has(c.icd10Code));
+      if (added.length === 0) {
+        onNotice("Those codes are already added.");
+        return;
+      }
+      onChange([...value, ...added]);
+    });
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={disabled || coding || empty}
+      className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink-soft disabled:opacity-50"
+    >
+      <Sparkles className={`h-3.5 w-3.5 text-brand-600 ${coding ? "animate-pulse" : ""}`} />
+      {coding ? "Coding…" : "Auto-code from notes"}
+    </button>
   );
 }
 
@@ -232,18 +287,21 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
       <Section n={2} title="Chief Complaints" hint="Presenting symptoms.">
         <ConditionChips label="ICD-10 / symptom" value={chiefCodes} onChange={setChiefCodes} placeholder="Search symptom / ICD-10…" />
         <textarea rows={2} value={chiefText} onChange={(e) => setChiefText(e.target.value)} placeholder="Notes…" className={inputCls} />
+        <CodeFromNotes text={chiefText} kind="symptom" value={chiefCodes} onChange={setChiefCodes} onNotice={setError} disabled={busy} />
       </Section>
 
       {/* 3. Pre-existing Diseases */}
       <Section n={3} title="Pre-existing Diseases" hint="Comorbidities / history.">
         <ConditionChips label="ICD-10 / comorbidity" value={preCodes} onChange={setPreCodes} placeholder="Search comorbidity / ICD-10…" />
         <textarea rows={2} value={preText} onChange={(e) => setPreText(e.target.value)} placeholder="Notes…" className={inputCls} />
+        <CodeFromNotes text={preText} kind="comorbidity" value={preCodes} onChange={setPreCodes} onNotice={setError} disabled={busy} />
       </Section>
 
       {/* 4. Diagnosis */}
       <Section n={4} title="Diagnosis" hint="Working / final diagnosis.">
         <ConditionChips label="ICD-10 / diagnosis" value={dxCodes} onChange={setDxCodes} placeholder="Search diagnosis / ICD-10…" />
         <textarea rows={2} value={dxText} onChange={(e) => setDxText(e.target.value)} placeholder="Notes…" className={inputCls} />
+        <CodeFromNotes text={dxText} kind="diagnosis" value={dxCodes} onChange={setDxCodes} onNotice={setError} disabled={busy} />
       </Section>
 
       {/* 5. Advise */}
