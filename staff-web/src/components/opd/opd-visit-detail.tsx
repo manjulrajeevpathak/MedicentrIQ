@@ -13,6 +13,7 @@ import {
   Loader2,
   Phone,
   Pill,
+  RefreshCw,
   Sparkles,
   Stethoscope,
   Upload,
@@ -460,10 +461,24 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
             </Button>
           </div>
 
-          <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-ink-muted">
-            <Sparkles className="size-3 text-brand-600" />
-            On upload, AI reads the prescription and pre-fills the notes below for your review.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="inline-flex items-center gap-1.5 text-[11px] text-ink-muted">
+              <Sparkles className="size-3 text-brand-600" />
+              On upload, AI reads the prescription and pre-fills the notes below for your review.
+            </p>
+            {attachedCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => startExtract(() => runExtract())}
+                disabled={busy}
+                title="Read the latest prescription again and re-fill the notes below"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1 text-xs font-medium text-ink-soft transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {extracting ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                {extracting ? "Reading…" : "Re-read with AI"}
+              </button>
+            ) : null}
+          </div>
         </Section>
 
         {/* 2 — Chief Complaints */}

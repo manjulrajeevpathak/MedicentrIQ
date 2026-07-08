@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, FileUp, Sparkles, Stethoscope } from "lucide-react";
+import { CheckCircle2, FileUp, RefreshCw, Sparkles, Stethoscope } from "lucide-react";
 import {
   extractPrescriptionAction,
   saveClinicalObjectAction,
@@ -215,6 +215,17 @@ export function ClinicalObservationsForm({ patientId, visit }: { patientId: stri
             }}
           />
         </label>
+        {docs.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => startExtract(() => runExtract())}
+            disabled={busy}
+            className="flex items-center justify-center gap-2 rounded-xl border border-line-strong px-3 py-2 text-sm font-medium text-ink-soft disabled:opacity-50"
+          >
+            {extracting ? <Sparkles className="h-4 w-4 animate-pulse" /> : <RefreshCw className="h-4 w-4" />}
+            {extracting ? "Reading prescription…" : "Re-read with AI"}
+          </button>
+        ) : null}
       </Section>
 
       {/* 2. Chief Complaints */}
