@@ -320,12 +320,7 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
     window.open(result.data.url, "_blank", "noopener,noreferrer");
   }
 
-  function upload() {
-    const file = fileRef.current?.files?.[0];
-    if (!file) {
-      toast("Choose a prescription file (image or PDF) to upload.", "error");
-      return;
-    }
+  function uploadFile(file: File) {
     const fd = new FormData();
     fd.set("patientId", visit.patientId);
     fd.set("visitId", visit.id);
@@ -344,6 +339,16 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
       // Auto-read + pre-fill (its own transition → distinct "Reading…" state).
       startExtract(() => runExtract(docId));
     });
+  }
+
+  /** Button click: open the file picker if nothing is chosen, else upload it. */
+  function upload() {
+    const file = fileRef.current?.files?.[0];
+    if (!file) {
+      fileRef.current?.click();
+      return;
+    }
+    uploadFile(file);
   }
 
   /**
@@ -509,6 +514,11 @@ function InlineClinicalObservations({ visit }: { visit: Visit }) {
               type="file"
               accept="image/*,application/pdf,.pdf"
               aria-label="Prescription file"
+              disabled={busy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadFile(f);
+              }}
               className="flex-1 text-xs text-ink-soft file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-xs file:font-medium file:text-brand-700 hover:file:bg-brand-100"
             />
             <Button variant="secondary" onClick={upload} disabled={busy}>
