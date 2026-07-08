@@ -9,6 +9,7 @@ import { Input, Field } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/empty";
 import { useToast } from "@/components/ui/toast";
 import {
+  SLOT_CAPACITY_OPTIONS,
   SLOT_MINUTE_OPTIONS,
   WEEKDAYS,
   type BranchOption,
@@ -103,6 +104,7 @@ export function DoctorsWorkspace({ doctors, branches }: Props) {
                     <p className="mt-0.5 text-xs text-ink-muted">
                       {doctor.specialty ? `${doctor.specialty} · ` : ""}
                       {doctor.slotMinutes} min slots
+                      {(doctor.slotCapacity ?? 1) > 1 ? ` · ${doctor.slotCapacity} patients/slot` : ""}
                       {doctor.phone ? ` · ${doctor.phone}` : ""}
                     </p>
                     <p className="mt-1 text-[11px] text-ink-soft">
@@ -196,6 +198,7 @@ function AddDoctorForm({
     const specialty = String(fd.get("specialty") ?? "").trim();
     const phone = String(fd.get("phone") ?? "").trim();
     const slotMinutes = Number(fd.get("slotMinutes") ?? 20);
+    const slotCapacity = Number(fd.get("slotCapacity") ?? 1);
     const branchIds = fd.getAll("branchIds").map((b) => String(b));
 
     startTransition(async () => {
@@ -204,6 +207,7 @@ function AddDoctorForm({
         specialty: specialty || undefined,
         phone: phone || undefined,
         slotMinutes,
+        slotCapacity,
         branchIds
       });
       if (!result.ok) {
@@ -256,6 +260,21 @@ function AddDoctorForm({
               {SLOT_MINUTE_OPTIONS.map((m) => (
                 <option key={m} value={m}>
                   {m} minutes
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Patients / slot" htmlFor="dr-capacity">
+            <select
+              id="dr-capacity"
+              name="slotCapacity"
+              defaultValue={1}
+              disabled={pending}
+              className="h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            >
+              {SLOT_CAPACITY_OPTIONS.map((c) => (
+                <option key={c} value={c}>
+                  {c} {c === 1 ? "patient" : "patients"}
                 </option>
               ))}
             </select>
@@ -413,6 +432,7 @@ function ScheduleEditor({
   onSaved: () => void;
 }) {
   const [slotMinutes, setSlotMinutes] = useState(doctor.slotMinutes);
+  const [slotCapacity, setSlotCapacity] = useState(doctor.slotCapacity ?? 1);
   const [hours, setHours] = useState<WeeklyHours>(() => normalizeWeekly(doctor.weeklyHours));
   const [pending, startTransition] = useTransition();
 
@@ -465,7 +485,7 @@ function ScheduleEditor({
       if (windows.length) clean[String(index)] = windows;
     }
     startTransition(async () => {
-      const result = await setDoctorScheduleAction(doctor.id, slotMinutes, clean);
+      const result = await setDoctorScheduleAction(doctor.id, slotMinutes, clean, slotCapacity);
       if (!result.ok) {
         onToast(result.error ?? "Could not save the schedule.", "error");
         return;
@@ -481,20 +501,36 @@ function ScheduleEditor({
     <div className="mt-3 rounded-xl border border-line bg-surface-muted p-3">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold text-ink">Weekly schedule</p>
-        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-          Slot length
-          <select
-            value={slotMinutes}
-            onChange={(e) => setSlotMinutes(Number(e.target.value))}
-            className="h-8 rounded-lg border border-line-strong bg-surface px-2 text-xs text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-          >
-            {SLOT_MINUTE_OPTIONS.map((m) => (
-              <option key={m} value={m}>
-                {m} min
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+            Slot length
+            <select
+              value={slotMinutes}
+              onChange={(e) => setSlotMinutes(Number(e.target.value))}
+              className="h-8 rounded-lg border border-line-strong bg-surface px-2 text-xs text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            >
+              {SLOT_MINUTE_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {m} min
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+            Patients / slot
+            <select
+              value={slotCapacity}
+              onChange={(e) => setSlotCapacity(Number(e.target.value))}
+              className="h-8 rounded-lg border border-line-strong bg-surface px-2 text-xs text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            >
+              {SLOT_CAPACITY_OPTIONS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="space-y-2">

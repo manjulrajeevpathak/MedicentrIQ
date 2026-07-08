@@ -57,6 +57,7 @@ import type {
   ClinicalCondition,
   ClinicalRecord,
   Doctor,
+  DoctorSlot,
   DoctorWorkingWindow,
   DocumentMetadata,
   DocumentType,
@@ -697,6 +698,19 @@ const sanitizeSlotMinutes = (value: unknown): number => {
   }
   return Math.min(Math.max(Math.round(minutes), 5), 240);
 };
+
+/** Patients a doctor can see per slot (token/parallel OPD model). Default 1, capped at 50. */
+const sanitizeSlotCapacity = (value: unknown): number => {
+  const capacity = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(capacity) || capacity <= 0) {
+    return 1;
+  }
+  return Math.min(Math.max(Math.round(capacity), 1), 50);
+};
+
+/** Read a doctor's per-slot capacity, defaulting legacy records (no field) to 1. */
+const doctorSlotCapacity = (doctor: Doctor): number =>
+  doctor.slotCapacity && doctor.slotCapacity > 0 ? doctor.slotCapacity : 1;
 
 /** "HH:MM" → minutes-since-midnight, or null if malformed/out of range. */
 const parseHhMm = (value: unknown): number | null => {
@@ -5448,6 +5462,7 @@ export class CoreService {
       branchIds,
       phone: typeof input.phone === "string" ? input.phone : undefined,
       slotMinutes: sanitizeSlotMinutes(input.slotMinutes),
+      slotCapacity: sanitizeSlotCapacity(input.slotCapacity),
       weeklyHours: sanitizeWeeklyHours(input.weeklyHours),
       status: input.status === "inactive" ? "inactive" : "active",
       userId: typeof input.userId === "string" ? input.userId : undefined,
@@ -5496,6 +5511,9 @@ export class CoreService {
     if (input.slotMinutes !== undefined) {
       doctor.slotMinutes = sanitizeSlotMinutes(input.slotMinutes);
     }
+    if (input.slotCapacity !== undefined) {
+      doctor.slotCapacity = sanitizeSlotCapacity(input.slotCapacity);
+    }
     if (input.weeklyHours !== undefined) {
       doctor.weeklyHours = sanitizeWeeklyHours(input.weeklyHours);
     }
@@ -5529,44 +5547,59 @@ export class CoreService {
     if (input.slotMinutes !== undefined) {
       doctor.slotMinutes = sanitizeSlotMinutes(input.slotMinutes);
     }
+    if (input.slotCapacity !== undefined) {
+      doctor.slotCapacity = sanitizeSlotCapacity(input.slotCapacity);
+    }
     await this.persistence.saveCollection("doctors", this.data.doctors);
     await this.audit(context, "doctor.update", "doctor", doctor.id, undefined, { schedule: "updated" });
     return doctor;
   }
 
   /**
-   * Available slots for a doctor on a calendar date. Expands each weekday window into
-   * slotMinutes increments and drops any slot already taken by a non-cancelled
-   * appointment for that doctor on that date. Slots are ISO timestamps (UTC).
+   * The slot grid for a doctor on a calendar date. Expands each weekday window into
+   * slotMinutes increments and annotates every slot with its `capacity` (patients
+   * per slot) and `booked` count. A slot is available while `booked < capacity`
+   * (the token/parallel-OPD model). Slots are ISO timestamps (UTC). Full slots are
+   * still returned (so the staff grid can show them) — consumers filter as needed.
+   * `excludeAppointmentId` drops one appointment from the count (for reschedule).
    */
-  getDoctorSlots(context: RequestContext, doctorId: string, dateISO: string, branchId?: string) {
+  getDoctorSlots(
+    context: RequestContext,
+    doctorId: string,
+    dateISO: string,
+    branchId?: string,
+    excludeAppointmentId?: string
+  ) {
     const doctor = this.ensureVisibleDoctor(context, doctorId);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO)) {
       throw new ApiError(400, "date must be in YYYY-MM-DD format");
     }
     if (doctor.status !== "active") {
-      return [] as Array<{ start: string; end: string }>;
+      return [] as DoctorSlot[];
     }
     const weekday = new Date(`${dateISO}T00:00:00.000Z`).getUTCDay();
     const windows = (doctor.weeklyHours?.[weekday] ?? []).filter(
       (window) => !branchId || !window.branchId || window.branchId === branchId
     );
     const slotMinutes = doctor.slotMinutes > 0 ? doctor.slotMinutes : 15;
+    const capacity = doctorSlotCapacity(doctor);
 
-    // Start times already booked (non-cancelled) for this doctor on this date.
-    const taken = new Set(
-      this.data.appointments
-        .filter(
-          (entry) =>
-            entry.tenantId === context.tenantId &&
-            entry.doctorId === doctor.id &&
-            entry.status !== "cancelled" &&
-            entry.scheduledAt.slice(0, 10) === dateISO
-        )
-        .map((entry) => entry.scheduledAt)
-    );
+    // Count non-cancelled appointments per start time (a slot may hold `capacity`).
+    const booked = new Map<string, number>();
+    for (const entry of this.data.appointments) {
+      if (
+        entry.tenantId !== context.tenantId ||
+        entry.doctorId !== doctor.id ||
+        entry.status === "cancelled" ||
+        entry.id === excludeAppointmentId ||
+        entry.scheduledAt.slice(0, 10) !== dateISO
+      ) {
+        continue;
+      }
+      booked.set(entry.scheduledAt, (booked.get(entry.scheduledAt) ?? 0) + 1);
+    }
 
-    const slots: Array<{ start: string; end: string }> = [];
+    const byStart = new Map<string, DoctorSlot>();
     for (const window of windows) {
       const startMin = parseHhMm(window.start);
       const endMin = parseHhMm(window.end);
@@ -5575,17 +5608,15 @@ export class CoreService {
       }
       for (let minute = startMin; minute + slotMinutes <= endMin; minute += slotMinutes) {
         const start = isoFromDateAndMinutes(dateISO, minute);
-        if (taken.has(start)) {
-          continue;
-        }
-        slots.push({ start, end: isoFromDateAndMinutes(dateISO, minute + slotMinutes) });
+        // Windows may overlap — keep each start once.
+        if (byStart.has(start)) continue;
+        byStart.set(start, {
+          start,
+          end: isoFromDateAndMinutes(dateISO, minute + slotMinutes),
+          capacity,
+          booked: booked.get(start) ?? 0
+        });
       }
-    }
-    // Windows may be entered out of order or overlap — return a clean, ascending,
-    // de-duplicated list so the booking UI shows each time once, in order.
-    const byStart = new Map<string, { start: string; end: string }>();
-    for (const slot of slots) {
-      if (!byStart.has(slot.start)) byStart.set(slot.start, slot);
     }
     return [...byStart.values()].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
   }
@@ -5655,18 +5686,13 @@ export class CoreService {
     const slots = this.getDoctorSlots(context, doctorId, dateISO, branchId);
     const matching = slots.find((slot) => slot.start === normalizedStart);
     if (!matching) {
-      // Distinguish "already taken" (409) from "outside schedule" (400).
-      const taken = this.data.appointments.some(
-        (entry) =>
-          entry.tenantId === context.tenantId &&
-          entry.doctorId === doctor.id &&
-          entry.status !== "cancelled" &&
-          entry.scheduledAt === normalizedStart
-      );
-      if (taken) {
-        throw new ApiError(409, "That slot is already booked");
-      }
       throw new ApiError(400, "Requested time is outside the doctor's available schedule");
+    }
+    if (matching.booked >= matching.capacity) {
+      throw new ApiError(
+        409,
+        matching.capacity > 1 ? "That slot is full" : "That slot is already booked"
+      );
     }
 
     // Slot is valid → resolve the patient (existing id, or create phone-first).
@@ -6035,21 +6061,16 @@ export class CoreService {
     normalizedStart: string,
     excludeAppointmentId?: string
   ): void {
-    const slots = this.getDoctorSlots(context, doctor.id, dateISO, branchId);
-    if (slots.some((slot) => slot.start === normalizedStart)) {
-      return;
+    // Exclude the appointment being moved from the count so re-picking its own slot
+    // (or a slot with room) is allowed; only a genuinely full slot is rejected.
+    const slots = this.getDoctorSlots(context, doctor.id, dateISO, branchId, excludeAppointmentId);
+    const matching = slots.find((slot) => slot.start === normalizedStart);
+    if (!matching) {
+      throw new ApiError(400, "Requested time is outside the doctor's available schedule");
     }
-    const taken = this.data.appointments.some(
-      (entry) =>
-        entry.tenantId === context.tenantId &&
-        entry.id !== excludeAppointmentId &&
-        entry.doctorId === doctor.id &&
-        entry.status !== "cancelled" &&
-        entry.scheduledAt === normalizedStart
-    );
-    throw taken
-      ? new ApiError(409, "That slot is already booked")
-      : new ApiError(400, "Requested time is outside the doctor's available schedule");
+    if (matching.booked >= matching.capacity) {
+      throw new ApiError(409, matching.capacity > 1 ? "That slot is full" : "That slot is already booked");
+    }
   }
 
   /**
@@ -6063,7 +6084,10 @@ export class CoreService {
       throw new ApiError(400, "Appointment has no doctor to reschedule");
     }
     const date = typeof dateISO === "string" && dateISO.trim() ? dateISO.trim() : appointment.scheduledAt.slice(0, 10);
-    return this.getDoctorSlots(context, appointment.doctorId, date, appointment.branchId);
+    // Patient view: only surface slots with room (excluding this appointment's own hold).
+    return this.getDoctorSlots(context, appointment.doctorId, date, appointment.branchId, appointment.id).filter(
+      (slot) => slot.booked < slot.capacity
+    );
   }
 
   /**

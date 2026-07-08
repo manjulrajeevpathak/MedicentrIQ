@@ -197,13 +197,16 @@ describe("scheduling & appointments contract", () => {
     assert.match(String((body.error as JsonObject)?.message), /already booked/i);
   });
 
-  it("drops the taken slot from subsequent availability", async () => {
+  it("marks the taken slot full but keeps the grid (capacity model)", async () => {
     const date = nextMonday();
     const body = (await (await authed(`/doctors/${doctorId}/slots?date=${date}`)).json()) as {
-      data: Array<{ start: string }>;
+      data: Array<{ start: string; capacity: number; booked: number }>;
     };
-    assert.equal(body.data.length, 3);
-    assert.ok(!body.data.some((slot) => slot.start === firstSlot));
+    // The full day grid is returned; the booked slot is now full, the rest have room.
+    assert.equal(body.data.length, 4);
+    assert.equal(body.data.filter((slot) => slot.booked < slot.capacity).length, 3);
+    const taken = body.data.find((slot) => slot.start === firstSlot);
+    assert.ok(taken && taken.booked >= taken.capacity, "the booked slot is full");
   });
 
   it("rejects a time outside the schedule with 400", async () => {
@@ -234,9 +237,9 @@ describe("scheduling & appointments contract", () => {
   it("books phone-first for a new patient (no patientId) — creates the patient + appointment", async () => {
     const date = nextMonday();
     const slots = (await (await authed(`/doctors/${doctorId}/slots?date=${date}`)).json()) as {
-      data: Array<{ start: string }>;
+      data: Array<{ start: string; capacity: number; booked: number }>;
     };
-    const freeSlot = slots.data[0].start; // first remaining open slot
+    const freeSlot = slots.data.find((s) => s.booked < s.capacity)!.start; // first slot with room
     const res = await authed("/appointments", {
       method: "POST",
       body: JSON.stringify({
@@ -300,9 +303,72 @@ describe("scheduling & appointments contract", () => {
     assert.equal(body.data.scheduledAt, s2.start);
     assert.equal(body.data.status, "rescheduled");
 
-    const after = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as { data: Array<{ start: string }> };
-    assert.ok(after.data.some((s) => s.start === s1.start), "old slot is freed");
-    assert.ok(!after.data.some((s) => s.start === s2.start), "new slot is taken");
+    const after = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as {
+      data: Array<{ start: string; capacity: number; booked: number }>;
+    };
+    const oldSlot = after.data.find((s) => s.start === s1.start);
+    assert.ok(oldSlot && oldSlot.booked < oldSlot.capacity, "old slot is freed (has room)");
+    const newSlot = after.data.find((s) => s.start === s2.start);
+    assert.ok(newSlot && newSlot.booked >= newSlot.capacity, "new slot is taken (full)");
+  });
+
+  it("fills a multi-patient slot to capacity, then rejects the overflow (token model)", async () => {
+    const date = nextMonday();
+    const dr = (await (
+      await authed("/doctors", {
+        method: "POST",
+        body: JSON.stringify({
+          displayName: "Dr. Capacity",
+          specialty: "Ophthalmology",
+          branchIds: ["blr-indiranagar"],
+          slotMinutes: 30,
+          slotCapacity: 3
+        })
+      })
+    ).json()) as { data: { id: string; slotCapacity: number } };
+    const drId = dr.data.id;
+    assert.equal(dr.data.slotCapacity, 3);
+    await authed(`/doctors/${drId}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify({ slotMinutes: 30, slotCapacity: 3, weeklyHours: { 1: [{ start: "09:00", end: "12:00" }] } })
+    });
+    const slots = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as {
+      data: Array<{ start: string; capacity: number; booked: number }>;
+    };
+    const slot = slots.data[0];
+    assert.equal(slot.capacity, 3);
+    assert.equal(slot.booked, 0);
+
+    // Three different patients fit into the one 30-min slot.
+    for (let i = 0; i < 3; i += 1) {
+      const res = await authed("/appointments", {
+        method: "POST",
+        body: JSON.stringify({
+          doctorId: drId,
+          scheduledAt: slot.start,
+          patient: { name: `Token Patient ${i}`, phone: `+91981200000${i}` }
+        })
+      });
+      assert.equal(res.status, 200, `booking ${i + 1} of 3 should succeed`);
+    }
+
+    // The slot now reports 3/3 and is full.
+    const filled = (await (await authed(`/doctors/${drId}/slots?date=${date}`)).json()) as {
+      data: Array<{ start: string; capacity: number; booked: number }>;
+    };
+    const filledSlot = filled.data.find((s) => s.start === slot.start);
+    assert.ok(filledSlot && filledSlot.booked === 3 && filledSlot.booked >= filledSlot.capacity, "slot is 3/3 full");
+
+    // A fourth patient into the same slot is rejected with 409 "full".
+    const overflow = await authed("/appointments", {
+      method: "POST",
+      body: JSON.stringify({
+        doctorId: drId,
+        scheduledAt: slot.start,
+        patient: { name: "Overflow Patient", phone: "+919812000099" }
+      })
+    });
+    assert.equal(overflow.status, 409);
   });
 
   it("rejects a second same-day appointment for the same patient + doctor (409)", async () => {

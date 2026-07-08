@@ -969,12 +969,26 @@ export type Doctor = {
   phone?: string;
   /** Slot granularity in minutes (default 15). */
   slotMinutes: number;
+  /** Patients bookable per slot — the token/parallel-OPD model (default 1). */
+  slotCapacity?: number;
   /** Weekly availability: day 0=Sun..6=Sat → working windows. */
   weeklyHours: Record<number, DoctorWorkingWindow[]>;
   status: DoctorStatus;
   /** Optional link to a staff User record. */
   userId?: string;
   createdAt: string;
+};
+
+/**
+ * A bookable slot in a doctor's day grid. `capacity` is patients-per-slot and
+ * `booked` is how many are already taken — a slot is available while
+ * `booked < capacity`.
+ */
+export type DoctorSlot = {
+  start: string;
+  end: string;
+  capacity: number;
+  booked: number;
 };
 
 export type Appointment = {

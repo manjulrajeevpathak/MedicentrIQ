@@ -23,6 +23,8 @@ export type Doctor = {
   specialty?: string;
   branchIds: string[];
   slotMinutes: number;
+  /** Patients bookable per slot (default 1). */
+  slotCapacity?: number;
   phone?: string;
   weeklyHours: WeeklyHours;
   status: DoctorStatus;
@@ -31,6 +33,10 @@ export type Doctor = {
 export type Slot = {
   start: string; // ISO
   end: string; // ISO
+  /** Patients per slot (default 1). */
+  capacity: number;
+  /** How many of the slot's capacity are already booked. */
+  booked: number;
 };
 
 export type AppointmentStatus =
@@ -77,7 +83,11 @@ export const WEEKDAYS: { index: WeekdayIndex; label: string; short: string }[] =
   { index: 6, label: "Saturday", short: "Sat" }
 ];
 
-export const SLOT_MINUTE_OPTIONS = [15, 20, 30] as const;
+/** Slot length options, in 5-minute steps (backend accepts 5–240). */
+export const SLOT_MINUTE_OPTIONS = [5, 10, 15, 20, 25, 30, 40, 45, 60] as const;
+
+/** Patients-per-slot presets (the token / parallel-OPD model). */
+export const SLOT_CAPACITY_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10] as const;
 
 /** Statuses a staff member can transition an appointment to from the day list. */
 export const APPOINTMENT_ACTIONS: { status: Extract<AppointmentStatus, "confirmed" | "completed" | "no_show" | "cancelled">; label: string }[] = [

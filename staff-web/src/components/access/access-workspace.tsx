@@ -163,19 +163,15 @@ function BookingTab({
 
   const selectedDoctor = doctors.find((d) => d.id === doctorId);
 
-  // Merge open slots with this doctor+date's booked appointments so taken times
-  // are shown as blocked (not silently dropped). scheduledAt uses the same
-  // UTC-encoded wall-clock as slot.start, so they line up exactly.
+  // The backend returns the full day grid, each slot annotated with its capacity
+  // (patients per slot) and how many are already booked. A slot is "full" only
+  // once booked reaches capacity — until then it still has room (the token model).
   const allSlots = useMemo(() => {
     if (slots === null) return null;
-    const map = new Map<string, { start: string; taken: boolean }>();
-    for (const s of slots) map.set(s.start, { start: s.start, taken: false });
-    for (const a of appointments) {
-      if (a.status === "cancelled") continue;
-      map.set(a.scheduledAt, { start: a.scheduledAt, taken: true });
-    }
-    return [...map.values()].sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : 0));
-  }, [slots, appointments]);
+    return slots
+      .map((s) => ({ start: s.start, capacity: s.capacity, booked: s.booked, full: s.booked >= s.capacity }))
+      .sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : 0));
+  }, [slots]);
 
   function refresh(nextDoctorId: string, nextDate: string) {
     setError(null);
@@ -370,23 +366,28 @@ function BookingTab({
               {SLOT_PERIODS.map((period) => {
                 const inPeriod = allSlots.filter((s) => slotPeriod(s.start) === period);
                 if (inPeriod.length === 0) return null;
-                const openCount = inPeriod.filter((s) => !s.taken).length;
-                const bookedCount = inPeriod.length - openCount;
+                const openCount = inPeriod.filter((s) => !s.full).length;
+                const fullCount = inPeriod.length - openCount;
                 return (
                   <div key={period}>
                     <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-                      {period} · {openCount} open{bookedCount > 0 ? ` · ${bookedCount} booked` : ""}
+                      {period} · {openCount} open{fullCount > 0 ? ` · ${fullCount} full` : ""}
                     </p>
                     <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                       {inPeriod.map((slot) =>
-                        slot.taken ? (
+                        slot.full ? (
                           <div
                             key={slot.start}
-                            title="Booked"
+                            title={slot.capacity > 1 ? "Slot full" : "Booked"}
                             aria-disabled="true"
-                            className="flex cursor-not-allowed items-center justify-center gap-1 rounded-lg border border-dashed border-line bg-fill px-2 py-2 text-center text-xs font-medium text-ink-faint line-through"
+                            className="flex cursor-not-allowed flex-col items-center justify-center rounded-lg border border-dashed border-line bg-fill px-2 py-2 text-center text-xs font-medium text-ink-faint"
                           >
-                            {formatTime(slot.start)}
+                            <span className="line-through">{formatTime(slot.start)}</span>
+                            {slot.capacity > 1 ? (
+                              <span className="text-[10px]">
+                                {slot.booked}/{slot.capacity} full
+                              </span>
+                            ) : null}
                           </div>
                         ) : (
                           <button
@@ -394,13 +395,18 @@ function BookingTab({
                             type="button"
                             onClick={() => setSelectedSlot(slot.start)}
                             className={cn(
-                              "rounded-lg border px-2 py-2 text-center text-xs font-medium transition",
+                              "flex flex-col items-center rounded-lg border px-2 py-2 text-center text-xs font-medium transition",
                               slot.start === selectedSlot
                                 ? "border-brand-400 bg-brand-50 text-brand-700 ring-2 ring-brand-100"
                                 : "border-line-strong bg-surface text-ink-soft hover:border-line-strong hover:bg-surface-muted"
                             )}
                           >
                             {formatTime(slot.start)}
+                            {slot.capacity > 1 ? (
+                              <span className="text-[10px] font-normal text-ink-muted">
+                                {slot.capacity - slot.booked} left
+                              </span>
+                            ) : null}
                           </button>
                         )
                       )}

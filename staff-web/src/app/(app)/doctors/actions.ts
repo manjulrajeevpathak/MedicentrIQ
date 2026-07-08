@@ -22,6 +22,7 @@ export async function createDoctorAction(input: {
   specialty?: string;
   branchIds: string[];
   slotMinutes?: number;
+  slotCapacity?: number;
   phone?: string;
 }): Promise<ActionState<Doctor>> {
   if (!input.displayName.trim()) return { ok: false, error: "Enter a doctor name." };
@@ -33,6 +34,7 @@ export async function createDoctorAction(input: {
       ...(input.specialty ? { specialty: input.specialty } : {}),
       branchIds: input.branchIds,
       ...(input.slotMinutes ? { slotMinutes: input.slotMinutes } : {}),
+      ...(input.slotCapacity ? { slotCapacity: input.slotCapacity } : {}),
       ...(input.phone ? { phone: input.phone } : {})
     }
   });
@@ -69,11 +71,12 @@ export async function updateDoctorAction(
 export async function setDoctorScheduleAction(
   id: string,
   slotMinutes: number,
-  weeklyHours: WeeklyHours
+  weeklyHours: WeeklyHours,
+  slotCapacity?: number
 ): Promise<ActionState<Doctor>> {
   const result = await coreApi<Doctor>(`/doctors/${encodeURIComponent(id)}/schedule`, {
     method: "PUT",
-    body: { slotMinutes, weeklyHours }
+    body: { slotMinutes, weeklyHours, ...(slotCapacity ? { slotCapacity } : {}) }
   });
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not save the schedule." };
