@@ -46,9 +46,9 @@ const selectClass =
 type DateMode = "today" | "week" | "all" | "custom";
 
 const DATE_MODE_OPTIONS: { value: DateMode; label: string }[] = [
+  { value: "all", label: "All" },
   { value: "today", label: "Today" },
   { value: "week", label: "Last 7 days" },
-  { value: "all", label: "All" },
   { value: "custom", label: "Custom" }
 ];
 
@@ -62,7 +62,7 @@ export function OpdWorkspace({ today, visits: initialVisits, doctors }: Props) {
   const { toast } = useToast();
   const [visits, setVisits] = useState<Visit[]>(initialVisits);
   const [statusFilter, setStatusFilter] = useState<VisitStatus | "all">("all");
-  const [dateMode, setDateMode] = useState<DateMode>("today");
+  const [dateMode, setDateMode] = useState<DateMode>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [doctorId, setDoctorId] = useState("");
