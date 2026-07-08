@@ -73,9 +73,6 @@ export const navGroups: NavGroup[] = [
     items: [
       { href: "/appointments", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" },
       { href: "/opd", label: "OPD", icon: ClipboardPlus, description: "Walk-in intake, queue and consult capture", module: "patients", requires: "patients:create" },
-      { href: "/doctors", label: "Doctors", icon: Stethoscope, description: "Doctors, specialties and weekly schedules", module: "access", requires: "appointment:write" },
-      { href: "/journeys", label: "Journeys", icon: Route, description: "Specialty journey & protocol packs", module: "journeys", requires: "journey:manage" },
-      { href: "/continuity", label: "Continuity", icon: Activity, description: "Follow-up journeys and patients at risk of falling out of care", module: "continuity", requires: "followup:manage", badgeKey: "continuity" },
       { href: "/ipd", label: "IPD", icon: BedDouble, description: "In-patient admissions and ward management", module: "patients", comingSoon: true },
       { href: "/patients", label: "All Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view", hidden: true }
     ]
@@ -84,7 +81,9 @@ export const navGroups: NavGroup[] = [
     label: "Growth",
     items: [
       { href: "/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
-      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" }
+      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
+      { href: "/journeys", label: "Journeys", icon: Route, description: "Specialty journey & protocol packs", module: "journeys", requires: "journey:manage" },
+      { href: "/continuity", label: "Continuity", icon: Activity, description: "Follow-up journeys and patients at risk of falling out of care", module: "continuity", requires: "followup:manage", badgeKey: "continuity" }
     ]
   },
   {
@@ -99,6 +98,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Operations",
     items: [
+      { href: "/doctors", label: "Doctors", icon: Stethoscope, description: "Doctors, specialties and weekly schedules", module: "access", requires: "appointment:write" },
       { href: "/operations", label: "Operations", icon: ShieldCheck, description: "Service health and audit", module: "operations" },
       { href: "/billing", label: "Billing", icon: IndianRupee, description: "Invoices and payments — billed vs settled", module: "billing", comingSoon: true },
       { href: "/admin", label: "Admin", icon: Settings2, description: "Tenant, roles and governance", module: "admin", requires: "audit:view" }
