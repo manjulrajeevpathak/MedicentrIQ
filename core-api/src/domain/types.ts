@@ -125,6 +125,8 @@ export type Branch = {
   address?: string;
   /** Google Maps URL / share link ({{mapLink}} token). */
   mapUrl?: string;
+  /** Free-text clinic hours, e.g. "Mon–Sat 9am–7pm · Sun closed". */
+  timings?: string;
   createdAt: string;
 };
 

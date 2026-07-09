@@ -40,6 +40,8 @@ export type Branch = {
   address?: string;
   /** Google Maps URL / share link ({{mapLink}} token). */
   mapUrl?: string;
+  /** Free-text clinic hours, e.g. "Mon–Sat 9am–7pm · Sun closed". */
+  timings?: string;
 };
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error?: string };
@@ -58,6 +60,8 @@ export type ChannelStatus = {
     /** Redacted tail of the stored app secret — never the full secret. */
     appSecretTail: string | null;
     verifyToken: string | null;
+    /** Meta App ID — needed only for image-header template submissions. */
+    appId: string | null;
     /** Gateway-relative webhook path, e.g. "/webhooks/meta/whatsapp/org_xxx". */
     webhookPath: string;
   };

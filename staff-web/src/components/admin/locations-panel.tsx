@@ -64,11 +64,12 @@ function BranchRow({
   const [phone, setPhone] = useState(branch.phone ?? "");
   const [address, setAddress] = useState(branch.address ?? "");
   const [mapUrl, setMapUrl] = useState(branch.mapUrl ?? "");
+  const [timings, setTimings] = useState(branch.timings ?? "");
   const [pending, startTransition] = useTransition();
 
   function save() {
     startTransition(async () => {
-      const result = await saveBranchContactAction(branch.id, { phone, address, mapUrl });
+      const result = await saveBranchContactAction(branch.id, { phone, address, mapUrl, timings });
       if (!result.ok) {
         onToast(result.error ?? "Could not save the location.", "error");
         return;
@@ -77,6 +78,7 @@ function BranchRow({
       setPhone(result.branch?.phone ?? "");
       setAddress(result.branch?.address ?? "");
       setMapUrl(result.branch?.mapUrl ?? "");
+      setTimings(result.branch?.timings ?? "");
       onToast(result.message ?? "Location saved.", "success");
     });
   }
@@ -106,6 +108,18 @@ function BranchRow({
             value={mapUrl}
             onChange={(e) => setMapUrl(e.target.value)}
             placeholder="https://maps.app.goo.gl/…"
+            disabled={pending}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-3">
+        <Field label="Clinic timings" htmlFor={`timings-${branch.id}`}>
+          <Input
+            id={`timings-${branch.id}`}
+            value={timings}
+            onChange={(e) => setTimings(e.target.value)}
+            placeholder="Mon–Sat 9am–7pm · Sunday closed"
             disabled={pending}
           />
         </Field>

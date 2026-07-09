@@ -2005,7 +2005,7 @@ export class CoreService {
     if (!branch) {
       throw new ApiError(404, "Branch not found.");
     }
-    const applyField = (key: "phone" | "address" | "mapUrl") => {
+    const applyField = (key: "phone" | "address" | "mapUrl" | "timings") => {
       const raw = input[key];
       if (raw === undefined) {
         return;
@@ -2020,6 +2020,7 @@ export class CoreService {
     applyField("phone");
     applyField("address");
     applyField("mapUrl");
+    applyField("timings");
     await this.persistence.saveCollection("branches", this.data.branches);
     await this.audit(context, "branch.update", "branch", branch.id, undefined, {
       phone: branch.phone ?? "",
@@ -3666,7 +3667,7 @@ export class CoreService {
     const doctors = this.data.doctors.filter((d) => d.tenantId === tenantId && d.status === "active");
     const prompt = compileAssistantSystemPrompt({
       orgName: org?.displayName ?? "this hospital",
-      branches: branches.map((b) => ({ displayName: b.displayName, city: b.city, address: b.address, phone: b.phone, mapUrl: b.mapUrl })),
+      branches: branches.map((b) => ({ displayName: b.displayName, city: b.city, address: b.address, phone: b.phone, mapUrl: b.mapUrl, timings: b.timings })),
       doctors: doctors.map((d) => ({ displayName: d.displayName, specialty: d.specialty })),
       config,
       channel
@@ -3759,6 +3760,71 @@ export class CoreService {
       } catch (error) {
         const message = error instanceof ApiError ? error.message : "Could not book that slot.";
         return `Booking failed: ${message}. Offer another time or hand off.`;
+      }
+    }
+
+    // ---- Manage this patient's own appointments (reschedule / cancel) --------
+    const today = new Date().toISOString().slice(0, 10);
+    const myAppointments = () => {
+      const phone = normalizePhone(from);
+      const patient = this.data.patients.find(
+        (p) => p.tenantId === context.tenantId && p.primaryPhone && normalizePhone(p.primaryPhone) === phone
+      );
+      if (!patient) return [] as typeof this.data.appointments;
+      return this.data.appointments
+        .filter(
+          (a) =>
+            a.tenantId === context.tenantId &&
+            a.patientId === patient.id &&
+            a.status !== "cancelled" &&
+            a.scheduledAt.slice(0, 10) >= today
+        )
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+    };
+    const describeAppt = (a: (typeof this.data.appointments)[number]) =>
+      `${a.doctorName} on ${new Date(a.scheduledAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}`;
+    const pickAppt = (docRaw: unknown, dateRaw: unknown) => {
+      let appts = myAppointments();
+      const doc = findDoctor(docRaw);
+      if (doc) appts = appts.filter((a) => a.doctorId === doc.id);
+      const date = typeof dateRaw === "string" ? dateRaw.trim() : "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) appts = appts.filter((a) => a.scheduledAt.slice(0, 10) === date);
+      return appts;
+    };
+
+    if (name === "list_my_appointments") {
+      const appts = myAppointments();
+      if (appts.length === 0) return "This patient has no upcoming appointments on record.";
+      return "Upcoming appointments:\n" + appts.map((a) => `- ${describeAppt(a)}`).join("\n");
+    }
+
+    if (name === "reschedule_appointment") {
+      const appts = pickAppt(input.doctorName, undefined);
+      if (appts.length === 0) return "No upcoming appointment found for this patient. Ask them to confirm the doctor, or hand off.";
+      if (appts.length > 1) return `This patient has more than one upcoming appointment (${appts.map(describeAppt).join("; ")}). Ask which one to move.`;
+      const newDate = typeof input.newDate === "string" ? input.newDate.trim() : "";
+      const minutes = parseHhMm(typeof input.newTime === "string" ? input.newTime : "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate) || minutes === null) return "Need a valid new date (YYYY-MM-DD) and time (HH:MM).";
+      const scheduledAt = isoFromDateAndMinutes(newDate, minutes);
+      if (dryRun) return `SIMULATED (test mode — not moved): ${describeAppt(appts[0])} → ${newDate} ${input.newTime}.`;
+      try {
+        const moved = await this.rescheduleAppointment(context, appts[0].id, { scheduledAt });
+        return `RESCHEDULED: now ${describeAppt(moved)}. Confirm to the patient.`;
+      } catch (error) {
+        return `Reschedule failed: ${error instanceof ApiError ? error.message : "could not move it"}. Offer another time or hand off.`;
+      }
+    }
+
+    if (name === "cancel_appointment") {
+      const appts = pickAppt(input.doctorName, input.date);
+      if (appts.length === 0) return "No upcoming appointment found for this patient. Ask them to confirm, or hand off.";
+      if (appts.length > 1) return `This patient has more than one upcoming appointment (${appts.map(describeAppt).join("; ")}). Ask which one to cancel.`;
+      if (dryRun) return `SIMULATED (test mode — not cancelled): ${describeAppt(appts[0])}.`;
+      try {
+        await this.updateAppointment(context, appts[0].id, { status: "cancelled" } as UpdateAppointmentInput);
+        return `CANCELLED: ${describeAppt(appts[0])}. Confirm to the patient and offer to rebook.`;
+      } catch (error) {
+        return `Cancel failed: ${error instanceof ApiError ? error.message : "could not cancel"}. Hand off.`;
       }
     }
 

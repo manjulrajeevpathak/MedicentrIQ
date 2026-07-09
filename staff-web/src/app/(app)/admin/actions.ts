@@ -22,6 +22,29 @@ export type ActionState = {
   message?: string;
 };
 
+export type WaHealth = {
+  displayPhoneNumber?: string;
+  verifiedName?: string;
+  qualityRating?: string;
+  messagingLimitTier?: string;
+  dailyLimit: number | null;
+  usedToday: number;
+  remainingToday: number | null;
+  monthSpend: { conversations: number; cost: number } | null;
+  checkedAt: string;
+};
+
+/**
+ * Number health straight from Meta: quality rating, daily messaging tier and
+ * month-to-date spend. Meta has no wallet-balance API for card-billed accounts —
+ * spend + limits are the trackable signals.
+ */
+export async function fetchWaHealthAction(): Promise<{ ok: boolean; health?: WaHealth; error?: string }> {
+  const result = await coreApi<WaHealth>("/tenant/whatsapp/health");
+  if (result.ok && result.data) return { ok: true, health: result.data };
+  return { ok: false, error: result.ok ? "No health data returned." : result.error };
+}
+
 export async function createUserAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const displayName = String(formData.get("displayName") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim();
@@ -112,6 +135,7 @@ export async function saveChannelsAction(_prev: ChannelActionState, formData: Fo
     const accessToken = String(formData.get("accessToken") ?? "").trim();
     const appSecret = String(formData.get("appSecret") ?? "").trim();
     const verifyToken = String(formData.get("verifyToken") ?? "").trim();
+    const appId = String(formData.get("appId") ?? "").trim();
     const enabled = formData.get("enabled") === "on";
     // Blank accessToken/appSecret = keep the existing secrets (core-api handles this).
     body.whatsappCloud = {
@@ -120,6 +144,7 @@ export async function saveChannelsAction(_prev: ChannelActionState, formData: Fo
       ...(accessToken ? { accessToken } : {}),
       ...(appSecret ? { appSecret } : {}),
       ...(verifyToken ? { verifyToken } : {}),
+      ...(appId ? { appId } : {}),
       enabled
     };
   } else if (provider === "telephony") {
@@ -152,7 +177,7 @@ export async function sendTestMessageAction(_prev: ChannelActionState, formData:
   const body: Record<string, unknown> =
     type === "marketing"
       ? { to, type, campaign: String(formData.get("campaign") ?? "").trim(), userName: String(formData.get("userName") ?? "").trim() || undefined }
-      : { to, type, body: String(formData.get("body") ?? "").trim() || "HealthcareOS test message ✅" };
+      : { to, type, body: String(formData.get("body") ?? "").trim() || "HealthFlow test message ✅" };
 
   const result = await coreApi<{ ok: boolean; channel: string; error?: string }>("/messages/test", { method: "POST", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not send the test." };
@@ -171,7 +196,7 @@ export type BranchContactActionState = { ok: boolean; error?: string; message?: 
  */
 export async function saveBranchContactAction(
   branchId: string,
-  input: { phone?: string; address?: string; mapUrl?: string }
+  input: { phone?: string; address?: string; mapUrl?: string; timings?: string }
 ): Promise<BranchContactActionState> {
   if (!branchId) return { ok: false, error: "Missing branch." };
 
@@ -180,7 +205,8 @@ export async function saveBranchContactAction(
     body: {
       phone: (input.phone ?? "").trim(),
       address: (input.address ?? "").trim(),
-      mapUrl: (input.mapUrl ?? "").trim()
+      mapUrl: (input.mapUrl ?? "").trim(),
+      timings: (input.timings ?? "").trim()
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the location." };

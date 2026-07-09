@@ -62,7 +62,7 @@ export const appointmentsEnabled = (config: AssistantConfig): boolean =>
 
 export type CompileParams = {
   orgName: string;
-  branches: { displayName: string; city?: string; address?: string; phone?: string; mapUrl?: string }[];
+  branches: { displayName: string; city?: string; address?: string; phone?: string; mapUrl?: string; timings?: string }[];
   doctors: { displayName: string; specialty?: string }[];
   config: AssistantConfig;
   channel: AssistantChannel;
@@ -96,6 +96,10 @@ export const compileAssistantSystemPrompt = (params: CompileParams): string => {
   lines.push(
     "SAFETY: Never diagnose a person, interpret their own symptoms, or recommend medicines or treatment for their case. You may share ONLY general educational information on the clinical topics explicitly allowed below. For anything else clinical — or if someone asks about their own condition — do not answer; hand off."
   );
+  // Strong anti-fabrication rule (keeps a cheaper model honest without upgrading it).
+  lines.push(
+    "STRICT ACCURACY — treat this as a hard rule: state ONLY facts written above or returned by a tool. If a detail is NOT given — clinic timings or days open, whether you accept insurance / Ayushman / cards, fees, discounts, parking, wait times, what to bring, distances, or anything similar — you MUST NOT state, confirm, imply, or guess it. Never say things like \"yes, we accept insurance\" or invent opening hours. Instead say you don't have that detail, give the hospital phone number for it, and help with what you do know. Admitting you don't know is always better than guessing."
+  );
 
   if (answer.length > 0) {
     lines.push(
@@ -122,6 +126,11 @@ export const compileAssistantSystemPrompt = (params: CompileParams): string => {
         "\nWhen a patient asks how to reach the hospital or for the location/directions, ALWAYS include the Map link above (paste the full URL as-is) alongside the address."
     );
   }
+  // Clinic timings — core hospital info, so always inject when set (any topic may need it).
+  const timings = branches.map((b) => b.timings).find((t) => t && t.trim());
+  if (timings) {
+    lines.push(`Clinic timings (the ONLY source for opening hours / days open — never invent hours): ${timings}`);
+  }
   if ((usesLive("doctors") || usesLive("slots")) && doctors.length > 0) {
     lines.push(
       "Doctors:\n" + doctors.map((d) => `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}`).join("\n")
@@ -130,7 +139,8 @@ export const compileAssistantSystemPrompt = (params: CompileParams): string => {
 
   if (appointmentsEnabled(config)) {
     lines.push(
-      "APPOINTMENTS: You can look up a doctor's real available slots and book an appointment using your tools. Confirm the doctor, date, time and the patient's full name before calling book_appointment. After a successful booking, tell them it is confirmed with the date and time. If there are no slots, the details are unclear, or the patient wants a human, hand off."
+      "APPOINTMENTS: Use your tools to look up real slots (list_available_slots), book (book_appointment), and manage the patient's own appointments (list_my_appointments, reschedule_appointment, cancel_appointment). Confirm the doctor, date, time and — for a new booking — the patient's full name before acting. To reschedule or cancel, FIRST call list_my_appointments; if there are none, the details are unclear, or the patient wants a human, hand off.\n" +
+        "CRITICAL — never tell a patient that an appointment is booked, rescheduled or cancelled unless the matching tool has JUST returned a success in this conversation. If you have not called the tool yet, call it now instead of claiming the action is done. Do not fabricate confirmations."
     );
   }
 
@@ -203,6 +213,37 @@ export const APPOINTMENT_TOOLS = [
         reason: { type: "string", description: "Short reason for the visit (optional)." }
       },
       required: ["doctorName", "date", "time", "patientName"]
+    }
+  },
+  {
+    name: "list_my_appointments",
+    description: "List THIS patient's upcoming appointments (looked up by their WhatsApp number). Use before rescheduling or cancelling.",
+    input_schema: { type: "object", properties: {}, required: [] as string[] }
+  },
+  {
+    name: "reschedule_appointment",
+    description:
+      "Move this patient's existing appointment to a new date/time, after they confirm the new slot. Check list_available_slots first for real openings.",
+    input_schema: {
+      type: "object",
+      properties: {
+        newDate: { type: "string", description: "New date in YYYY-MM-DD." },
+        newTime: { type: "string", description: "New start time in 24-hour HH:MM." },
+        doctorName: { type: "string", description: "Doctor of the appointment being moved, if the patient has more than one." }
+      },
+      required: ["newDate", "newTime"]
+    }
+  },
+  {
+    name: "cancel_appointment",
+    description: "Cancel this patient's upcoming appointment after they confirm they want to cancel.",
+    input_schema: {
+      type: "object",
+      properties: {
+        doctorName: { type: "string", description: "Doctor of the appointment to cancel, if the patient has more than one." },
+        date: { type: "string", description: "Date (YYYY-MM-DD) of the appointment to cancel, to disambiguate." }
+      },
+      required: [] as string[]
     }
   }
 ] as const;
