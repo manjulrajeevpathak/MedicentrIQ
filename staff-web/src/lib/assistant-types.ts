@@ -12,6 +12,28 @@ export type AssistantKnowledgeEntry = {
   content: string;
 };
 
+export type AssistantTopicMode = "answer" | "handoff" | "off";
+
+/** A governed capability the bot handles / hands off / doesn't offer. */
+export type AssistantTopic = {
+  id: string;
+  key: string;
+  label: string;
+  mode: AssistantTopicMode;
+  content?: string;
+  usesLiveData?: ("doctors" | "branches" | "slots")[];
+};
+
+/** A clinical topic the bot may share general (non-diagnostic) info about. */
+export type AssistantMedicalTopic = { id?: string; label: string; content: string };
+
+export type AssistantMedicalScope = {
+  answerable: AssistantMedicalTopic[];
+  handoffTopics: string[];
+};
+
+export type AssistantChannels = { whatsapp: boolean; voice: boolean };
+
 export type AssistantConfig = {
   tenantId: string;
   enabled: boolean;
@@ -22,6 +44,14 @@ export type AssistantConfig = {
   handoffMessage?: string;
   /** Keywords that force an immediate handoff to the Inbox. */
   handoffKeywords: string[];
+  /** Which channels the shared policy is live on. */
+  channels: AssistantChannels;
+  /** The governance grid — what the bot answers / hands off / doesn't offer. */
+  topics: AssistantTopic[];
+  /** Granular clinical governance. */
+  medical: AssistantMedicalScope;
+  /** Note appended on handoff (e.g. business hours). */
+  hoursNote?: string;
   /** False when the platform has no ANTHROPIC_API_KEY — messages fall through to the Inbox. */
   available: boolean;
 };
@@ -33,4 +63,8 @@ export type AssistantPatch = {
   handoffMessage?: string;
   handoffKeywords?: string[];
   knowledge?: AssistantKnowledgeEntry[];
+  channels?: AssistantChannels;
+  topics?: AssistantTopic[];
+  medical?: AssistantMedicalScope;
+  hoursNote?: string;
 };

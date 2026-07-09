@@ -40,12 +40,37 @@ export async function saveAssistantAction(
       content: k.content.trim()
     }));
   }
+  if (typeof patch.hoursNote === "string") body.hoursNote = patch.hoursNote;
+  if (patch.channels) body.channels = patch.channels;
+  if (patch.topics) body.topics = patch.topics;
+  if (patch.medical) {
+    body.medical = {
+      answerable: patch.medical.answerable
+        .filter((m) => m.label.trim() && m.content.trim())
+        .map((m) => ({ ...(m.id ? { id: m.id } : {}), label: m.label.trim(), content: m.content.trim() })),
+      handoffTopics: patch.medical.handoffTopics.map((t) => t.trim()).filter(Boolean)
+    };
+  }
   if (Object.keys(body).length === 0) return { ok: false, error: "Nothing to save." };
 
   const result = await coreApi<AssistantConfig>("/tenant/assistant", { method: "PATCH", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the assistant settings." };
   revalidatePath("/assistant");
   return { ok: true, data: result.data, message: "Assistant settings saved." };
+}
+
+/** Test the saved policy against a message (dry-run — never books a real slot). */
+export async function previewAssistantAction(
+  message: string
+): Promise<AssistantActionState<{ reply: string; handoff: boolean }>> {
+  const text = message.trim();
+  if (!text) return { ok: false, error: "Type a message to test." };
+  const result = await coreApi<{ reply: string; handoff: boolean }>("/tenant/assistant/preview", {
+    method: "POST",
+    body: { message: text }
+  });
+  if (!result.ok) return { ok: false, error: result.error ?? "Could not run the test." };
+  return { ok: true, data: result.data };
 }
 
 // ---- Opt-outs ----------------------------------------------------------------
