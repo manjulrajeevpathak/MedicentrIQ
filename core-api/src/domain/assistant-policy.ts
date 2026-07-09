@@ -62,7 +62,7 @@ export const appointmentsEnabled = (config: AssistantConfig): boolean =>
 
 export type CompileParams = {
   orgName: string;
-  branches: { displayName: string; address?: string; phone?: string }[];
+  branches: { displayName: string; city?: string; address?: string; phone?: string }[];
   doctors: { displayName: string; specialty?: string }[];
   config: AssistantConfig;
   channel: AssistantChannel;
@@ -110,9 +110,14 @@ export const compileAssistantSystemPrompt = (params: CompileParams): string => {
     answer.some((t) => (t.usesLiveData ?? []).includes(kind));
   if (usesLive("branches") && branches.length > 0) {
     lines.push(
-      "Locations:\n" +
+      "Hospital address & contact (the ONLY source of truth for location/directions — never state any other address or city):\n" +
         branches
-          .map((b) => `- ${b.displayName}${b.address ? ` · ${b.address}` : ""}${b.phone ? ` · Phone: ${b.phone}` : ""}`)
+          .map(
+            (b) =>
+              `- ${b.displayName}${b.city ? `, ${b.city}` : ""}${b.address ? ` — ${b.address}` : ""}${
+                b.phone ? ` · Phone: ${b.phone}` : ""
+              }`
+          )
           .join("\n")
     );
   }

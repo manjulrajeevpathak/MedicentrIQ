@@ -3666,7 +3666,7 @@ export class CoreService {
     const doctors = this.data.doctors.filter((d) => d.tenantId === tenantId && d.status === "active");
     const prompt = compileAssistantSystemPrompt({
       orgName: org?.displayName ?? "this hospital",
-      branches: branches.map((b) => ({ displayName: b.displayName, address: b.address, phone: b.phone })),
+      branches: branches.map((b) => ({ displayName: b.displayName, city: b.city, address: b.address, phone: b.phone })),
       doctors: doctors.map((d) => ({ displayName: d.displayName, specialty: d.specialty })),
       config,
       channel
