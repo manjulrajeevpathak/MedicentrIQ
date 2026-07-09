@@ -62,7 +62,7 @@ export const appointmentsEnabled = (config: AssistantConfig): boolean =>
 
 export type CompileParams = {
   orgName: string;
-  branches: { displayName: string; city?: string; address?: string; phone?: string }[];
+  branches: { displayName: string; city?: string; address?: string; phone?: string; mapUrl?: string }[];
   doctors: { displayName: string; specialty?: string }[];
   config: AssistantConfig;
   channel: AssistantChannel;
@@ -116,9 +116,10 @@ export const compileAssistantSystemPrompt = (params: CompileParams): string => {
             (b) =>
               `- ${b.displayName}${b.city ? `, ${b.city}` : ""}${b.address ? ` — ${b.address}` : ""}${
                 b.phone ? ` · Phone: ${b.phone}` : ""
-              }`
+              }${b.mapUrl ? ` · Map: ${b.mapUrl}` : ""}`
           )
-          .join("\n")
+          .join("\n") +
+        "\nWhen a patient asks how to reach the hospital or for the location/directions, ALWAYS include the Map link above (paste the full URL as-is) alongside the address."
     );
   }
   if ((usesLive("doctors") || usesLive("slots")) && doctors.length > 0) {
