@@ -293,6 +293,41 @@ export type OptOut = {
  * how the AI behaves. recordId = tenantId. The runtime grounds replies in
  * `instructions` + `knowledge` + live org context (branches, doctors, timings).
  */
+/** answer = bot handles it; handoff = escalate to a human; off = not offered. */
+export type AssistantTopicMode = "answer" | "handoff" | "off";
+
+/**
+ * A governed capability/domain the assistant may handle (hospital info, doctors,
+ * appointments, pricing, USP, logistics, services, or a custom topic). `content`
+ * is what the bot says / draws from; `usesLiveData` injects real records.
+ */
+export type AssistantTopic = {
+  id: string;
+  /** Stable key for predefined topics; free string for custom ones. */
+  key: string;
+  label: string;
+  mode: AssistantTopicMode;
+  content?: string;
+  /** Live records to inject for this topic (schedules, locations, open slots). */
+  usesLiveData?: ("doctors" | "branches" | "slots")[];
+};
+
+/** A clinical topic the bot may share GENERAL (non-diagnostic) info about. */
+export type AssistantMedicalTopic = { id: string; label: string; content: string };
+
+/**
+ * Granular clinical governance. The bot never diagnoses/prescribes (a fixed
+ * guardrail); it may share general info only on `answerable` topics. Everything
+ * else clinical — including `handoffTopics` and anything unlisted — is handed off.
+ */
+export type AssistantMedicalScope = {
+  answerable: AssistantMedicalTopic[];
+  handoffTopics: string[];
+};
+
+/** Which channels the shared policy is live on. Voice consumes the same policy. */
+export type AssistantChannels = { whatsapp: boolean; voice: boolean };
+
 export type AssistantConfig = {
   tenantId: string;
   enabled: boolean;
@@ -304,6 +339,15 @@ export type AssistantConfig = {
   handoffMessage?: string;
   /** Extra phrases that force a human handoff (in addition to built-ins). */
   handoffKeywords: string[];
+  // ---- Structured governance (channel-agnostic; drives WhatsApp + voice) ----
+  /** Per-channel enablement of the shared policy. Defaults: whatsapp on, voice off. */
+  channels?: AssistantChannels;
+  /** The governance grid — what the bot answers / hands off / doesn't offer. */
+  topics?: AssistantTopic[];
+  /** Granular clinical governance. */
+  medical?: AssistantMedicalScope;
+  /** Note appended when handing off (e.g. business hours). */
+  hoursNote?: string;
   createdAt: string;
   updatedAt: string;
 };

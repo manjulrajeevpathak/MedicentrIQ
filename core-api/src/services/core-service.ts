@@ -30,9 +30,19 @@ import {
   assistantAvailable,
   extractFromDocument,
   extractJsonFromText,
-  generateAssistantReply,
+  generateAssistantReplyWithTools,
   type AssistantTurn
 } from "../integrations/assistant-llm.js";
+import {
+  APPOINTMENT_TOOLS,
+  appointmentsEnabled,
+  channelEnabled,
+  channelsOf,
+  compileAssistantSystemPrompt,
+  defaultAssistantTopics,
+  defaultMedicalScope,
+  type AssistantChannel
+} from "../domain/assistant-policy.js";
 import { createStorageService, type StorageService } from "../integrations/storage.js";
 import { lookupCondition, searchConditionCatalog } from "../domain/clinical-catalog.js";
 import { searchProcedureCatalog } from "../domain/procedure-catalog.js";
@@ -103,6 +113,7 @@ import type {
   MessageType,
   OptOut,
   AssistantConfig,
+  AssistantTopic,
   WhatsAppCloudConfig,
   Patient,
   PatientSummary,
@@ -3403,7 +3414,7 @@ export class CoreService {
     const assistant = this.resolveAssistantConfig(context.tenantId);
     const wantsHuman = this.matchesHandoff(trimmed, assistant);
 
-    if (!assistant.enabled || !assistantAvailable() || wantsHuman) {
+    if (!assistant.enabled || !channelEnabled(assistant, "whatsapp") || !assistantAvailable() || wantsHuman) {
       // Straight to the human inbox; acknowledge so the patient isn't left hanging.
       await this.createInboxHandoff(context, from, trimmed, profileName);
       await replyAndLog(
@@ -3413,10 +3424,14 @@ export class CoreService {
       return;
     }
 
-    // Assistant reply, grounded in hospital context + recent conversation.
-    const systemPrompt = this.buildAssistantSystemPrompt(context.tenantId, assistant);
+    // Assistant reply, grounded in the compiled policy + recent conversation. When
+    // the Appointments topic is on, the bot gets slot/booking tools.
+    const systemPrompt = this.buildAssistantSystemPrompt(context.tenantId, assistant, "whatsapp");
     const turns = this.recentConversation(context.tenantId, from, trimmed);
-    const result = await generateAssistantReply(systemPrompt, turns);
+    const tools = appointmentsEnabled(assistant) ? (APPOINTMENT_TOOLS as unknown as unknown[]) : undefined;
+    const result = await generateAssistantReplyWithTools(systemPrompt, turns, tools, (name, input) =>
+      this.runAssistantTool(context, from, profileName, name, input)
+    );
     if (!result.ok) {
       await this.createInboxHandoff(context, from, trimmed, profileName);
       await replyAndLog(
@@ -3492,7 +3507,50 @@ export class CoreService {
   }
 
   getAssistantConfig(context: RequestContext) {
-    return { ...this.resolveAssistantConfig(context.tenantId), available: assistantAvailable() };
+    const config = this.resolveAssistantConfig(context.tenantId);
+    // Fill structured defaults so the Assistant screen always has the governance
+    // grid to edit, even before the hospital has saved a policy.
+    return {
+      ...config,
+      channels: channelsOf(config),
+      topics: config.topics && config.topics.length > 0 ? config.topics : defaultAssistantTopics(),
+      medical: config.medical ?? defaultMedicalScope(),
+      available: assistantAvailable()
+    };
+  }
+
+  /**
+   * "Test the bot": run the SAVED policy against a message and return the reply +
+   * whether it would hand off. Booking is dry-run (never creates an appointment),
+   * so staff can safely try booking flows. Requires ANTHROPIC_API_KEY.
+   */
+  async previewAssistantReply(context: RequestContext, message: string) {
+    if (!assistantAvailable()) {
+      throw new ApiError(503, "AI is not configured on this platform.");
+    }
+    const text = typeof message === "string" ? message.trim() : "";
+    if (!text) {
+      throw new ApiError(400, "Enter a message to test.");
+    }
+    const config = this.resolveAssistantConfig(context.tenantId);
+    if (this.matchesHandoff(text, config)) {
+      return {
+        reply: config.handoffMessage?.trim() || "A staff member will get back to you shortly.",
+        handoff: true
+      };
+    }
+    const systemPrompt = this.buildAssistantSystemPrompt(context.tenantId, config, "whatsapp");
+    const tools = appointmentsEnabled(config) ? (APPOINTMENT_TOOLS as unknown as unknown[]) : undefined;
+    const result = await generateAssistantReplyWithTools(
+      systemPrompt,
+      [{ role: "user", content: text }],
+      tools,
+      (name, input) => this.runAssistantTool(context, "preview", undefined, name, input, true)
+    );
+    if (!result.ok) {
+      throw new ApiError(502, result.error);
+    }
+    return { reply: result.reply, handoff: result.handoff };
   }
 
   async updateAssistantConfig(context: RequestContext, input: Record<string, unknown>) {
@@ -3527,6 +3585,58 @@ export class CoreService {
         .filter((entry) => entry.title && entry.content)
         .slice(0, 100);
     }
+    if (input.hoursNote !== undefined) {
+      config.hoursNote =
+        typeof input.hoursNote === "string" && input.hoursNote.trim() ? input.hoursNote.trim() : undefined;
+    }
+    if (isPlainRecord(input.channels)) {
+      config.channels = {
+        whatsapp: input.channels.whatsapp !== false,
+        voice: input.channels.voice === true
+      };
+    }
+    if (Array.isArray(input.topics)) {
+      const modes = new Set(["answer", "handoff", "off"]);
+      config.topics = input.topics
+        .filter(isPlainRecord)
+        .map((entry) => {
+          const key = typeof entry.key === "string" && entry.key.trim() ? entry.key.trim() : "custom";
+          const usesLiveData = Array.isArray(entry.usesLiveData)
+            ? entry.usesLiveData.filter(
+                (v): v is "doctors" | "branches" | "slots" => v === "doctors" || v === "branches" || v === "slots"
+              )
+            : undefined;
+          return {
+            id: typeof entry.id === "string" && entry.id ? entry.id : createId("topic"),
+            key,
+            label: typeof entry.label === "string" ? entry.label.trim() : key,
+            mode: (typeof entry.mode === "string" && modes.has(entry.mode) ? entry.mode : "off") as AssistantTopic["mode"],
+            content: typeof entry.content === "string" ? entry.content.trim() : "",
+            ...(usesLiveData && usesLiveData.length ? { usesLiveData } : {})
+          };
+        })
+        .filter((entry) => entry.label)
+        .slice(0, 40);
+    }
+    if (isPlainRecord(input.medical)) {
+      const answerableRaw = Array.isArray(input.medical.answerable) ? input.medical.answerable : [];
+      const handoffRaw = Array.isArray(input.medical.handoffTopics) ? input.medical.handoffTopics : [];
+      config.medical = {
+        answerable: answerableRaw
+          .filter(isPlainRecord)
+          .map((entry) => ({
+            id: typeof entry.id === "string" && entry.id ? entry.id : createId("med"),
+            label: typeof entry.label === "string" ? entry.label.trim() : "",
+            content: typeof entry.content === "string" ? entry.content.trim() : ""
+          }))
+          .filter((entry) => entry.label && entry.content)
+          .slice(0, 40),
+        handoffTopics: handoffRaw
+          .filter((t): t is string => typeof t === "string" && Boolean(t.trim()))
+          .map((t) => t.trim())
+          .slice(0, 40)
+      };
+    }
     config.updatedAt = nowIso();
     await this.persistence.saveCollection("assistantConfigs", this.data.assistantConfigs);
     await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
@@ -3545,41 +3655,114 @@ export class CoreService {
   }
 
   /** System prompt: hospital instructions + live org context + knowledge base. */
-  private buildAssistantSystemPrompt(tenantId: string, config: AssistantConfig): string {
+  /** Compile the tenant's assistant policy into a system prompt for a channel. */
+  private buildAssistantSystemPrompt(
+    tenantId: string,
+    config: AssistantConfig,
+    channel: AssistantChannel = "whatsapp"
+  ): string {
     const org = this.data.organizations.find((o) => o.id === tenantId);
     const branches = this.data.branches.filter((b) => b.tenantId === tenantId && b.status === "active");
     const doctors = this.data.doctors.filter((d) => d.tenantId === tenantId && d.status === "active");
-    const lines: string[] = [];
-    lines.push(
-      `You are the WhatsApp assistant for ${org?.displayName ?? "this hospital"}. Reply in the patient's language (mirror Hindi/English/Hinglish). Keep replies short (2-4 sentences), warm and concrete — this is WhatsApp, not email. Use WhatsApp formatting only: *single asterisks* for bold, _underscores_ for italics — NEVER Markdown (**double asterisks**, #headings, bullet syntax).`
+    const prompt = compileAssistantSystemPrompt({
+      orgName: org?.displayName ?? "this hospital",
+      branches: branches.map((b) => ({ displayName: b.displayName, address: b.address, phone: b.phone })),
+      doctors: doctors.map((d) => ({ displayName: d.displayName, specialty: d.specialty })),
+      config,
+      channel
+    });
+    // Give the model today's date so it can resolve "tomorrow", "next Monday" etc.
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    return `${prompt}\n\nToday's date is ${today} (Asia/Kolkata). Use it to resolve relative dates.`;
+  }
+
+  /**
+   * Execute an appointment tool the assistant called. Runs inside the tenant
+   * context with the patient's WhatsApp phone, so bookings attach to the right
+   * person. Returns a short string for the model to relay.
+   */
+  private async runAssistantTool(
+    context: RequestContext,
+    from: string,
+    profileName: string | undefined,
+    name: string,
+    input: Record<string, unknown>,
+    dryRun = false
+  ): Promise<string> {
+    const activeDoctors = this.data.doctors.filter(
+      (d) => d.tenantId === context.tenantId && d.status === "active"
     );
-    lines.push(
-      "You must NOT give medical advice, diagnoses, or medication guidance — for anything clinical, tell the patient a doctor/staff member will help and append [HANDOFF]. Never invent prices, timings or availability that are not listed below. If you don't know, say so and append [HANDOFF]."
-    );
-    lines.push(
-      "Append the literal marker [HANDOFF] at the end of your reply whenever the patient should be connected to staff (clinical questions, complaints, emergencies, booking requests you cannot complete, or anything outside the knowledge below)."
-    );
-    if (config.instructions) {
-      lines.push(`Hospital instructions:\n${config.instructions}`);
-    }
-    if (branches.length > 0) {
-      lines.push(
-        `Locations:\n${branches
-          .map((b) => `- ${b.displayName}${b.address ? ` · ${b.address}` : ""}${b.phone ? ` · Phone: ${b.phone}` : ""}`)
-          .join("\n")}`
+    const findDoctor = (raw: unknown) => {
+      const q = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+      if (!q) return undefined;
+      return (
+        activeDoctors.find((d) => d.displayName.toLowerCase() === q) ??
+        activeDoctors.find((d) => d.displayName.toLowerCase().includes(q) || q.includes(d.displayName.toLowerCase())) ??
+        (activeDoctors.length === 1 ? activeDoctors[0] : undefined)
       );
+    };
+
+    if (name === "list_doctors") {
+      if (activeDoctors.length === 0) return "No doctors are configured.";
+      return activeDoctors.map((d) => `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}`).join("\n");
     }
-    if (doctors.length > 0) {
-      lines.push(
-        `Doctors:\n${doctors.map((d) => `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}`).join("\n")}`
-      );
+
+    if (name === "list_available_slots") {
+      const doctor = findDoctor(input.doctorName);
+      const date = typeof input.date === "string" ? input.date.trim() : "";
+      if (!doctor) return "Doctor not found. Ask the patient which doctor, or offer the list of doctors.";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "Need a valid date (YYYY-MM-DD).";
+      let slots: { start: string; capacity: number; booked: number }[];
+      try {
+        slots = this.getDoctorSlots(context, doctor.id, date).filter((s) => s.booked < s.capacity);
+      } catch {
+        return "Could not read the schedule for that date.";
+      }
+      if (slots.length === 0) return `${doctor.displayName} has no open slots on ${date}. Suggest another day or hand off.`;
+      const times = slots
+        .slice(0, 12)
+        .map((s) => new Date(s.start).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }))
+        .join(", ");
+      return `${doctor.displayName} on ${date} has these open times: ${times}. Offer a few and confirm one before booking.`;
     }
-    if (config.knowledge.length > 0) {
-      lines.push(
-        `Hospital knowledge base:\n${config.knowledge.map((k) => `## ${k.title}\n${k.content}`).join("\n\n")}`
-      );
+
+    if (name === "book_appointment") {
+      const doctor = findDoctor(input.doctorName);
+      const date = typeof input.date === "string" ? input.date.trim() : "";
+      const time = typeof input.time === "string" ? input.time.trim() : "";
+      const patientName = typeof input.patientName === "string" ? input.patientName.trim() : "";
+      const reason = typeof input.reason === "string" && input.reason.trim() ? input.reason.trim() : "WhatsApp booking";
+      if (!doctor) return "Doctor not found — cannot book.";
+      const minutes = parseHhMm(time);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || minutes === null) return "Need a valid date (YYYY-MM-DD) and time (HH:MM).";
+      if (!patientName) return "Ask the patient for their full name before booking.";
+      const scheduledAt = isoFromDateAndMinutes(date, minutes);
+      if (dryRun) {
+        return `SIMULATED (test mode — not booked): ${patientName} with ${doctor.displayName} on ${date} ${time}. Tell the patient it is confirmed.`;
+      }
+      try {
+        const created = await this.bookAppointment(context, {
+          doctorId: doctor.id,
+          scheduledAt,
+          reason,
+          patient: { name: patientName, phone: from }
+        } as BookAppointmentInput);
+        const when = new Date(created.scheduledAt).toLocaleString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          hour: "numeric",
+          minute: "2-digit"
+        });
+        return `BOOKED: ${patientName} with ${doctor.displayName} on ${when}. Confirm this to the patient.`;
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : "Could not book that slot.";
+        return `Booking failed: ${message}. Offer another time or hand off.`;
+      }
     }
-    return lines.join("\n\n");
+
+    return `Unknown tool: ${name}`;
   }
 
   /** Recent two-way conversation with this phone (oldest first), ending with the new message. */

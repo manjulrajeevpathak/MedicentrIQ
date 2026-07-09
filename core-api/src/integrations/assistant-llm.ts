@@ -74,6 +74,93 @@ export const generateAssistantReply = async (
   }
 };
 
+/** Executes a tool the assistant called; returns a string result to feed back. */
+export type AssistantToolExecutor = (name: string, input: Record<string, unknown>) => Promise<string>;
+
+/**
+ * Assistant completion WITH tool use — runs the Anthropic tool loop so the bot can
+ * look up real slots and book appointments. `tools` are Anthropic tool schemas;
+ * `executeTool` runs each call (in core-service, with tenant context). Falls back
+ * to a plain completion when `tools` is empty. Same `[HANDOFF]` convention.
+ */
+export const generateAssistantReplyWithTools = async (
+  systemPrompt: string,
+  turns: AssistantTurn[],
+  tools: unknown[] | undefined,
+  executeTool: AssistantToolExecutor
+): Promise<AssistantReplyResult> => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { ok: false, error: "ANTHROPIC_API_KEY is not configured." };
+  }
+  type Block = Record<string, unknown>;
+  const messages: { role: "user" | "assistant"; content: string | Block[] }[] = turns.map((t) => ({
+    role: t.role,
+    content: t.content
+  }));
+  const useTools = Array.isArray(tools) && tools.length > 0;
+  try {
+    // Bounded loop: model → tool calls → results → model … until a text answer.
+    for (let iteration = 0; iteration < 6; iteration += 1) {
+      const response = await fetch(ANTHROPIC_BASE, {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model: process.env.ASSISTANT_MODEL || DEFAULT_MODEL,
+          max_tokens: 700,
+          system: systemPrompt,
+          messages,
+          ...(useTools ? { tools } : {})
+        }),
+        signal: AbortSignal.timeout(40_000)
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        content?: { type?: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }[];
+        stop_reason?: string;
+        error?: { message?: string };
+      };
+      if (!response.ok) {
+        return { ok: false, error: String(result.error?.message ?? `Anthropic API responded with ${response.status}.`) };
+      }
+      const content = result.content ?? [];
+      if (result.stop_reason === "tool_use") {
+        messages.push({ role: "assistant", content: content as Block[] });
+        const toolResults: Block[] = [];
+        for (const block of content) {
+          if (block.type !== "tool_use" || !block.id || !block.name) continue;
+          let output: string;
+          try {
+            output = await executeTool(block.name, block.input ?? {});
+          } catch (error) {
+            output = `Tool error: ${String(error)}`;
+          }
+          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: output });
+        }
+        if (toolResults.length === 0) break;
+        messages.push({ role: "user", content: toolResults });
+        continue;
+      }
+      const text = content
+        .filter((b) => b.type === "text" && typeof b.text === "string")
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      if (!text) {
+        return { ok: false, error: "Assistant returned an empty reply." };
+      }
+      const handoff = text.includes("[HANDOFF]");
+      return { ok: true, reply: text.replaceAll("[HANDOFF]", "").trim(), handoff };
+    }
+    return { ok: false, error: "Assistant tool loop did not converge." };
+  } catch (error) {
+    return { ok: false, error: `Failed to reach the Anthropic API: ${String(error)}` };
+  }
+};
+
 // ---- Prescription vision extraction (OCR → structured fields) ----------------
 
 export type VisionExtractResult = { ok: true; json: unknown } | { ok: false; error: string };

@@ -587,6 +587,10 @@ const createRoutes = (service: CoreService): Route[] => [
   route("PATCH", "/tenant/assistant", "tenant:settings:manage", ({ auth, body }) =>
     service.updateAssistantConfig(auth, toRecord(body))
   ),
+  // Test the saved policy against a message (dry-run — never books a real slot).
+  route("POST", "/tenant/assistant/preview", "tenant:settings:manage", ({ auth, body }) =>
+    service.previewAssistantReply(auth, String(toRecord(body).message ?? ""))
+  ),
   // Inbound webhook processing, forwarded by integration-gateway (service key).
   // The gateway wraps Meta's raw POST as { rawBody, signature } so the HMAC can
   // be verified here against the tenant's stored app secret.
