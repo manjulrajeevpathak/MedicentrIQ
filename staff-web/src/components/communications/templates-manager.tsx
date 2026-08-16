@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useRef, useState, useTransition } from "react";
+import { useCallback, useRef, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
-import { CheckCircle2, Cloud, FileText, MessageSquare, Phone, Plus, RefreshCw, XCircle } from "lucide-react";
+import { CheckCircle2, Cloud, FileText, ImagePlus, MessageSquare, Phone, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,8 @@ import { Field, FormError, Input } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/empty";
 import { useToast } from "@/components/ui/toast";
 import {
+  removeTemplateHeaderImageAction,
+  uploadTemplateHeaderImageAction,
   saveTemplateAction,
   archiveTemplateAction,
   submitTemplateToMetaAction,
@@ -39,6 +41,9 @@ const selectCls =
 const textareaCls =
   "w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-brand-400 focus-visible:ring-2 focus-visible:ring-brand-200 min-h-[140px] resize-y";
 
+/** Uniform editable row for template buttons (unused url/phone fields ignored on save). */
+type DraftButton = { type: "quick_reply" | "url" | "phone"; text: string; url: string; phone: string };
+
 type Draft = {
   id?: string;
   name: string;
@@ -47,9 +52,22 @@ type Draft = {
   body: string;
   formId: string;
   status: CommTemplate["status"];
+  headerText: string;
+  footerText: string;
+  buttons: DraftButton[];
 };
 
-const NEW_DRAFT: Draft = { name: "", channel: "whatsapp", kind: "text", body: "", formId: "", status: "active" };
+const NEW_DRAFT: Draft = {
+  name: "",
+  channel: "whatsapp",
+  kind: "text",
+  body: "",
+  formId: "",
+  status: "active",
+  headerText: "",
+  footerText: "",
+  buttons: []
+};
 
 function toDraft(t: CommTemplate): Draft {
   return {
@@ -59,7 +77,15 @@ function toDraft(t: CommTemplate): Draft {
     kind: t.kind,
     body: t.body ?? "",
     formId: t.formId ?? "",
-    status: t.status
+    status: t.status,
+    headerText: t.rich?.headerText ?? "",
+    footerText: t.rich?.footerText ?? "",
+    buttons: (t.rich?.buttons ?? []).map((b) => ({
+      type: b.type,
+      text: b.text,
+      url: b.type === "url" ? b.url : "",
+      phone: b.type === "phone" ? b.phone : ""
+    }))
   };
 }
 
@@ -158,7 +184,23 @@ export function TemplatesManager({
         kind: draft.kind,
         body: draft.kind === "text" ? draft.body : undefined,
         formId: draft.kind === "form" ? draft.formId : undefined,
-        status: draft.status
+        status: draft.status,
+        rich:
+          draft.channel === "whatsapp" && draft.kind === "text"
+            ? {
+                headerText: draft.headerText.trim() || undefined,
+                footerText: draft.footerText.trim() || undefined,
+                buttons: draft.buttons
+                  .filter((b) => b.text.trim())
+                  .map((b) =>
+                    b.type === "url"
+                      ? { type: "url" as const, text: b.text.trim(), url: b.url.trim() }
+                      : b.type === "phone"
+                        ? { type: "phone" as const, text: b.text.trim(), phone: b.phone.trim() }
+                        : { type: "quick_reply" as const, text: b.text.trim() }
+                  )
+              }
+            : undefined
       });
       if (result.ok) {
         toast(result.message ?? "Template saved.", "success");
@@ -422,6 +464,19 @@ export function TemplatesManager({
             </Field>
           )}
 
+          {/* WhatsApp extras: header / footer / buttons — submitted to Meta with the template */}
+          {draft.channel === "whatsapp" && draft.kind === "text" ? (
+            <WhatsAppExtrasEditor
+              draft={draft}
+              setDraft={setDraft}
+              template={creating ? undefined : selected}
+              onTemplateChanged={(t) => {
+                setSelectedId(t.id);
+                setDraft(toDraft(t));
+              }}
+            />
+          ) : null}
+
           {/* Stats */}
           {!creating && selected ? (
             <div className="rounded-lg border border-line bg-fill/40 p-3">
@@ -580,6 +635,198 @@ export function TemplatesManager({
           </Button>
         </div>
       </Panel>
+    </div>
+  );
+}
+
+/**
+ * Header (text or image) + footer + up to 3 buttons. Everything here rides
+ * along on "Submit to Meta" as template components; the header image also
+ * becomes the default image attached to sends of the approved template.
+ */
+function WhatsAppExtrasEditor({
+  draft,
+  setDraft,
+  template,
+  onTemplateChanged
+}: {
+  draft: Draft;
+  setDraft: Dispatch<SetStateAction<Draft>>;
+  /** The saved template (undefined while creating) — needed for image upload. */
+  template?: CommTemplate;
+  onTemplateChanged: (t: CommTemplate) => void;
+}) {
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, startUpload] = useTransition();
+  const hasImage = Boolean(template?.rich?.headerImageKey);
+
+  const setButton = (index: number, patch: Partial<DraftButton>) =>
+    setDraft((d) => ({
+      ...d,
+      buttons: d.buttons.map((b, i) => (i === index ? { ...b, ...patch } : b))
+    }));
+
+  const uploadImage = (file: File | undefined) => {
+    if (!file || !template) return;
+    const form = new FormData();
+    form.set("file", file);
+    startUpload(async () => {
+      const result = await uploadTemplateHeaderImageAction(template.id, form);
+      if (result.ok && result.data) {
+        toast(result.message ?? "Header image attached.", "success");
+        onTemplateChanged(result.data);
+      } else {
+        toast(result.error ?? "Could not upload the header image.", "error");
+      }
+      if (fileRef.current) fileRef.current.value = "";
+    });
+  };
+
+  const removeImage = () => {
+    if (!template) return;
+    startUpload(async () => {
+      const result = await removeTemplateHeaderImageAction(template.id);
+      if (result.ok && result.data) {
+        toast("Header image removed.", "success");
+        onTemplateChanged(result.data);
+      } else {
+        toast(result.error ?? "Could not remove the header image.", "error");
+      }
+    });
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-line p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+        WhatsApp extras{" "}
+        <span className="font-normal normal-case text-ink-faint">— header, footer &amp; buttons, submitted to Meta with the template</span>
+      </p>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field
+          label="Header text"
+          htmlFor="tpl-header-text"
+          hint={hasImage ? "Ignored while a header image is attached." : "Optional · max 60 characters."}
+        >
+          <Input
+            id="tpl-header-text"
+            value={draft.headerText}
+            maxLength={60}
+            disabled={hasImage}
+            onChange={(e) => setDraft((d) => ({ ...d, headerText: e.target.value }))}
+            placeholder="Time for your eye check-up"
+          />
+        </Field>
+        <Field label="Footer" htmlFor="tpl-footer" hint="Optional small print · max 60 characters.">
+          <Input
+            id="tpl-footer"
+            value={draft.footerText}
+            maxLength={60}
+            onChange={(e) => setDraft((d) => ({ ...d, footerText: e.target.value }))}
+            placeholder="Trayajyoti Eye Hospital · Nawada, Delhi"
+          />
+        </Field>
+      </div>
+
+      {/* Header image */}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/jpeg,image/png"
+          className="hidden"
+          onChange={(e) => uploadImage(e.target.files?.[0])}
+        />
+        {hasImage ? (
+          <>
+            <Badge tone="good">
+              <ImagePlus className="size-3" /> Header image attached
+            </Badge>
+            <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={uploading}>
+              Replace
+            </Button>
+            <Button variant="ghost" size="sm" onClick={removeImage} disabled={uploading}>
+              Remove
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileRef.current?.click()}
+            disabled={!template || uploading}
+            title={!template ? "Save the template first, then attach the image." : undefined}
+          >
+            <ImagePlus className="size-3.5" /> {uploading ? "Uploading…" : "Attach header image"}
+          </Button>
+        )}
+        {!template ? <span className="text-[11px] text-ink-faint">Save the template first to attach an image.</span> : null}
+      </div>
+
+      {/* Buttons */}
+      <div className="space-y-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Buttons (up to 3)</p>
+        {draft.buttons.map((button, index) => (
+          <div key={index} className="flex flex-wrap items-center gap-2">
+            <select
+              value={button.type}
+              onChange={(e) => setButton(index, { type: e.target.value as DraftButton["type"] })}
+              aria-label="Button type"
+              className="h-9 rounded-lg border border-line-strong bg-surface px-2 text-xs text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            >
+              <option value="quick_reply">Quick reply</option>
+              <option value="url">Open URL</option>
+              <option value="phone">Call phone</option>
+            </select>
+            <Input
+              value={button.text}
+              maxLength={25}
+              onChange={(e) => setButton(index, { text: e.target.value })}
+              placeholder="Button label"
+              aria-label="Button label"
+              className="w-40"
+            />
+            {button.type === "url" ? (
+              <Input
+                value={button.url}
+                onChange={(e) => setButton(index, { url: e.target.value })}
+                placeholder="https://…"
+                aria-label="Button URL"
+                className="flex-1"
+              />
+            ) : null}
+            {button.type === "phone" ? (
+              <Input
+                value={button.phone}
+                onChange={(e) => setButton(index, { phone: e.target.value })}
+                placeholder="+91…"
+                aria-label="Button phone number"
+                className="w-40"
+              />
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setDraft((d) => ({ ...d, buttons: d.buttons.filter((_, i) => i !== index) }))}
+              className="rounded p-1.5 text-ink-faint transition hover:bg-surface-muted hover:text-[var(--color-critical)]"
+              aria-label="Remove button"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        ))}
+        {draft.buttons.length < 3 ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              setDraft((d) => ({ ...d, buttons: [...d.buttons, { type: "quick_reply", text: "", url: "", phone: "" }] }))
+            }
+          >
+            <Plus className="size-3.5" /> Add button
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

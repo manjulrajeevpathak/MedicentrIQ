@@ -1,0 +1,173 @@
+# MedicentrIQ / HealthcareOS — full stack for a single host.
+#
+#   cp .env.example .env      # then edit secrets
+#   docker compose build
+#   docker compose up -d
+#
+# Apps:   staff-web :3200  patient-web :3201  platform-console :3202
+#         clinician-pwa :3203
+# APIs:   core-api :4100   workflow-worker :4104   integration-gateway :4105
+#
+# IMPORTANT: core-api holds all state in one process (in-memory, diffed to
+# Postgres) and runs the reminder/campaign schedulers in-process. Do NOT scale it
+# past 1 replica — two instances corrupt data and double-send. See README-docker.md.
+
+name: medicentriq
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-healthcareos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-healthcareos}
+      POSTGRES_DB: ${POSTGRES_DB:-healthcareos_core}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-healthcareos} -d ${POSTGRES_DB:-healthcareos_core}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  core-api:
+    build:
+      context: ./core-api
+    image: medicentriq/core-api
+    restart: unless-stopped
+    init: true
+    # Singleton by design — never set replicas > 1 (in-memory state + in-process schedulers).
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4100"
+      DATABASE_URL: postgres://${POSTGRES_USER:-healthcareos}:${POSTGRES_PASSWORD:-healthcareos}@postgres:5432/${POSTGRES_DB:-healthcareos_core}
+      DATABASE_SSL: "false"
+      DATABASE_POOL_SIZE: "${DATABASE_POOL_SIZE:-5}"
+      STAFF_SESSION_SECRET: ${STAFF_SESSION_SECRET:-dev_session_secret_change_me_in_production}
+      SESSION_TTL_SECONDS: "${SESSION_TTL_SECONDS:-28800}"
+      PLATFORM_API_KEY: ${PLATFORM_API_KEY:-platform_demo_key}
+      CORE_API_SERVICE_KEY: ${CORE_API_SERVICE_KEY:-core_demo_service_key}
+      WORKFLOW_WORKER_URL: http://workflow-worker:4104
+      WORKFLOW_SERVICE_API_KEY: ${WORKFLOW_SERVICE_API_KEY:-workflow_demo_service_key}
+      DEMO_TENANT_ID: ${DEMO_TENANT_ID:-org_demo_healthcare}
+      DEMO_USER_ID: ${DEMO_USER_ID:-user_demo_frontdesk}
+      ALLOW_DEMO_AUTH_FALLBACK: "${ALLOW_DEMO_AUTH_FALLBACK:-false}"
+      # Dev/demo only: lets POST /auth/sessions mint a session without a password.
+      ALLOW_DEMO_SESSION_ISSUER: ${ALLOW_DEMO_SESSION_ISSUER:-}
+      STAFF_WEB_URL: ${STAFF_WEB_URL:-http://localhost:3000/staff}
+      PATIENT_WEB_URL: ${PATIENT_WEB_URL:-http://localhost:3000/care}
+      PLATFORM_CONSOLE_URL: ${PLATFORM_CONSOLE_URL:-http://localhost:3000/console}
+      # Optional — assistant / OCR (unset = assistant disabled, inbound routes to inbox)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-}
+      OCR_MODEL: ${OCR_MODEL:-}
+      # Optional — S3 document storage (unset = local-disk fallback in the volume below)
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # Optional — real email (unset = console transport; OTP/links logged)
+      GMAIL_USER: ${GMAIL_USER:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      GMAIL_FROM_NAME: ${GMAIL_FROM_NAME:-HealthOS}
+    ports:
+      - "${CORE_API_PORT:-4100}:4100"
+    volumes:
+      - core-uploads:/app/.uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  workflow-worker:
+    build:
+      context: ./workflow-worker
+    image: medicentriq/workflow-worker
+    restart: unless-stopped
+    init: true
+    depends_on:
+      core-api:
+        condition: service_started
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4104"
+      NODE_ENV: production
+      SERVICE_API_KEY: ${WORKFLOW_SERVICE_API_KEY:-workflow_demo_service_key}
+      CORE_API_URL: http://core-api:4100
+    ports:
+      - "${WORKFLOW_WORKER_PORT:-4104}:4104"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4104/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  integration-gateway:
+    build:
+      context: ./integration-gateway
+    image: medicentriq/integration-gateway
+    restart: unless-stopped
+    init: true
+    depends_on:
+      core-api:
+        condition: service_started
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4105"
+      NODE_ENV: production
+      # Must match core-api CORE_API_SERVICE_KEY so forwarded webhooks authenticate.
+      SERVICE_API_KEY: ${CORE_API_SERVICE_KEY:-core_demo_service_key}
+      CORE_API_URL: http://core-api:4100
+    ports:
+      - "${INTEGRATION_GATEWAY_PORT:-4105}:4105"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4105/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # Unified web app — serves /staff, /console, /clinician and /care on one port.
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_CORE_API_URL: ${WEB_CORE_API_URL:-http://core-api:4100}
+        CORE_API_INTERNAL_URL: ${CORE_API_INTERNAL_URL:-http://core-api:4100}
+    image: medicentriq/web
+    restart: unless-stopped
+    init: true
+    depends_on:
+      core-api:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_CORE_API_URL: ${WEB_CORE_API_URL:-http://core-api:4100}
+      # platform console (/console) reads these server-side at runtime.
+      CORE_API_URL: http://core-api:4100
+      PLATFORM_API_KEY: ${PLATFORM_API_KEY:-platform_demo_key}
+      # Set PLATFORM_AUTH_MODE=open to bypass the /console login (dev/demo only).
+      PLATFORM_AUTH_MODE: ${PLATFORM_AUTH_MODE:-}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/staff/login').then(()=>process.exit(0)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pgdata:
+  core-uploads:

@@ -24,7 +24,7 @@ export function TopBar({ backHref }: { backHref?: string }) {
 
         <Link href="/" className="flex items-center gap-1.5 font-semibold text-ink">
           <Stethoscope className="h-4.5 w-4.5 text-brand-600" />
-          <span className="text-[15px]">HealthOS Clinician</span>
+          <span className="text-[15px]">HealthFlow Clinician</span>
         </Link>
 
         <form action={logoutAction} className="flex w-10 justify-end">

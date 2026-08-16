@@ -479,7 +479,7 @@ function InactiveLink({ state }: { state: PatientLinkState }) {
         </a>
       ) : null}
       <p className="mt-8 flex items-center gap-1.5 text-[11px] text-ink-faint">
-        <ShieldCheck className="size-3.5" /> {state.provider.name} · secured by HealthcareOS
+        <ShieldCheck className="size-3.5" /> {state.provider.name} · secured by HealthFlow
       </p>
     </div>
   );

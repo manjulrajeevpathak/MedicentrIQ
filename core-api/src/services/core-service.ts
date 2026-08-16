@@ -3672,9 +3672,17 @@ export class CoreService {
       config,
       channel
     });
-    // Give the model today's date so it can resolve "tomorrow", "next Monday" etc.
-    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-    return `${prompt}\n\nToday's date is ${today} (Asia/Kolkata). Use it to resolve relative dates.`;
+    // Give the model today's date AND weekday so it can resolve "tomorrow",
+    // "next Monday" etc. — deriving the weekday from a bare ISO date is a
+    // classic LLM slip (it once told a patient "tomorrow is Sunday, we're
+    // closed" on a Sunday).
+    const now = new Date();
+    const today = now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    const weekday = now.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", weekday: "long" });
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowDate = tomorrow.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    const tomorrowWeekday = tomorrow.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", weekday: "long" });
+    return `${prompt}\n\nToday is ${weekday}, ${today} (Asia/Kolkata); tomorrow is ${tomorrowWeekday}, ${tomorrowDate}. Use these to resolve relative dates — do not re-derive weekdays yourself.`;
   }
 
   /**
@@ -3720,9 +3728,12 @@ export class CoreService {
         return "Could not read the schedule for that date.";
       }
       if (slots.length === 0) return `${doctor.displayName} has no open slots on ${date}. Suggest another day or hand off.`;
+      // scheduledAt/slot times are WALL-CLOCK stored with a Z suffix (a 9 AM
+      // slot is T09:00Z) — format in UTC. An IST timeZone here shifts every
+      // displayed time by +5:30, so patients pick times that don't exist.
       const times = slots
         .slice(0, 12)
-        .map((s) => new Date(s.start).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }))
+        .map((s) => new Date(s.start).toLocaleTimeString("en-IN", { timeZone: "UTC", hour: "numeric", minute: "2-digit" }))
         .join(", ");
       return `${doctor.displayName} on ${date} has these open times: ${times}. Offer a few and confirm one before booking.`;
     }
@@ -3748,8 +3759,9 @@ export class CoreService {
           reason,
           patient: { name: patientName, phone: from }
         } as BookAppointmentInput);
+        // Wall-clock convention — see list_available_slots above.
         const when = new Date(created.scheduledAt).toLocaleString("en-IN", {
-          timeZone: "Asia/Kolkata",
+          timeZone: "UTC",
           weekday: "short",
           day: "numeric",
           month: "short",
@@ -3782,7 +3794,8 @@ export class CoreService {
         .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
     };
     const describeAppt = (a: (typeof this.data.appointments)[number]) =>
-      `${a.doctorName} on ${new Date(a.scheduledAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}`;
+      // Wall-clock convention — see list_available_slots above.
+      `${a.doctorName} on ${new Date(a.scheduledAt).toLocaleString("en-IN", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}`;
     const pickAppt = (docRaw: unknown, dateRaw: unknown) => {
       let appts = myAppointments();
       const doc = findDoctor(docRaw);

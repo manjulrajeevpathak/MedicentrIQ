@@ -74,3 +74,28 @@ const runCampaignScheduler = async () => {
 };
 setTimeout(runCampaignScheduler, 45_000);
 setInterval(runCampaignScheduler, 10 * 60_000);
+
+// Graceful shutdown: on SIGTERM/SIGINT (docker stop, orchestrator drain) stop
+// accepting new connections and let in-flight requests finish their save before
+// exiting, instead of being killed mid-mutation.
+let shuttingDown = false;
+const shutdown = (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received — draining HTTP server`);
+  server.close(() => {
+    console.log("[shutdown] drained — exiting cleanly");
+    process.exit(0);
+  });
+  // Safety net if draining stalls past the orchestrator's grace window.
+  setTimeout(() => {
+    console.warn("[shutdown] drain timed out — forcing exit");
+    process.exit(0);
+  }, 10_000).unref();
+};
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Last-gasp visibility: never let an unhandled rejection/exception die silently.
+process.on("unhandledRejection", (reason) => console.error("[unhandledRejection]", reason));
+process.on("uncaughtException", (error) => console.error("[uncaughtException]", error));

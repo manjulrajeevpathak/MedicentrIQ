@@ -35,7 +35,7 @@ export default async function DashboardPage() {
           <div className="mb-1.5 flex items-center gap-2 text-[var(--color-brand-600)]">
             <ShieldCheck className="h-5 w-5" />
             <span className="text-xs font-semibold uppercase tracking-wider">
-              HealthOS Platform
+              HealthFlow Platform
             </span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink)]">

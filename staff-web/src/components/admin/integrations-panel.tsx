@@ -1,12 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { MessageSquare, Megaphone, Phone, Send, CheckCircle2, Circle, Cloud, Copy, Check } from "lucide-react";
+import { useActionState, useEffect, useState } from "react";
+import { Activity, MessageSquare, Megaphone, Phone, RefreshCw, Send, CheckCircle2, Circle, Cloud, Copy, Check } from "lucide-react";
 import { Panel } from "@/components/ui/card";
 import {
+  fetchWaHealthAction,
   saveChannelsAction,
   sendTestMessageAction,
-  type ChannelActionState
+  type ChannelActionState,
+  type WaHealth
 } from "@/app/(app)/admin/actions";
 import type { ChannelStatus } from "@/lib/users-types";
 import { WaSetupGuide } from "@/components/admin/wa-setup-guide";
@@ -195,6 +197,20 @@ export function IntegrationsPanel({
               <label className={labelCls}>Verify token</label>
               <input name="verifyToken" defaultValue={wa.verifyToken ?? ""} placeholder="Any string you choose" className={inputCls} />
             </div>
+            <div>
+              <label className={labelCls}>Meta App ID</label>
+              <input
+                name="appId"
+                defaultValue={wa.appId ?? ""}
+                placeholder="e.g. 1017471087558xxx"
+                autoComplete="off"
+                inputMode="numeric"
+                className={inputCls}
+              />
+              <p className="mt-1 text-[10px] text-ink-faint">
+                Only needed for templates with image headers (Meta&rsquo;s sample upload). App dashboard → App settings → Basic.
+              </p>
+            </div>
             <label className="flex items-center gap-2 text-sm text-ink">
               <input type="checkbox" name="enabled" defaultChecked={wa.enabled} className="size-4" /> Enabled
             </label>
@@ -214,6 +230,7 @@ export function IntegrationsPanel({
               Verify token there — Meta calls it back to confirm the subscription.
             </p>
           </div>
+          {wa.configured && wa.enabled ? <WaHealthCard /> : null}
         </Panel>
 
         {/* Telephony */}
@@ -284,6 +301,99 @@ export function IntegrationsPanel({
           </div>
         </form>
       </Panel>
+    </div>
+  );
+}
+
+/**
+ * Live number health from Meta: quality rating, daily messaging tier (with
+ * today's usage against it) and month-to-date spend. Meta has no wallet-balance
+ * API for card-billed accounts — spend + tier are what's trackable.
+ */
+function WaHealthCard() {
+  const [health, setHealth] = useState<WaHealth | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    fetchWaHealthAction().then((result) => {
+      setLoading(false);
+      if (result.ok && result.health) {
+        setHealth(result.health);
+        setError(null);
+      } else {
+        setError(result.error ?? "Could not reach Meta.");
+      }
+    });
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, []);
+
+  const qualityTone =
+    health?.qualityRating === "GREEN"
+      ? "text-good"
+      : health?.qualityRating === "RED"
+        ? "text-critical"
+        : "text-ink-soft";
+
+  return (
+    <div className="mt-4 space-y-2 rounded-lg border border-line bg-fill/40 p-3">
+      <div className="flex items-center justify-between">
+        <p className="flex items-center gap-1.5 text-xs font-semibold text-ink">
+          <Activity className="size-3.5 text-brand-600" /> Number health &amp; usage (from Meta)
+        </p>
+        <button
+          type="button"
+          onClick={load}
+          disabled={loading}
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-ink-muted transition hover:bg-surface hover:text-ink"
+        >
+          <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} /> Refresh
+        </button>
+      </div>
+      {error ? (
+        <p className="text-[11px] text-critical">{error}</p>
+      ) : !health ? (
+        <p className="text-[11px] text-ink-muted">Checking with Meta…</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] text-ink-soft sm:grid-cols-4">
+          <div>
+            <p className="text-ink-faint">Quality rating</p>
+            <p className={`font-semibold ${qualityTone}`}>{health.qualityRating ?? "Not reported"}</p>
+          </div>
+          <div>
+            <p className="text-ink-faint">Daily send limit</p>
+            <p className="font-semibold text-ink">
+              {health.dailyLimit === null
+                ? health.messagingLimitTier === "TIER_UNLIMITED"
+                  ? "Unlimited"
+                  : "Not reported"
+                : `${health.dailyLimit.toLocaleString()}/day`}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-faint">Template sends (24h)</p>
+            <p className="font-semibold text-ink">
+              {health.usedToday.toLocaleString()}
+              {health.remainingToday !== null ? ` · ${health.remainingToday.toLocaleString()} left` : ""}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-faint">Spend this month</p>
+            <p className="font-semibold text-ink">
+              {health.monthSpend
+                ? `${health.monthSpend.conversations.toLocaleString()} conv · ${health.monthSpend.cost.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+                : "Not reported yet"}
+            </p>
+          </div>
+        </div>
+      )}
+      <p className="text-[10px] text-ink-faint">
+        Meta bills after usage (no prepaid wallet) — watch spend and the daily tier here. Campaigns warn
+        automatically when a run would exceed the remaining daily allowance.
+      </p>
     </div>
   );
 }

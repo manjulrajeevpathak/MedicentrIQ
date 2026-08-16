@@ -10,9 +10,9 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3201"),
-  title: "Your care link — HealthcareOS",
+  title: "Your care link — HealthFlow",
   description: "Secure appointment, preparation and follow-up actions shared by your care provider.",
-  applicationName: "HealthcareOS"
+  applicationName: "HealthFlow"
 };
 
 export const viewport: Viewport = {

@@ -50,7 +50,7 @@ function formatDate(iso: string | null): string {
   if (!iso) return "Never";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata",  month: "short", day: "numeric", year: "numeric" });
 }
 
 export function AdminView({ users, seats, mfaPolicy, branches }: Props) {

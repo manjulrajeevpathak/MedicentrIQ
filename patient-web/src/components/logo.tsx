@@ -1,13 +1,13 @@
 import { cn } from "@/lib/utils";
 
-/** HealthcareOS logomark — copied from staff-web (services stay independent). */
+/** HealthFlow logomark — copied from staff-web (services stay independent). */
 export function LogoMark({ size = 36, className }: { size?: number; className?: string }) {
   return (
     <span
       className={cn("inline-flex shrink-0 items-center justify-center rounded-[11px] shadow-sm", className)}
       style={{ width: size, height: size }}
     >
-      <svg width={size} height={size} viewBox="0 0 40 40" fill="none" role="img" aria-label="HealthcareOS">
+      <svg width={size} height={size} viewBox="0 0 40 40" fill="none" role="img" aria-label="HealthFlow">
         <defs>
           <linearGradient id="hcos-logo-grad" x1="4" y1="2" x2="36" y2="38" gradientUnits="userSpaceOnUse">
             <stop stopColor="#4d83f3" />

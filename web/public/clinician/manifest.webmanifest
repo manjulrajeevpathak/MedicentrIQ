@@ -1,0 +1,25 @@
+{
+  "name": "HealthOS Clinician",
+  "short_name": "Clinician",
+  "description": "Find a patient, view clinical history, upload documents, and record a visit disposition.",
+  "start_url": "/clinician/",
+  "scope": "/clinician/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f6f3",
+  "theme_color": "#356fe8",
+  "icons": [
+    {
+      "src": "/clinician/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/clinician/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

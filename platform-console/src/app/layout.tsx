@@ -2,10 +2,10 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "HealthOS — Platform Console",
+  title: "HealthFlow — Platform Console",
   description:
     "Superadmin console for the MedicentrIQ healthcare platform: onboard tenants, assign plan tiers, toggle feature modules.",
-  applicationName: "HealthOS Platform Console"
+  applicationName: "HealthFlow Platform Console"
 };
 
 export const viewport: Viewport = {

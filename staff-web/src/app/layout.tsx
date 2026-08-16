@@ -12,10 +12,10 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3200"),
-  title: "HealthcareOS — Staff Console",
+  title: "HealthFlow — Staff Console",
   description:
     "Patient access and continuity operations console for Indian healthcare providers.",
-  applicationName: "HealthcareOS"
+  applicationName: "HealthFlow"
 };
 
 export const viewport: Viewport = {

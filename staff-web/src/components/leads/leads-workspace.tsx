@@ -1163,7 +1163,7 @@ function downloadLeadsTemplate() {
   sheet["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 30 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, sheet, "Leads");
-  XLSX.writeFile(wb, "healthcareos-leads-template.xlsx");
+  XLSX.writeFile(wb, "healthflow-leads-template.xlsx");
 }
 
 // ============================================================================
