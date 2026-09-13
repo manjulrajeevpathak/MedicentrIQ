@@ -47,6 +47,12 @@ describe("per-tenant messaging channels contract", () => {
     assert.equal(ch.aisensy.configured, false);
   });
 
+  it("defaults routing to the categorical mapping when unset", async () => {
+    const body = (await (await authed("/tenant/channels")).json()) as { data: { routing: JsonObject } };
+    assert.equal(body.data.routing.transactional, "ultramsg");
+    assert.equal(body.data.routing.marketing, "aisensy");
+  });
+
   it("rejects a transactional send when UltraMsg is not configured", async () => {
     const res = await authed("/messages/send", { method: "POST", body: JSON.stringify({ to: "+910000000000", type: "transactional", body: "hi" }) });
     const body = (await res.json()) as JsonObject;
@@ -97,6 +103,33 @@ describe("per-tenant messaging channels contract", () => {
     assert.ok(Array.isArray(body.data));
     assert.ok(body.data.length >= 1);
     assert.equal((body.data[0] as JsonObject).channel, "aisensy");
+  });
+
+  it("routes a transactional send by the tenant's routing choice", async () => {
+    // Configure the Cloud API and point transactional traffic at it.
+    await authed("/tenant/channels", {
+      method: "PATCH",
+      body: JSON.stringify({
+        whatsappCloud: { phoneNumberId: "pn_x", wabaId: "waba_x", accessToken: "cloud-tok-1234", enabled: true },
+        routing: { transactional: "whatsapp_cloud", marketing: "aisensy" }
+      })
+    });
+    const cfg = (await (await authed("/tenant/channels")).json()) as { data: { routing: JsonObject } };
+    assert.equal(cfg.data.routing.transactional, "whatsapp_cloud", "routing choice persists");
+
+    // A transactional send now resolves to whatsapp_cloud (not the ultramsg default).
+    const res = await authed("/messages/send", { method: "POST", body: JSON.stringify({ to: "+910000000001", type: "transactional", body: "hi" }) });
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    assert.equal(body.data.channel, "whatsapp_cloud");
+  });
+
+  it("re-routes when the choice changes back to UltraMsg", async () => {
+    await authed("/tenant/channels", { method: "PATCH", body: JSON.stringify({ routing: { transactional: "ultramsg", marketing: "aisensy" } }) });
+    const res = await authed("/messages/send", { method: "POST", body: JSON.stringify({ to: "+910000000002", type: "transactional", body: "hi" }) });
+    const body = (await res.json()) as { data: JsonObject };
+    assert.equal(res.status, 200);
+    assert.equal(body.data.channel, "ultramsg");
   });
 });
 

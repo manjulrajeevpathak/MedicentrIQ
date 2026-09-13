@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
-import { Activity, MessageSquare, Megaphone, Phone, RefreshCw, Send, CheckCircle2, Circle, Cloud, Copy, Check } from "lucide-react";
+import { Activity, MessageSquare, Megaphone, Phone, RefreshCw, Route, Send, CheckCircle2, Circle, Cloud, Copy, Check } from "lucide-react";
+import { PROVIDER_OPTIONS, PROVIDER_LABELS } from "@/lib/campaigns-types";
 import { Panel } from "@/components/ui/card";
 import {
   fetchWaHealthAction,
@@ -66,6 +67,7 @@ export function IntegrationsPanel({
   const [waState, saveWa] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
   const [telState, saveTel] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
   const [testState, sendTest] = useActionState<ChannelActionState, FormData>(sendTestMessageAction, { ok: false });
+  const [routeState, saveRoute] = useActionState<ChannelActionState, FormData>(saveChannelsAction, { ok: false });
 
   const wa = channels.whatsappCloud;
   // The webhook is proxied same-origin (next.config rewrite), so the callback URL
@@ -92,7 +94,7 @@ export function IntegrationsPanel({
       <div>
         <h2 className="text-sm font-semibold text-ink">Integrations · Channels</h2>
         <p className="text-xs text-ink-muted">
-          Configure this hospital&rsquo;s own messaging &amp; telephony credentials. Transactional messages send via UltraMsg; marketing via AISensy; calls are logged via telephony.
+          Configure this hospital&rsquo;s own messaging &amp; telephony credentials. Pick which provider sends each message class under <b>Message routing</b> below; calls are logged via telephony.
         </p>
       </div>
 
@@ -306,6 +308,53 @@ export function IntegrationsPanel({
         </Panel>
       </div>
 
+      {/* Message routing — who sends which class of message */}
+      <Panel>
+        <div className="mb-1 flex items-center gap-2">
+          <Route className="size-4 text-brand-600" />
+          <span className="text-sm font-semibold text-ink">Message routing</span>
+        </div>
+        <p className="mb-3 text-xs text-ink-muted">
+          Choose which provider sends each class of proactive message for this hospital. The live inbound
+          conversation (assistant &amp; inbox replies) always runs on WhatsApp Cloud.
+        </p>
+        <form action={saveRoute} className="grid gap-3 md:grid-cols-2">
+          <input type="hidden" name="provider" value="routing" />
+          <div>
+            <label className={labelCls}>Transactional / session messages</label>
+            <select name="transactional" defaultValue={channels.routing.transactional} className={inputCls}>
+              {PROVIDER_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[10px] text-ink-faint">Appointment reminders, doctor alerts, follow-ups, journeys.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Marketing / broadcasts</label>
+            <select name="marketing" defaultValue={channels.routing.marketing} className={inputCls}>
+              {PROVIDER_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[10px] text-ink-faint">Default for campaigns that don&rsquo;t pick a provider themselves.</p>
+          </div>
+          {channels.routing.transactional === "whatsapp_cloud" ? (
+            <div className="md:col-span-2 flex items-start gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2">
+              <Cloud className="mt-0.5 size-3.5 shrink-0 text-ink-soft" />
+              <p className="text-[11px] text-ink-soft">
+                Reminders on WhatsApp Cloud are sent as <b>approved templates</b> (Meta rejects free text outside the
+                24-hour window). Submit &amp; get your reminder templates approved under <b>Communications → Templates</b>;
+                any not-yet-approved reminder falls back to your other configured provider.
+              </p>
+            </div>
+          ) : null}
+          <div className="md:col-span-2 flex items-center gap-3">
+            <button type="submit" className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">Save routing</button>
+            {routeState.error ? <span className="text-xs text-critical">{routeState.error}</span> : routeState.ok ? <span className="text-xs text-good">{routeState.message}</span> : null}
+          </div>
+        </form>
+      </Panel>
+
       {/* Test send */}
       <Panel>
         <div className="mb-3 flex items-center gap-2">
@@ -316,8 +365,8 @@ export function IntegrationsPanel({
           <div className="md:col-span-1">
             <label className={labelCls}>Channel</label>
             <select name="type" className={inputCls} defaultValue="transactional">
-              <option value="transactional">Transactional (UltraMsg)</option>
-              <option value="marketing">Marketing (AISensy)</option>
+              <option value="transactional">Transactional ({PROVIDER_LABELS[channels.routing.transactional]})</option>
+              <option value="marketing">Marketing ({PROVIDER_LABELS[channels.routing.marketing]})</option>
             </select>
           </div>
           <div className="md:col-span-1">

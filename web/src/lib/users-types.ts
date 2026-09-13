@@ -65,7 +65,11 @@ export type ChannelStatus = {
     /** Gateway-relative webhook path, e.g. "/webhooks/meta/whatsapp/org_xxx". */
     webhookPath: string;
   };
+  /** Which provider sends each class of proactive outbound message (effective values). */
+  routing: { transactional: ChannelProviderKey; marketing: ChannelProviderKey };
 };
+
+export type ChannelProviderKey = "ultramsg" | "aisensy" | "whatsapp_cloud";
 
 export const STAFF_ROLES: { value: StaffRole; label: string }[] = [
   { value: "front_desk", label: "Front desk" },

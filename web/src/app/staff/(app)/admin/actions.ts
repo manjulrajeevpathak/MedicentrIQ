@@ -159,6 +159,10 @@ export async function saveChannelsAction(_prev: ChannelActionState, formData: Fo
       ...(apiKey ? { apiKey } : {}),
       enabled
     };
+  } else if (provider === "routing") {
+    const transactional = String(formData.get("transactional") ?? "").trim();
+    const marketing = String(formData.get("marketing") ?? "").trim();
+    body.routing = { transactional, marketing };
   } else {
     return { ok: false, error: "Unknown channel." };
   }

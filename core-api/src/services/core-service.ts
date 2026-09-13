@@ -2059,6 +2059,30 @@ export class CoreService {
     return this.data.channelConfigs.find((entry) => entry.tenantId === tenantId);
   }
 
+  /** A provider is "ready" when it is enabled AND has the credentials it needs to send. */
+  private providerReady(config: TenantChannelConfig | undefined, provider: ChannelProvider): boolean {
+    if (provider === "ultramsg") return Boolean(config?.ultramsg?.enabled && config.ultramsg.instanceId && config.ultramsg.token);
+    if (provider === "aisensy") return Boolean(config?.aisensy?.enabled && config.aisensy.apiKey);
+    return Boolean(config?.whatsappCloud?.enabled && config.whatsappCloud.phoneNumberId && config.whatsappCloud.accessToken);
+  }
+
+  /** The categorical default provider for a message class (today's hardcoded behaviour). */
+  private defaultProviderFor(type: MessageType): ChannelProvider {
+    return type === "marketing" ? "aisensy" : "ultramsg";
+  }
+
+  /**
+   * Resolve which provider sends a message of `type` for this tenant: the hospital's
+   * configured routing choice when it's ready, else the categorical default. A per-call
+   * `provider` override (campaigns, tests) still takes precedence at the call site.
+   */
+  private resolveRoutedProvider(config: TenantChannelConfig | undefined, type: MessageType): ChannelProvider {
+    const preferred = config?.routing?.[type];
+    if (preferred && this.providerReady(config, preferred)) return preferred;
+    const fallback = this.defaultProviderFor(type);
+    return this.providerReady(config, fallback) ? fallback : preferred ?? fallback;
+  }
+
   /** Redacted channel status for the active tenant (never returns raw secrets). */
   getTenantChannels(context: RequestContext) {
     const c = this.tenantChannelConfig(context.tenantId);
@@ -2093,6 +2117,11 @@ export class CoreService {
         provider: c?.telephony?.provider ?? null,
         callerId: c?.telephony?.callerId ?? null,
         apiKeyTail: tail(c?.telephony?.apiKey)
+      },
+      // Effective routing the UI shows — the tenant's choice, or the categorical default.
+      routing: {
+        transactional: c?.routing?.transactional ?? this.defaultProviderFor("transactional"),
+        marketing: c?.routing?.marketing ?? this.defaultProviderFor("marketing")
       }
     };
   }
@@ -2153,6 +2182,20 @@ export class CoreService {
         enabled: typeof t.enabled === "boolean" ? t.enabled : c.telephony?.enabled ?? true
       };
     }
+    const routing = input.routing;
+    if (routing && typeof routing === "object") {
+      const r = routing as Record<string, unknown>;
+      const valid = (v: unknown, keep: ChannelProvider): ChannelProvider =>
+        v === "ultramsg" || v === "aisensy" || v === "whatsapp_cloud" ? v : keep;
+      const current = c.routing ?? {
+        transactional: this.defaultProviderFor("transactional"),
+        marketing: this.defaultProviderFor("marketing")
+      };
+      c.routing = {
+        transactional: valid(r.transactional, current.transactional),
+        marketing: valid(r.marketing, current.marketing)
+      };
+    }
     c.updatedAt = now;
     await this.persistence.saveCollection("channelConfigs", this.data.channelConfigs);
     await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
@@ -2161,7 +2204,8 @@ export class CoreService {
       whatsappCloud: c.whatsappCloud
         ? { configured: Boolean(c.whatsappCloud.phoneNumberId && c.whatsappCloud.accessToken), enabled: c.whatsappCloud.enabled }
         : null,
-      telephony: c.telephony ? { configured: Boolean(c.telephony.apiKey), enabled: c.telephony.enabled } : null
+      telephony: c.telephony ? { configured: Boolean(c.telephony.apiKey), enabled: c.telephony.enabled } : null,
+      routing: c.routing ?? null
     });
     return this.getTenantChannels(context);
   }
@@ -2515,7 +2559,41 @@ export class CoreService {
             const link = `${process.env.PATIENT_WEB_URL || "http://localhost:3201"}/?token=${session.token}`;
             body = `${body} ${link}`.trim();
           }
-          const send = await this.sendMessage(context, { to: patient.primaryPhone, type: "transactional", body });
+          // Route proactive reminders per the tenant's transactional setting. On the
+          // WABA, a business-initiated message outside the 24h window MUST be an
+          // APPROVED template (Meta rejects free-form) — so when routed to Cloud and the
+          // stage's template is approved, send it as a template (mapping each positional
+          // {{N}} back to its named token via meta.paramTokens). Form stages keep the
+          // free-form path so their appended session link still works.
+          const channelConfig = this.tenantChannelConfig(context.tenantId);
+          const routedProvider = this.resolveRoutedProvider(channelConfig, "transactional");
+          const meta = template.meta;
+          let send: Awaited<ReturnType<CoreService["sendMessage"]>>;
+          if (stage.action === "message" && routedProvider === "whatsapp_cloud" && meta?.status === "APPROVED" && meta.name) {
+            send = await this.sendMessage(context, {
+              to: patient.primaryPhone,
+              type: "transactional",
+              provider: "whatsapp_cloud",
+              template: {
+                name: meta.name,
+                language: meta.language ?? "en",
+                params: (meta.paramTokens ?? []).map((tok) => this.renderTemplate(`{{${tok}}}`, tokens))
+              }
+            });
+          } else {
+            // Free-form fallback. If we wanted Cloud but can't use a template, prefer a
+            // free-form-capable provider (UltraMsg) when it's configured — Cloud free-form
+            // only delivers inside the 24h window, so it would drop a business-initiated
+            // reminder. When no such provider exists, fall through to the routed provider.
+            const freeFormProvider =
+              routedProvider === "whatsapp_cloud" && this.providerReady(channelConfig, "ultramsg") ? "ultramsg" : undefined;
+            send = await this.sendMessage(context, {
+              to: patient.primaryPhone,
+              type: "transactional",
+              body,
+              ...(freeFormProvider ? { provider: freeFormProvider } : {})
+            });
+          }
           // Attribute the message log to the template that produced it.
           const log = this.data.messages.find((entry) => entry.id === send.messageId);
           if (log) {
@@ -2814,7 +2892,7 @@ export class CoreService {
       throw new ApiError(400, "This recipient has opted out of marketing messages.");
     }
 
-    const channel: ChannelProvider = providerOverride ?? (type === "marketing" ? "aisensy" : "ultramsg");
+    const channel: ChannelProvider = providerOverride ?? this.resolveRoutedProvider(config, type);
     let result: { ok: true; providerId?: string } | { ok: false; error: string };
     let body: string | undefined;
     let campaign: string | undefined;
@@ -9428,8 +9506,10 @@ export class CoreService {
     const { allowed, optedOut } = this.filterOptedOut(campaign.tenantId, resolved);
     const { eligible, skipped: alreadyContacted } = this.eligibleRecipients(campaign, allowed);
     const skipped = alreadyContacted + optedOut;
-    // Effective delivery provider — explicit, else derived from the category.
-    const provider: ChannelProvider = campaign.provider ?? (campaign.channelType === "marketing" ? "aisensy" : "ultramsg");
+    // Effective delivery provider — explicit per-campaign choice, else the tenant's
+    // routing for this message class (falling back to the categorical default).
+    const provider: ChannelProvider =
+      campaign.provider ?? this.resolveRoutedProvider(this.tenantChannelConfig(campaign.tenantId), campaign.channelType);
 
     // Tenant-level tokens for the body (a campaign has no appointment context, so
     // branch info comes from the campaign tenant's primary branch). Recipient name

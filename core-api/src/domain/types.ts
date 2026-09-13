@@ -242,6 +242,13 @@ export type TenantChannelConfig = {
   whatsappCloud?: WhatsAppCloudConfig;
   /** Telephony — per-tenant click-to-call / call-log provider (stub for now). */
   telephony?: { provider?: string; apiKey?: string; callerId?: string; enabled: boolean };
+  /**
+   * Which provider sends each class of outbound message. Absent ⇒ the hardcoded
+   * categorical defaults (transactional→ultramsg, marketing→aisensy). Governs
+   * proactive outbound only — the live inbound/assistant conversation always
+   * runs on the WhatsApp Cloud API.
+   */
+  routing?: { transactional: ChannelProvider; marketing: ChannelProvider };
   createdAt: string;
   updatedAt: string;
 };

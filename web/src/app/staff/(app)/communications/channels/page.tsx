@@ -22,7 +22,8 @@ export default async function ChannelsPage() {
           verifyToken: null,
           appId: null,
           webhookPath: ""
-        }
+        },
+        routing: { transactional: "ultramsg", marketing: "aisensy" }
       };
 
   // Public gateway origin for the Meta webhook callback URL (read server-side).
