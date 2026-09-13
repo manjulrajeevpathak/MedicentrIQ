@@ -71,7 +71,7 @@ export async function createLeadAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the lead." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Lead added." };
 }
 
@@ -90,7 +90,7 @@ export async function updateLeadAction(
 
   const result = await coreApi<Lead>(`/leads/${encodeURIComponent(id)}`, { method: "PATCH", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the lead." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Lead updated." };
 }
 
@@ -109,7 +109,7 @@ export async function moveLeadStageAction(
     body: { stage }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not move the lead." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Lead moved." };
 }
 
@@ -126,7 +126,7 @@ export async function changeLeadSourceAction(
     body: { source }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the source." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Source updated." };
 }
 
@@ -146,7 +146,7 @@ export async function addLeadNoteAction(
     body: { body: text }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not add the note." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Note added." };
 }
 
@@ -180,7 +180,7 @@ export async function scheduleCallbackAction(
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not schedule the callback." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Callback scheduled." };
 }
 
@@ -201,7 +201,7 @@ export async function updateCallbackAction(
     body: { status }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the callback." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return {
     ok: true,
     data: result.data,
@@ -221,8 +221,8 @@ export async function convertLeadAction(
     body: patientId ? { patientId } : {}
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not convert the lead." };
-  revalidatePath("/leads");
-  revalidatePath("/patients");
+  revalidatePath("/staff/leads");
+  revalidatePath("/staff/patients");
   return { ok: true, data: result.data, message: "Lead converted to a patient." };
 }
 
@@ -244,7 +244,7 @@ export async function importLeadsAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not import the leads." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return {
     ok: true,
     data: result.data,
@@ -280,7 +280,7 @@ export async function saveLeadSheetConfigAction(input: {
 
   const result = await coreApi<LeadSheetConfig>("/tenant/lead-sheet", { method: "PATCH", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the sheet connection." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Sheet connection saved." };
 }
 
@@ -297,7 +297,7 @@ export async function syncLeadSheetAction(): Promise<
     { method: "POST", body: {} }
   );
   if (!result.ok) return { ok: false, error: result.error ?? "Could not sync the sheet." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return {
     ok: true,
     data: result.data,
@@ -331,7 +331,7 @@ export async function createFormAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the form." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: "Form created." };
 }
 
@@ -345,7 +345,7 @@ export async function setFormStatusAction(
     body: { status }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the form." };
-  revalidatePath("/leads");
+  revalidatePath("/staff/leads");
   return { ok: true, data: result.data, message: status === "active" ? "Form activated." : "Form deactivated." };
 }
 
@@ -380,7 +380,7 @@ export async function saveLeadConfigAction(input: {
 
   const result = await coreApi<LeadConfig>("/tenant/lead-config", { method: "PATCH", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the funnel config." };
-  revalidatePath("/leads");
-  revalidatePath("/campaigns");
+  revalidatePath("/staff/leads");
+  revalidatePath("/staff/campaigns");
   return { ok: true, data: result.data, message: "Funnel updated." };
 }

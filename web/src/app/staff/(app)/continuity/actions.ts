@@ -42,7 +42,7 @@ export async function createFollowUpAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the follow-up." };
-  revalidatePath("/continuity");
+  revalidatePath("/staff/continuity");
   return { ok: true, data: result.data, message: "Follow-up created." };
 }
 
@@ -68,7 +68,7 @@ export async function updateFollowUpAction(
     body
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the follow-up." };
-  revalidatePath("/continuity");
+  revalidatePath("/staff/continuity");
   return { ok: true, data: result.data, message: "Follow-up updated." };
 }
 
@@ -80,6 +80,6 @@ export async function remindFollowUpAction(id: string): Promise<ActionState<{ id
     method: "POST"
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not send the reminder." };
-  revalidatePath("/continuity");
+  revalidatePath("/staff/continuity");
   return { ok: true, data: result.data, message: "Reminder sent." };
 }

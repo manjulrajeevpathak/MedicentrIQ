@@ -45,7 +45,7 @@ export async function createTemplateAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the template." };
-  revalidatePath("/journeys");
+  revalidatePath("/staff/journeys");
   return { ok: true, data: result.data, message: "Template created." };
 }
 
@@ -63,7 +63,7 @@ export async function enrollPatientAction(input: {
     body: { patientId: input.patientId, templateId: input.templateId }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not enroll the patient." };
-  revalidatePath("/journeys");
+  revalidatePath("/staff/journeys");
   return { ok: true, data: result.data, message: "Patient enrolled." };
 }
 
@@ -79,7 +79,7 @@ export async function setJourneyStatusAction(
     body: { status }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the journey." };
-  revalidatePath("/journeys");
+  revalidatePath("/staff/journeys");
   return { ok: true, data: result.data, message: "Journey updated." };
 }
 
@@ -98,6 +98,6 @@ export async function sendJourneyMessageAction(
     { method: "POST", body: { body: message } }
   );
   if (!result.ok) return { ok: false, error: result.error ?? "Could not send the message." };
-  revalidatePath("/journeys");
+  revalidatePath("/staff/journeys");
   return { ok: true, data: result.data, message: "Update sent." };
 }

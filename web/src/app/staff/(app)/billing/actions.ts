@@ -43,7 +43,7 @@ export async function createInvoiceAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the invoice." };
-  revalidatePath("/billing");
+  revalidatePath("/staff/billing");
   return { ok: true, data: result.data, message: "Invoice created." };
 }
 
@@ -68,6 +68,6 @@ export async function recordPaymentAction(
   });
   // Surface the 400 overpay message (e.g. "Payment exceeds the outstanding balance").
   if (!result.ok) return { ok: false, error: result.error ?? "Could not record the payment." };
-  revalidatePath("/billing");
+  revalidatePath("/staff/billing");
   return { ok: true, data: result.data, message: "Payment recorded." };
 }

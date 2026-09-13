@@ -93,7 +93,7 @@ export async function registerVisitAction(input: RegisterVisitInput): Promise<Ac
 
   const result = await coreApi<Visit>("/visits", { method: "POST", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not register the walk-in." };
-  revalidatePath("/opd");
+  revalidatePath("/staff/opd");
   return { ok: true, data: result.data, message: "Walk-in registered." };
 }
 
@@ -180,7 +180,7 @@ export async function updateVisitClinicalAction(
     body
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the observations." };
-  revalidatePath("/opd");
+  revalidatePath("/staff/opd");
   return { ok: true, data: result.data, message: "Observations saved." };
 }
 
@@ -318,7 +318,7 @@ export async function uploadVisitDocumentAction(formData: FormData): Promise<Act
   });
   if (!recordResult.ok) return { ok: false, error: recordResult.error ?? "Could not record the document." };
 
-  revalidatePath("/opd");
+  revalidatePath("/staff/opd");
   return { ok: true, data: recordResult.data, message: "Document uploaded." };
 }
 

@@ -64,7 +64,7 @@ export async function createUserAction(_prev: ActionState, formData: FormData): 
     return { ok: false, error: result.error ?? "Could not create the user. Try again." };
   }
 
-  revalidatePath("/admin");
+  revalidatePath("/staff/admin");
   return { ok: true, user: result.data.user, tempPassword: result.data.tempPassword };
 }
 
@@ -79,7 +79,7 @@ export async function setUserStatusAction(
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not update the user." };
   }
-  revalidatePath("/admin");
+  revalidatePath("/staff/admin");
   return {
     ok: true,
     user: result.data.user,
@@ -95,7 +95,7 @@ export async function resetUserPasswordAction(id: string): Promise<ActionState> 
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not reset the password." };
   }
-  revalidatePath("/admin");
+  revalidatePath("/staff/admin");
   return { ok: true, tempPassword: result.data.tempPassword, message: "Temporary password generated." };
 }
 
@@ -107,7 +107,7 @@ export async function setMfaPolicyAction(policy: MfaPolicy): Promise<ActionState
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not update the security policy." };
   }
-  revalidatePath("/admin");
+  revalidatePath("/staff/admin");
   return { ok: true, message: policy === "required" ? "MFA is now required for all staff." : "MFA set to optional." };
 }
 
@@ -165,7 +165,7 @@ export async function saveChannelsAction(_prev: ChannelActionState, formData: Fo
 
   const result = await coreApi<unknown>("/tenant/channels", { method: "PATCH", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the channel." };
-  revalidatePath("/communications/channels");
+  revalidatePath("/staff/communications/channels");
   return { ok: true, message: "Channel saved." };
 }
 
@@ -181,7 +181,7 @@ export async function sendTestMessageAction(_prev: ChannelActionState, formData:
 
   const result = await coreApi<{ ok: boolean; channel: string; error?: string }>("/messages/test", { method: "POST", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not send the test." };
-  revalidatePath("/communications/channels");
+  revalidatePath("/staff/communications/channels");
   if (!result.data.ok) return { ok: false, error: result.data.error ?? "The provider rejected the message." };
   return { ok: true, message: `Test sent via ${result.data.channel}.` };
 }
@@ -211,6 +211,6 @@ export async function saveBranchContactAction(
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the location." };
 
-  revalidatePath("/admin");
+  revalidatePath("/staff/admin");
   return { ok: true, branch: result.data.branch, message: "Location saved." };
 }

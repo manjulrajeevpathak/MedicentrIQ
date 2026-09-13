@@ -41,8 +41,8 @@ export async function createDoctorAction(input: {
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not add the doctor." };
   }
-  revalidatePath("/doctors");
-  revalidatePath("/appointments");
+  revalidatePath("/staff/doctors");
+  revalidatePath("/staff/appointments");
   return { ok: true, data: result.data, message: "Doctor added." };
 }
 
@@ -63,8 +63,8 @@ export async function updateDoctorAction(
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not update the doctor." };
   }
-  revalidatePath("/doctors");
-  revalidatePath("/appointments");
+  revalidatePath("/staff/doctors");
+  revalidatePath("/staff/appointments");
   return { ok: true, data: result.data, message: "Doctor updated." };
 }
 
@@ -81,7 +81,7 @@ export async function setDoctorScheduleAction(
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not save the schedule." };
   }
-  revalidatePath("/doctors");
-  revalidatePath("/appointments");
+  revalidatePath("/staff/doctors");
+  revalidatePath("/staff/appointments");
   return { ok: true, data: result.data, message: "Schedule saved." };
 }

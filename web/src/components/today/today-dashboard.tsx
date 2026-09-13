@@ -192,7 +192,7 @@ function NeedsPersonPanel({ data }: { data: DashboardData }) {
         <Button variant="primary" size="sm" onClick={() => toast(`Calling ${p.name}…`, "success")}>
           <PhoneCall className="size-3.5" /> Call now
         </Button>
-        <Link href={`/patients/${p.id}`} className="text-xs font-medium text-brand-600 hover:underline">
+        <Link href={`/staff/patients/${p.id}`} className="text-xs font-medium text-brand-600 hover:underline">
           Open record
         </Link>
       </div>

@@ -45,10 +45,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const searchIndex = useMemo<SearchEntry[]>(
     () => [
-      ...data.directory.map((p) => ({ id: p.id, title: p.name, subtitle: `${p.condition} · ${p.uhid}`, kind: "patient" as const, href: `/patients/${p.id}` })),
-      ...data.inbox.map((c) => ({ id: c.id, title: c.patient, subtitle: `${c.intent} · ${c.channel}`, kind: "conversation" as const, href: `/inbox?sel=${c.id}` })),
-      ...data.accessQueue.map((a) => ({ id: a.id, title: a.patient, subtitle: `${a.request} · ${a.branch}`, kind: "access" as const, href: `/access?sel=${a.id}` })),
-      ...data.followUpQueue.map((f) => ({ id: f.id, title: f.patient, subtitle: `${f.journey} · ${f.stage}`, kind: "journey" as const, href: `/continuity?sel=${f.id}` }))
+      ...data.directory.map((p) => ({ id: p.id, title: p.name, subtitle: `${p.condition} · ${p.uhid}`, kind: "patient" as const, href: `/staff/patients/${p.id}` })),
+      ...data.inbox.map((c) => ({ id: c.id, title: c.patient, subtitle: `${c.intent} · ${c.channel}`, kind: "conversation" as const, href: `/staff/inbox?sel=${c.id}` })),
+      ...data.accessQueue.map((a) => ({ id: a.id, title: a.patient, subtitle: `${a.request} · ${a.branch}`, kind: "access" as const, href: `/staff/access?sel=${a.id}` })),
+      ...data.followUpQueue.map((f) => ({ id: f.id, title: f.patient, subtitle: `${f.journey} · ${f.stage}`, kind: "journey" as const, href: `/staff/continuity?sel=${f.id}` }))
     ],
     [data]
   );

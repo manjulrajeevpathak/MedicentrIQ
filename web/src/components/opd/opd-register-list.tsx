@@ -300,7 +300,7 @@ export function OpdRegisterList({
               <tr key={visit.id} className={cn("transition", color ? ROW_TINT[color] : "hover:bg-surface-muted")}>
                 <td className={cn("border-l-[3px] px-4 py-3", color ? ROW_EDGE[color] : "border-l-transparent")}>
                   {/* The visit's OWN page — Patient 360 stays a secondary link there. */}
-                  <Link href={`/opd/${visit.id}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">
+                  <Link href={`/staff/opd/${visit.id}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">
                     {visit.patientName ?? "Walk-in patient"}
                   </Link>
                   <p className="mt-0.5 text-xs text-ink-muted">{meta || "No details"}</p>
@@ -330,14 +330,14 @@ export function OpdRegisterList({
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   {visit.status === "completed" ? (
                     <Link
-                      href={`/opd/${visit.id}`}
+                      href={`/staff/opd/${visit.id}`}
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-surface px-3 text-xs font-medium text-ink-soft ring-1 ring-inset ring-line-strong transition hover:bg-surface-muted hover:text-ink"
                     >
                       <FileText className="size-3.5" /> View / edit observations
                     </Link>
                   ) : visit.status === "left_without_seen" ? (
                     <Link
-                      href={`/opd/${visit.id}`}
+                      href={`/staff/opd/${visit.id}`}
                       className="text-xs font-medium text-brand-700 hover:underline"
                     >
                       View visit
@@ -345,7 +345,7 @@ export function OpdRegisterList({
                   ) : (
                     // registered (and any legacy in_consult row) → capture observations.
                     <Link
-                      href={`/opd/${visit.id}`}
+                      href={`/staff/opd/${visit.id}`}
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-medium text-white shadow-sm transition hover:bg-brand-700"
                     >
                       <Stethoscope className="size-3.5" /> Clinical observations

@@ -146,7 +146,7 @@ export async function addConditionAction(_prev: ActionResult, formData: FormData
 
   if (!result.ok) return { error: result.error ?? "Could not add the condition." };
 
-  revalidatePath(`/patients/${patientId}`);
+  revalidatePath(`/clinician/patients/${patientId}`);
   return { ok: true };
 }
 
@@ -207,7 +207,7 @@ export async function uploadDocumentAction(_prev: ActionResult, formData: FormDa
   });
   if (!register.ok) return { error: register.error ?? "Uploaded, but could not save the document record." };
 
-  revalidatePath(`/patients/${patientId}`);
+  revalidatePath(`/clinician/patients/${patientId}`);
   return { ok: true };
 }
 
@@ -298,7 +298,7 @@ export async function uploadPrescriptionAction(
   });
   if (!register.ok) return { error: register.error ?? "Uploaded, but could not save the record." };
   if (!register.data?.id) return { error: "Uploaded, but could not save the record." };
-  revalidatePath(`/patients/${patientId}`);
+  revalidatePath(`/clinician/patients/${patientId}`);
   return { ok: true, doc: { id: register.data.id, name: filename } };
 }
 
@@ -342,7 +342,7 @@ export async function saveClinicalObjectAction(input: {
     body: { ...rest }
   });
   if (!result.ok) return { error: result.error ?? "Could not save the clinical observations." };
-  revalidatePath(`/patients/${patientId}`);
+  revalidatePath(`/clinician/patients/${patientId}`);
   return { ok: true };
 }
 
@@ -438,7 +438,7 @@ export async function saveClinicalAction(_prev: ActionResult, formData: FormData
   });
   if (!result.ok) return { error: result.error ?? "Could not save the clinical observations." };
 
-  revalidatePath(`/patients/${patientId}`);
+  revalidatePath(`/clinician/patients/${patientId}`);
   return { ok: true };
 }
 
@@ -466,6 +466,6 @@ export async function dispositionAction(_prev: ActionResult, formData: FormData)
   });
   if (!result.ok) return { error: result.error ?? "Could not save the disposition." };
 
-  if (patientId) revalidatePath(`/patients/${patientId}`);
+  if (patientId) revalidatePath(`/clinician/patients/${patientId}`);
   return { ok: true };
 }

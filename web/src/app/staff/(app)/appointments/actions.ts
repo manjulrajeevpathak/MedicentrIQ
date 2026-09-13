@@ -91,7 +91,7 @@ export async function bookAppointmentAction(input: {
     // 409 (slot taken) / 400 (outside schedule) messages are surfaced verbatim.
     return { ok: false, error: result.error ?? "Could not book the appointment." };
   }
-  revalidatePath("/appointments");
+  revalidatePath("/staff/appointments");
   return { ok: true, data: result.data, message: "Appointment booked." };
 }
 
@@ -106,7 +106,7 @@ export async function setAppointmentStatusAction(
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not update the appointment." };
   }
-  revalidatePath("/appointments");
+  revalidatePath("/staff/appointments");
   return { ok: true, data: result.data, message: "Appointment updated." };
 }
 
@@ -122,7 +122,7 @@ export async function rescheduleAppointmentAction(
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not reschedule the appointment." };
   }
-  revalidatePath("/appointments");
+  revalidatePath("/staff/appointments");
   return { ok: true, data: result.data, message: "Appointment rescheduled." };
 }
 
@@ -133,7 +133,7 @@ export async function sendConfirmationsAction(): Promise<ActionState<{ sent: num
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not send confirmations." };
   }
-  revalidatePath("/appointments");
+  revalidatePath("/staff/appointments");
   return {
     ok: true,
     data: result.data,

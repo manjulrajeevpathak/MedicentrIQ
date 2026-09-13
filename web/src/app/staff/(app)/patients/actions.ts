@@ -53,7 +53,7 @@ export async function createPatientAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the patient." };
-  revalidatePath("/patients");
+  revalidatePath("/staff/patients");
   return { ok: true, data: result.data, message: "Patient added." };
 }
 
@@ -78,7 +78,7 @@ export async function saveClinicalAction(
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save clinical history." };
-  revalidatePath("/patients");
+  revalidatePath("/staff/patients");
   return { ok: true, data: result.data, message: "Clinical history saved." };
 }
 
@@ -146,7 +146,7 @@ export async function uploadDocumentAction(formData: FormData): Promise<ActionSt
   });
   if (!recordResult.ok) return { ok: false, error: recordResult.error ?? "Could not record the document." };
 
-  revalidatePath("/patients");
+  revalidatePath("/staff/patients");
   return { ok: true, data: recordResult.data, message: "Document uploaded." };
 }
 
@@ -176,7 +176,7 @@ export async function recordDispositionAction(
     }
   );
   if (!result.ok) return { ok: false, error: result.error ?? "Could not record the disposition." };
-  revalidatePath("/patients");
+  revalidatePath("/staff/patients");
   return { ok: true, data: result.data, message: "Visit completed." };
 }
 

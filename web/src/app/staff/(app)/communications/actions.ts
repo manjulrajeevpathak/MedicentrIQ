@@ -47,7 +47,7 @@ export async function saveTemplateAction(input: SaveTemplateInput): Promise<Comm
     : await coreApi<CommTemplate>("/templates", { method: "POST", body: payload });
 
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the template." };
-  revalidatePath("/communications/templates");
+  revalidatePath("/staff/communications/templates");
   return { ok: true, message: input.id ? "Template saved." : "Template created.", data: result.data };
 }
 
@@ -66,7 +66,7 @@ export async function uploadTemplateHeaderImageAction(
     body: { mimeType: file.type, data }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not upload the header image." };
-  revalidatePath("/communications/templates");
+  revalidatePath("/staff/communications/templates");
   return { ok: true, message: "Header image attached.", data: result.data };
 }
 
@@ -76,14 +76,14 @@ export async function removeTemplateHeaderImageAction(id: string): Promise<CommA
     body: { remove: true }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not remove the header image." };
-  revalidatePath("/communications/templates");
+  revalidatePath("/staff/communications/templates");
   return { ok: true, message: "Header image removed.", data: result.data };
 }
 
 export async function archiveTemplateAction(id: string): Promise<CommActionState<never>> {
   const result = await coreApi<unknown>(`/templates/${id}`, { method: "DELETE" });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not archive the template." };
-  revalidatePath("/communications/templates");
+  revalidatePath("/staff/communications/templates");
   return { ok: true, message: "Template archived." };
 }
 
@@ -106,7 +106,7 @@ export async function submitTemplateToMetaAction(
     body: { category: input.category, language }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not submit the template to Meta." };
-  revalidatePath("/communications/templates");
+  revalidatePath("/staff/communications/templates");
   return {
     ok: true,
     data: result.data,
@@ -125,7 +125,7 @@ export type SyncMetaResult = {
 export async function syncMetaTemplatesAction(): Promise<CommActionState<SyncMetaResult>> {
   const result = await coreApi<SyncMetaResult>("/templates/sync-meta", { method: "POST" });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not sync templates from Meta." };
-  revalidatePath("/communications/templates");
+  revalidatePath("/staff/communications/templates");
   return { ok: true, data: result.data };
 }
 
@@ -142,7 +142,7 @@ export async function importMetaTemplateAction(input: {
     body: { name, language: input.language.trim() }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not import the template." };
-  revalidatePath("/communications/templates");
+  revalidatePath("/staff/communications/templates");
   return { ok: true, data: result.data, message: `Imported "${name}" to the library.` };
 }
 
@@ -194,13 +194,13 @@ export async function saveWorkflowAction(input: SaveWorkflowInput): Promise<Comm
       });
 
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the workflow." };
-  revalidatePath("/communications/workflows");
+  revalidatePath("/staff/communications/workflows");
   return { ok: true, message: input.id ? "Workflow saved." : "Workflow created.", data: result.data };
 }
 
 export async function archiveWorkflowAction(id: string): Promise<CommActionState<never>> {
   const result = await coreApi<unknown>(`/workflows/${id}`, { method: "DELETE" });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not archive the workflow." };
-  revalidatePath("/communications/workflows");
+  revalidatePath("/staff/communications/workflows");
   return { ok: true, message: "Workflow archived." };
 }

@@ -3,7 +3,7 @@ export type SendWhatsAppResult = { ok: boolean; id?: string | null; error?: stri
 /** Client helper: posts to the server route that talks to UltraMsg (token stays server-side). */
 export async function sendWhatsApp(input: { to: string; body: string }): Promise<SendWhatsAppResult> {
   try {
-    const response = await fetch("/api/whatsapp/send", {
+    const response = await fetch("/staff/api/whatsapp/send", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input)

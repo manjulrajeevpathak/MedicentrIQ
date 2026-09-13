@@ -64,44 +64,44 @@ export const navGroups: NavGroup[] = [
   {
     label: "Work",
     items: [
-      { href: "/today", label: "Today", icon: LayoutDashboard, description: "Your floor, right now", module: "today", badgeKey: "workbench" },
-      { href: "/inbox", label: "Unified Inbox", icon: Inbox, description: "WhatsApp, call, web and referral conversations", module: "inbox", requires: "inbox:assign", badgeKey: "inbox" }
+      { href: "/staff/today", label: "Today", icon: LayoutDashboard, description: "Your floor, right now", module: "today", badgeKey: "workbench" },
+      { href: "/staff/inbox", label: "Unified Inbox", icon: Inbox, description: "WhatsApp, call, web and referral conversations", module: "inbox", requires: "inbox:assign", badgeKey: "inbox" }
     ]
   },
   {
     label: "Care",
     items: [
-      { href: "/appointments", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" },
-      { href: "/opd", label: "OPD", icon: ClipboardPlus, description: "Walk-in intake, queue and consult capture", module: "patients", requires: "patients:create" },
-      { href: "/ipd", label: "IPD", icon: BedDouble, description: "In-patient admissions and ward management", module: "patients", comingSoon: true },
-      { href: "/patients", label: "All Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view", hidden: true }
+      { href: "/staff/appointments", label: "Appointments", icon: CalendarClock, description: "Booking, doctor schedules and slot orchestration", module: "access", requires: "appointment:write", badgeKey: "access" },
+      { href: "/staff/opd", label: "OPD", icon: ClipboardPlus, description: "Walk-in intake, queue and consult capture", module: "patients", requires: "patients:create" },
+      { href: "/staff/ipd", label: "IPD", icon: BedDouble, description: "In-patient admissions and ward management", module: "patients", comingSoon: true },
+      { href: "/staff/patients", label: "All Patients", icon: Users, description: "Identity, matching and Patient 360", module: "patients", requires: "patient360:view", hidden: true }
     ]
   },
   {
     label: "Growth",
     items: [
-      { href: "/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
-      { href: "/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
-      { href: "/journeys", label: "Journeys", icon: Route, description: "Specialty journey & protocol packs", module: "journeys", requires: "journey:manage" },
-      { href: "/continuity", label: "Continuity", icon: Activity, description: "Follow-up journeys and patients at risk of falling out of care", module: "continuity", requires: "followup:manage", badgeKey: "continuity" }
+      { href: "/staff/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
+      { href: "/staff/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
+      { href: "/staff/journeys", label: "Journeys", icon: Route, description: "Specialty journey & protocol packs", module: "journeys", requires: "journey:manage" },
+      { href: "/staff/continuity", label: "Continuity", icon: Activity, description: "Follow-up journeys and patients at risk of falling out of care", module: "continuity", requires: "followup:manage", badgeKey: "continuity" }
     ]
   },
   {
     label: "Communications",
     items: [
-      { href: "/communications/channels", label: "Channels", icon: Radio, description: "WhatsApp & telephony credentials", module: "admin", requires: "audit:view" },
-      { href: "/communications/templates", label: "Templates", icon: MailCheck, description: "Reusable WhatsApp messages & call scripts", module: "admin", requires: "audit:view" },
-      { href: "/communications/workflows", label: "Workflows", icon: Workflow, description: "Staged message, call, form & task orchestration", module: "admin", requires: "audit:view" },
-      { href: "/assistant", label: "Assistant", icon: Bot, description: "AI answers patient WhatsApp messages — hands off to your Inbox", module: "admin", requires: "audit:view" }
+      { href: "/staff/communications/channels", label: "Channels", icon: Radio, description: "WhatsApp & telephony credentials", module: "admin", requires: "audit:view" },
+      { href: "/staff/communications/templates", label: "Templates", icon: MailCheck, description: "Reusable WhatsApp messages & call scripts", module: "admin", requires: "audit:view" },
+      { href: "/staff/communications/workflows", label: "Workflows", icon: Workflow, description: "Staged message, call, form & task orchestration", module: "admin", requires: "audit:view" },
+      { href: "/staff/assistant", label: "Assistant", icon: Bot, description: "AI answers patient WhatsApp messages — hands off to your Inbox", module: "admin", requires: "audit:view" }
     ]
   },
   {
     label: "Operations",
     items: [
-      { href: "/doctors", label: "Doctors", icon: Stethoscope, description: "Doctors, specialties and weekly schedules", module: "access", requires: "appointment:write" },
-      { href: "/operations", label: "Operations", icon: ShieldCheck, description: "Service health and audit", module: "operations" },
-      { href: "/billing", label: "Billing", icon: IndianRupee, description: "Invoices and payments — billed vs settled", module: "billing", comingSoon: true },
-      { href: "/admin", label: "Admin", icon: Settings2, description: "Tenant, roles and governance", module: "admin", requires: "audit:view" }
+      { href: "/staff/doctors", label: "Doctors", icon: Stethoscope, description: "Doctors, specialties and weekly schedules", module: "access", requires: "appointment:write" },
+      { href: "/staff/operations", label: "Operations", icon: ShieldCheck, description: "Service health and audit", module: "operations" },
+      { href: "/staff/billing", label: "Billing", icon: IndianRupee, description: "Invoices and payments — billed vs settled", module: "billing", comingSoon: true },
+      { href: "/staff/admin", label: "Admin", icon: Settings2, description: "Tenant, roles and governance", module: "admin", requires: "audit:view" }
     ]
   }
 ];

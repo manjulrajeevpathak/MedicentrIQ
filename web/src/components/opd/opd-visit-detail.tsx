@@ -75,7 +75,7 @@ export function OpdVisitDetail({ visit, patient }: { visit: Visit; patient: Pati
           <ArrowLeft className="size-3.5" /> OPD register
         </Link>
         <Link
-          href={`/patients/${visit.patientId}`}
+          href={`/staff/patients/${visit.patientId}`}
           className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
         >
           Patient 360 <ExternalLink className="size-3" />

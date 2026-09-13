@@ -245,7 +245,7 @@ export function InboxWorkspace() {
                 <div>
                   <div className="flex items-center gap-2">
                     {patientId ? (
-                      <Link href={`/patients/${patientId}`} className="text-base font-semibold text-ink hover:text-brand-700 hover:underline">
+                      <Link href={`/staff/patients/${patientId}`} className="text-base font-semibold text-ink hover:text-brand-700 hover:underline">
                         {selected.patient}
                       </Link>
                     ) : (
@@ -275,7 +275,7 @@ export function InboxWorkspace() {
               </div>
               <div className="flex items-center gap-2">
                 {patientId ? (
-                  <Link href={`/patients/${patientId}`}>
+                  <Link href={`/staff/patients/${patientId}`}>
                     <Button variant="outline" size="sm">
                       <UserRound className="size-3.5" /> Patient 360
                     </Button>

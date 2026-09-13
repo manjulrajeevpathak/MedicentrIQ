@@ -55,7 +55,7 @@ export async function saveAssistantAction(
 
   const result = await coreApi<AssistantConfig>("/tenant/assistant", { method: "PATCH", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not save the assistant settings." };
-  revalidatePath("/assistant");
+  revalidatePath("/staff/assistant");
   return { ok: true, data: result.data, message: "Assistant settings saved." };
 }
 
@@ -92,7 +92,7 @@ export async function addOptOutAction(input: {
     }
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not add the opt-out." };
-  revalidatePath("/assistant");
+  revalidatePath("/staff/assistant");
   return { ok: true, data: result.data, message: "Number opted out — campaigns will skip it." };
 }
 
@@ -102,6 +102,6 @@ export async function removeOptOutAction(id: string): Promise<AssistantActionSta
     method: "DELETE"
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not remove the opt-out." };
-  revalidatePath("/assistant");
+  revalidatePath("/staff/assistant");
   return { ok: true, message: "Opt-out removed — the number can be messaged again." };
 }

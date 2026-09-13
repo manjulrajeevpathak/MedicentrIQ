@@ -148,7 +148,7 @@ export function PatientsWorkspace({
               {filtered.map((patient) => (
                 <li key={patient.id}>
                   <Link
-                    href={`/patients/${patient.id}`}
+                    href={`/staff/patients/${patient.id}`}
                     className={cn(
                       "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
                       patient.id === selectedId ? "bg-brand-50" : "hover:bg-surface-muted"

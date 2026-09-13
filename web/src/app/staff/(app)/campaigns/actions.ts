@@ -100,7 +100,7 @@ export async function createCampaignAction(input: CampaignInput): Promise<Action
 
   const result = await coreApi<Campaign>("/campaigns", { method: "POST", body });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not create the campaign." };
-  revalidatePath("/campaigns");
+  revalidatePath("/staff/campaigns");
   const message =
     input.trigger === "automated"
       ? "Automated campaign armed."
@@ -138,7 +138,7 @@ export async function updateCampaignAction(
     body
   });
   if (!result.ok) return { ok: false, error: result.error ?? "Could not update the campaign." };
-  revalidatePath("/campaigns");
+  revalidatePath("/staff/campaigns");
   return { ok: true, data: result.data, message: "Campaign updated." };
 }
 
@@ -256,7 +256,7 @@ export async function sendCampaignAction(id: string): Promise<ActionState<SendRe
         "Could not send. Check the hospital's WhatsApp channels in Admin → Integrations."
     };
   }
-  revalidatePath("/campaigns");
+  revalidatePath("/staff/campaigns");
   const { sent, failed, audienceSize } = result.data;
   return {
     ok: true,
