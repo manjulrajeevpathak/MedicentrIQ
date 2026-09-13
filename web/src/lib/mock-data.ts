@@ -1,5 +1,6 @@
 import type {
   AuditEvent,
+  BranchContext,
   DashboardData,
   DemoAuthContext,
   DemoUser,
@@ -10,6 +11,12 @@ import type {
 
 export const demoTenant = { id: "org_demo_healthcare", name: "Demo Specialty Care Network" };
 export const demoBranch = { id: "blr-indiranagar", name: "Indiranagar Eye Centre" };
+export const demoBranches: BranchContext[] = [
+  demoBranch,
+  { id: "lko", name: "Lucknow" },
+  { id: "hyd", name: "Hyderabad" },
+  { id: "mum-thane", name: "Mumbai - Thane" }
+];
 
 export const demoUsers: DemoUser[] = [
   {
@@ -88,11 +95,64 @@ export function buildDemoAuthContext(
     mode,
     tenant: demoTenant,
     branch: demoBranch,
+    availableBranches: demoBranches,
     activeUser,
     availableUsers: demoUsers,
     permissionBadges: buildPermissionBadges(activeUser)
   };
 }
+
+/** Safe empty Patient 360 record — used when a tenant has no patients yet. */
+export function emptyPatientSummary(): PatientSummary {
+  return {
+    id: "",
+    name: "",
+    age: 0,
+    gender: "",
+    phone: "",
+    caregiver: "",
+    language: "",
+    branch: "",
+    doctor: "",
+    condition: "",
+    risk: "low",
+    nextBestAction: "",
+    openItems: [],
+    timeline: []
+  };
+}
+
+/**
+ * Blank dashboard for a LIVE logged-in session. Real fields (metrics, workbench,
+ * inbox, access/follow-up queues) come from core-api and overlay this; everything
+ * else renders as an empty state — never demo content. Only used when a backend
+ * is configured; with no backend we fall back to the full `mockDashboardData`.
+ */
+export const emptyDashboardData: DashboardData = {
+  generatedAt: "",
+  source: "core-api",
+  entitlements: { planId: null, enabledModules: [] },
+  sessionUser: null,
+  tenant: null,
+  branches: [],
+  authContext: buildDemoAuthContext(),
+  metrics: [],
+  daySummary: "",
+  floorVitals: [],
+  todayFlow: [],
+  waitingRoom: [],
+  needsPerson: { id: "", name: "", age: 0, note: "" },
+  workbench: [],
+  inbox: [],
+  patient360: emptyPatientSummary(),
+  patientProfiles: {},
+  directory: [],
+  matchCandidates: [],
+  accessQueue: [],
+  followUpQueue: [],
+  serviceStatus: [],
+  auditEvents: []
+};
 
 const minsAgo = (m: number) => new Date(Date.now() - m * 60 * 1000).toISOString();
 

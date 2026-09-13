@@ -4771,6 +4771,19 @@ export class CoreService {
       source: "core-api",
       entitlements: { planId: tenant?.planId ?? null, enabledModules },
       sessionUser,
+      // Real tenant identity + the branches this user can actually see — so the
+      // staff console header reflects the logged-in hospital, not a demo default.
+      tenant: tenant ? { id: tenant.id, displayName: tenant.displayName } : null,
+      branches: this.data.branches
+        .filter(
+          (entry) =>
+            entry.tenantId === context.tenantId &&
+            (context.roles.includes("org_admin") ||
+              context.roles.includes("admin") ||
+              context.branchIds.length === 0 ||
+              context.branchIds.includes(entry.id))
+        )
+        .map((entry) => ({ id: entry.id, displayName: entry.displayName, city: entry.city ?? "" })),
       metrics: [
         {
           label: "Open work items",

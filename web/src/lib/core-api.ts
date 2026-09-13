@@ -1,4 +1,12 @@
-import { buildDemoAuthContext, demoBranch, demoTenant, mockAuditEvents, mockDashboardData } from "./mock-data";
+import {
+  buildDemoAuthContext,
+  buildPermissionBadges,
+  demoBranch,
+  demoTenant,
+  emptyDashboardData,
+  mockAuditEvents,
+  mockDashboardData
+} from "./mock-data";
 import type { AuditEvent, DashboardData, DemoAuthContext, DemoUser } from "./types";
 
 const DASHBOARD_PATH = "/api/staff/dashboard";
@@ -12,18 +20,17 @@ const AUDIT_EVENTS_PATH = "/audit/events";
  */
 export async function getDashboardData(userId?: string, sessionToken?: string): Promise<DashboardData> {
   const baseUrl = process.env.NEXT_PUBLIC_CORE_API_URL;
-  const authContext = buildDemoAuthContext(
-    resolveDemoUserId(userId),
-    baseUrl ? resolveAuthMode(sessionToken) : "fallback"
-  );
+  const mode = baseUrl ? resolveAuthMode(sessionToken) : "fallback";
+  const demoAuth = buildDemoAuthContext(resolveDemoUserId(userId), mode);
 
+  // No backend configured → full local demo experience.
   if (!baseUrl) {
-    return withGovernance({ ...mockDashboardData, source: "mock" }, authContext, mockAuditEvents);
+    return withGovernance({ ...mockDashboardData, source: "mock" }, demoAuth, mockAuditEvents);
   }
 
   try {
     const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
-    const headers = buildAuthHeaders(authContext.activeUser, sessionToken);
+    const headers = buildAuthHeaders(demoAuth.activeUser, sessionToken);
     const [dashboardResponse, auditEvents] = await Promise.all([
       fetch(`${normalizedBaseUrl}${DASHBOARD_PATH}`, {
         cache: "no-store",
@@ -33,24 +40,28 @@ export async function getDashboardData(userId?: string, sessionToken?: string): 
       fetchAuditEvents(normalizedBaseUrl, headers)
     ]);
 
+    // Backend/auth failure → degrade to (clearly-labeled) demo data.
     if (!dashboardResponse.ok) {
-      return withGovernance({ ...mockDashboardData, source: "mock" }, authContext, auditEvents);
+      return withGovernance(
+        { ...mockDashboardData, source: "mock" },
+        demoAuth,
+        auditEvents.length ? auditEvents : mockAuditEvents
+      );
     }
 
     const envelope = (await dashboardResponse.json()) as { data?: Partial<DashboardData> } | Partial<DashboardData>;
     const data = ("data" in envelope && envelope.data ? envelope.data : envelope) as Partial<DashboardData>;
 
+    // LIVE: render the real tenant's data over empty states — never demo content.
+    // Identity (tenant / branches / user) is driven by the real session, and audit
+    // events are the tenant's own (empty is fine — no demo bleed).
     return withGovernance(
-      {
-        ...mockDashboardData,
-        ...data,
-        source: "core-api"
-      },
-      authContext,
+      { ...emptyDashboardData, ...data, source: "core-api" },
+      buildRealAuthContext(demoAuth, data),
       auditEvents
     );
   } catch {
-    return withGovernance({ ...mockDashboardData, source: "mock" }, authContext, mockAuditEvents);
+    return withGovernance({ ...mockDashboardData, source: "mock" }, demoAuth, mockAuditEvents);
   }
 }
 
@@ -199,39 +210,55 @@ const roleTitles: Record<string, string> = {
   admin: "Administrator"
 };
 
-function withGovernance(data: DashboardData, authContext: DemoAuthContext, auditEvents: AuditEvent[]): DashboardData {
-  let effectiveAuth = authContext;
-  // On a real logged-in session, drive the displayed identity from the actual
-  // principal (not the demo "view as" user). Permissions are templated from a
-  // same-role demo user so UI gating roughly matches; the server is the real guard.
-  if (data.sessionUser) {
-    const realRoles = data.sessionUser.roles ?? [];
-    const template =
-      realRoles
-        .map((role) => authContext.availableUsers.find((user) => user.role === role))
-        .find(Boolean) ?? authContext.activeUser;
-    const primaryRole = (realRoles.find((role) => role in roleTitles) ?? template.role) as DemoUser["role"];
-    effectiveAuth = {
-      ...authContext,
-      isRealSession: true,
-      activeUser: {
+/**
+ * Build the header identity for a REAL logged-in session from the core-api
+ * payload: tenant + accessible branches + the actual principal. Permission
+ * badges are templated from a same-role demo user so the UI gates roughly match
+ * — the server is the real guard. Falls back to the demo context only for fields
+ * the payload doesn't carry.
+ */
+function buildRealAuthContext(demoAuth: DemoAuthContext, data: Partial<DashboardData>): DemoAuthContext {
+  const sessionUser = data.sessionUser ?? null;
+  const realRoles = sessionUser?.roles ?? [];
+  const template =
+    realRoles.map((role) => demoAuth.availableUsers.find((user) => user.role === role)).find(Boolean) ??
+    demoAuth.activeUser;
+  const primaryRole = (realRoles.find((role) => role in roleTitles) ?? template.role) as DemoUser["role"];
+  const activeUser: DemoUser = sessionUser
+    ? {
         ...template,
-        id: data.sessionUser.id,
-        name: data.sessionUser.displayName,
+        id: sessionUser.id,
+        name: sessionUser.displayName,
         role: primaryRole,
         title: roleTitles[primaryRole] ?? template.title
       }
-    };
-  }
+    : demoAuth.activeUser;
+
+  const availableBranches = (data.branches ?? []).map((entry) => ({ id: entry.id, name: entry.displayName }));
+  const tenant = data.tenant ? { id: data.tenant.id, name: data.tenant.displayName } : demoAuth.tenant;
+
+  return {
+    ...demoAuth,
+    isRealSession: Boolean(sessionUser),
+    tenant,
+    branch: availableBranches[0] ?? demoAuth.branch,
+    availableBranches: availableBranches.length ? availableBranches : demoAuth.availableBranches,
+    activeUser,
+    permissionBadges: buildPermissionBadges(activeUser)
+  };
+}
+
+/** Attach the (already-resolved) governance context + normalize service scope. */
+function withGovernance(data: DashboardData, authContext: DemoAuthContext, auditEvents: AuditEvent[]): DashboardData {
   return {
     ...data,
     generatedAt: data.generatedAt || new Date().toISOString(),
-    authContext: effectiveAuth,
-    auditEvents: auditEvents.length ? auditEvents : mockAuditEvents,
+    authContext,
+    auditEvents,
     serviceStatus: data.serviceStatus.map((service) => ({
       ...service,
       authMode: service.authMode ?? (authContext.mode === "staff-session" ? "staff session" : "demo headers"),
-      scope: service.scope ?? `${demoTenant.id} / ${demoBranch.id}`
+      scope: service.scope ?? `${authContext.tenant.id} / ${authContext.branch.id}`
     }))
   };
 }

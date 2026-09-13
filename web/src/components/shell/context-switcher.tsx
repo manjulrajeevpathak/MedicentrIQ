@@ -11,13 +11,6 @@ import type { DemoAuthContext } from "@/lib/types";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
-const branches = [
-  { id: "blr-indiranagar", name: "Indiranagar Eye Centre" },
-  { id: "lko", name: "Lucknow" },
-  { id: "hyd", name: "Hyderabad" },
-  { id: "mum-thane", name: "Mumbai - Thane" }
-];
-
 const roleLabel: Record<string, string> = {
   front_desk: "Front desk",
   call_center: "Call center",
@@ -110,11 +103,12 @@ export function ContextSwitcher({ auth }: { auth: DemoAuthContext }) {
             </div>
           </div>
 
-          {/* Branch */}
+          {/* Branch — the tenant's real, access-scoped branches */}
+          {auth.availableBranches.length > 0 && (
           <div className="mt-2 border-t border-line px-1 pt-2">
             <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">Branch</p>
             <div className="grid grid-cols-2 gap-1">
-              {branches.map((b) => {
+              {auth.availableBranches.map((b) => {
                 const active = b.id === branch.id;
                 return (
                   <button
@@ -133,6 +127,7 @@ export function ContextSwitcher({ auth }: { auth: DemoAuthContext }) {
               })}
             </div>
           </div>
+          )}
 
           {/* View as — only in demo mode; a real session shows the logged-in user */}
           {!auth.isRealSession && (

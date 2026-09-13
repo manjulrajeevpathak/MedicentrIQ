@@ -251,6 +251,8 @@ export type DemoAuthContext = {
   mode: "staff-session" | "demo-headers" | "fallback";
   tenant: TenantContext;
   branch: BranchContext;
+  /** Branches the logged-in user can switch between (drives the branch switcher). */
+  availableBranches: BranchContext[];
   activeUser: DemoUser;
   availableUsers: DemoUser[];
   permissionBadges: PermissionBadge[];
@@ -304,6 +306,10 @@ export type DashboardData = {
   entitlements?: { planId: string | null; enabledModules: ModuleKey[] };
   /** Real authenticated principal (present only on a live logged-in session). */
   sessionUser?: SessionUser | null;
+  /** Real tenant identity from core-api (present on a live logged-in session). */
+  tenant?: { id: string; displayName: string } | null;
+  /** Branches the logged-in user can access, from core-api (live session). */
+  branches?: Array<{ id: string; displayName: string; city?: string }>;
   authContext: DemoAuthContext;
   metrics: Metric[];
   daySummary: string;
