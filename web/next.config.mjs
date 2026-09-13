@@ -20,7 +20,16 @@ const nextConfig = {
     // upload). Proxy them same-origin so core-api stays private on the internal
     // network. Baked at build; defaults to the compose service name.
     const core = process.env.CORE_API_INTERNAL_URL || "http://core-api:4100";
-    return [{ source: "/care/api/core/:path*", destination: `${core}/:path*` }];
+    // Meta's WhatsApp webhook is served by the integration-gateway, not this app.
+    // Proxy /webhooks/meta/whatsapp/* to it same-origin so each hospital points Meta
+    // at the app's OWN domain — no separate gateway host and no ALB rule needed. The
+    // proxy streams the RAW body + x-hub-signature-256 through unchanged (same as the
+    // /care upload proxy), so the gateway→core-api HMAC check still verifies.
+    const gateway = process.env.GATEWAY_INTERNAL_URL || "http://integration-gateway:4105";
+    return [
+      { source: "/care/api/core/:path*", destination: `${core}/:path*` },
+      { source: "/webhooks/meta/whatsapp/:path*", destination: `${gateway}/webhooks/meta/whatsapp/:path*` }
+    ];
   }
 };
 

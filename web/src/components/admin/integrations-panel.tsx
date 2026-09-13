@@ -68,7 +68,15 @@ export function IntegrationsPanel({
   const [testState, sendTest] = useActionState<ChannelActionState, FormData>(sendTestMessageAction, { ok: false });
 
   const wa = channels.whatsappCloud;
-  const webhookUrl = `${gatewayBase.replace(/\/$/, "")}${wa.webhookPath}`;
+  // The webhook is proxied same-origin (next.config rewrite), so the callback URL
+  // lives on THIS app's own domain — derive it from the current origin. An explicit
+  // NEXT_PUBLIC_GATEWAY_URL (a separate gateway domain) still wins when set.
+  const hasExplicitBase = Boolean(gatewayBase) && !gatewayBase.includes("<");
+  const [webhookBase, setWebhookBase] = useState(gatewayBase);
+  useEffect(() => {
+    if (!hasExplicitBase && typeof window !== "undefined") setWebhookBase(window.location.origin);
+  }, [hasExplicitBase]);
+  const webhookUrl = `${webhookBase.replace(/\/$/, "")}${wa.webhookPath}`;
 
   return (
     <div className="space-y-5">

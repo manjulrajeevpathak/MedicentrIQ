@@ -14,6 +14,9 @@ ENV NEXT_PUBLIC_CORE_API_URL=$NEXT_PUBLIC_CORE_API_URL
 # Internal core-api URL the /care same-origin proxy rewrite forwards to (baked at build).
 ARG CORE_API_INTERNAL_URL=http://core-api:4100
 ENV CORE_API_INTERNAL_URL=$CORE_API_INTERNAL_URL
+# Internal integration-gateway URL the /webhooks/meta/whatsapp proxy rewrite forwards to.
+ARG GATEWAY_INTERNAL_URL=http://integration-gateway:4105
+ENV GATEWAY_INTERNAL_URL=$GATEWAY_INTERNAL_URL
 # Public origin where the integration-gateway is reachable — used to render the
 # complete Meta webhook callback URL in Channels. Empty falls back to a placeholder.
 ARG NEXT_PUBLIC_GATEWAY_URL=
