@@ -144,6 +144,9 @@ services:
       args:
         NEXT_PUBLIC_CORE_API_URL: ${WEB_CORE_API_URL:-http://core-api:4100}
         CORE_API_INTERNAL_URL: ${CORE_API_INTERNAL_URL:-http://core-api:4100}
+        # Public origin of the integration-gateway, so Channels shows the complete
+        # Meta webhook URL. Same domain if the ALB routes /webhooks/* to the gateway.
+        NEXT_PUBLIC_GATEWAY_URL: ${NEXT_PUBLIC_GATEWAY_URL:-}
     image: medicentriq/web
     restart: unless-stopped
     init: true
