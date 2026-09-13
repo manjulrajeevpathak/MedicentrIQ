@@ -78,6 +78,15 @@ export function IntegrationsPanel({
   }, [hasExplicitBase]);
   const webhookUrl = `${webhookBase.replace(/\/$/, "")}${wa.webhookPath}`;
 
+  // Verify token: any string that matches between our stored config and Meta's webhook
+  // setup. Offer a strong random one so admins don't have to invent it.
+  const [verifyToken, setVerifyToken] = useState(wa.verifyToken ?? "");
+  const generateVerifyToken = () => {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    setVerifyToken("htf_" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(""));
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -157,7 +166,7 @@ export function IntegrationsPanel({
               ) : null}
             </div>
             <div className="flex items-center gap-2">
-              <WaSetupGuide webhookUrl={webhookUrl} verifyToken={wa.verifyToken} />
+              <WaSetupGuide webhookUrl={webhookUrl} verifyToken={verifyToken} />
               <StatusPill ok={wa.configured} />
             </div>
           </div>
@@ -203,7 +212,27 @@ export function IntegrationsPanel({
             </div>
             <div>
               <label className={labelCls}>Verify token</label>
-              <input name="verifyToken" defaultValue={wa.verifyToken ?? ""} placeholder="Any string you choose" className={inputCls} />
+              <div className="flex items-center gap-2">
+                <input
+                  name="verifyToken"
+                  value={verifyToken}
+                  onChange={(e) => setVerifyToken(e.target.value)}
+                  placeholder="Click Generate, or type any string"
+                  autoComplete="off"
+                  className={`${inputCls} flex-1`}
+                />
+                <button
+                  type="button"
+                  onClick={generateVerifyToken}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-ink-soft transition hover:bg-fill"
+                >
+                  <RefreshCw className="size-3.5" /> Generate
+                </button>
+                {verifyToken ? <CopyButton value={verifyToken} /> : null}
+              </div>
+              <p className="mt-1 text-[10px] text-ink-faint">
+                Use the <b>same</b> value here and in Meta&rsquo;s webhook config. Generate a strong one, then Copy it into Meta alongside the callback URL.
+              </p>
             </div>
             <div>
               <label className={labelCls}>Meta App ID</label>
