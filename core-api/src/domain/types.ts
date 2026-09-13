@@ -330,6 +330,17 @@ export type AssistantMedicalScope = {
 /** Which channels the shared policy is live on. Voice consumes the same policy. */
 export type AssistantChannels = { whatsapp: boolean; voice: boolean };
 
+/** One detail the assistant should try to collect from a new contact. */
+export type AssistantLeadField = { key: string; label: string; required?: boolean };
+/** Conversational lead-capture policy for the assistant. */
+export type AssistantLeadCapture = {
+  enabled: boolean;
+  /** Details to gather over the conversation (answer-first, never gated). */
+  fields: AssistantLeadField[];
+  /** Configured lead source key to tag captured leads with (defaults to "whatsapp"). */
+  sourceKey?: string;
+};
+
 export type AssistantConfig = {
   tenantId: string;
   enabled: boolean;
@@ -350,6 +361,8 @@ export type AssistantConfig = {
   medical?: AssistantMedicalScope;
   /** Note appended when handing off (e.g. business hours). */
   hoursNote?: string;
+  /** Conversational lead capture — create + enrich a Lead from new contacts. */
+  leadCapture?: AssistantLeadCapture;
   createdAt: string;
   updatedAt: string;
 };
@@ -556,7 +569,7 @@ export type LeadSheetConfig = {
 /** A person who entered from marketing/top-of-funnel and may convert into a Patient. */
 /** HOW a lead entered the system (the import mechanism) — distinct from its
  *  marketing `source`. System-defined, auto-captured, NOT tenant-configurable. */
-export type LeadIntake = "manual" | "web_form" | "excel_import" | "google_sheet" | "walk_in" | "api";
+export type LeadIntake = "manual" | "web_form" | "excel_import" | "google_sheet" | "walk_in" | "api" | "whatsapp";
 
 export type Lead = {
   id: string;

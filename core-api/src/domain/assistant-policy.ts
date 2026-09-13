@@ -58,6 +58,9 @@ export const channelEnabled = (config: AssistantConfig, channel: AssistantChanne
 export const appointmentsEnabled = (config: AssistantConfig): boolean =>
   topicsOf(config).some((t) => t.key === "appointments" && t.mode === "answer");
 
+/** Whether the bot should capture leads (create + enrich a Lead from new contacts). */
+export const leadCaptureEnabled = (config: AssistantConfig): boolean => config.leadCapture?.enabled === true;
+
 // ---- Prompt compiler --------------------------------------------------------
 
 export type CompileParams = {
@@ -141,6 +144,14 @@ export const compileAssistantSystemPrompt = (params: CompileParams): string => {
     lines.push(
       "APPOINTMENTS: Use your tools to look up real slots (list_available_slots), book (book_appointment), and manage the patient's own appointments (list_my_appointments, reschedule_appointment, cancel_appointment). Confirm the doctor, date, time and — for a new booking — the patient's full name before acting. To reschedule or cancel, FIRST call list_my_appointments; if there are none, the details are unclear, or the patient wants a human, hand off.\n" +
         "CRITICAL — never tell a patient that an appointment is booked, rescheduled or cancelled unless the matching tool has JUST returned a success in this conversation. If you have not called the tool yet, call it now instead of claiming the action is done. Do not fabricate confirmations."
+    );
+  }
+
+  if (leadCaptureEnabled(config)) {
+    const fields = (config.leadCapture?.fields ?? []).filter((f) => f.label?.trim());
+    const list = fields.length ? fields.map((f) => f.label.trim()).join(", ") : "their name";
+    lines.push(
+      `LEAD CAPTURE: This may be a new person. ALWAYS answer their question first and be genuinely helpful — never withhold or delay an answer to collect details. Then, warmly and briefly, try to gather: ${list}. Ask for at most one or two of these at a time (not all at once); if they decline or ignore, drop it gracefully and keep helping. Whenever the person shares any of these details, immediately call save_lead_details with ONLY the fields they actually gave.`
     );
   }
 
@@ -242,6 +253,28 @@ export const APPOINTMENT_TOOLS = [
       properties: {
         doctorName: { type: "string", description: "Doctor of the appointment to cancel, if the patient has more than one." },
         date: { type: "string", description: "Date (YYYY-MM-DD) of the appointment to cancel, to disambiguate." }
+      },
+      required: [] as string[]
+    }
+  }
+] as const;
+
+// ---- Lead-capture tool -------------------------------------------------------
+
+export const LEAD_TOOLS = [
+  {
+    name: "save_lead_details",
+    description:
+      "Save details a new contact shares so the team can follow up. Call this whenever the person provides any of: their name, reason for reaching out, preferred branch/location, preferred time, email or city. Pass ONLY the fields they actually gave in this message — never guess or invent values.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The person's name." },
+        email: { type: "string", description: "Email address, if shared." },
+        reason: { type: "string", description: "Why they reached out / what they need (e.g. cataract consult)." },
+        preferredBranch: { type: "string", description: "Branch or location they prefer." },
+        preferredTime: { type: "string", description: "Preferred day/time for a visit or callback." },
+        city: { type: "string", description: "City / area they are in." }
       },
       required: [] as string[]
     }

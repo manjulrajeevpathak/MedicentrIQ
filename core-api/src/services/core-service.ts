@@ -35,7 +35,9 @@ import {
 } from "../integrations/assistant-llm.js";
 import {
   APPOINTMENT_TOOLS,
+  LEAD_TOOLS,
   appointmentsEnabled,
+  leadCaptureEnabled,
   channelEnabled,
   channelsOf,
   compileAssistantSystemPrompt,
@@ -113,6 +115,7 @@ import type {
   MessageType,
   OptOut,
   AssistantConfig,
+  AssistantLeadField,
   AssistantTopic,
   WhatsAppCloudConfig,
   Patient,
@@ -482,6 +485,8 @@ type UpdateLeadInput = {
   branchId?: string;
   notes?: string;
   sourceDetail?: string;
+  /** Custom fields to MERGE into lead.formData (non-empty values only). */
+  formData?: Record<string, string>;
 };
 
 type LeadConfigInput = {
@@ -808,7 +813,8 @@ const DEFAULT_LEAD_SOURCES: LeadSourceOption[] = [
   { key: "camp_self", label: "Camp – Self" },
   { key: "camp_outsourced", label: "Camp – Outsourced" },
   { key: "walk_in", label: "Walk-in" },
-  { key: "website", label: "Website" }
+  { key: "website", label: "Website" },
+  { key: "whatsapp", label: "WhatsApp" }
 ];
 
 // The legacy default that mixed marketing sources with import mechanisms. A tenant
@@ -817,7 +823,7 @@ const DEFAULT_LEAD_SOURCES: LeadSourceOption[] = [
 const LEGACY_DEFAULT_SOURCE_KEYS = ["camp", "meta", "referral", "form", "walk_in", "import"];
 
 const validLeadIntake = (value: unknown): LeadIntake | undefined => {
-  const allowed: LeadIntake[] = ["manual", "web_form", "excel_import", "google_sheet", "walk_in", "api"];
+  const allowed: LeadIntake[] = ["manual", "web_form", "excel_import", "google_sheet", "walk_in", "api", "whatsapp"];
   return typeof value === "string" && (allowed as string[]).includes(value) ? (value as LeadIntake) : undefined;
 };
 const DEFAULT_LEAD_STAGES: LeadFunnelStage[] = [
@@ -828,6 +834,16 @@ const DEFAULT_LEAD_STAGES: LeadFunnelStage[] = [
   { key: "converted", label: "Converted" },
   { key: "lost", label: "Lost" }
 ];
+/** Default fields the assistant tries to gather from a new contact (answer-first). */
+const DEFAULT_LEAD_CAPTURE_FIELDS: AssistantLeadField[] = [
+  { key: "name", label: "Name", required: true },
+  { key: "reason", label: "Reason for reaching out" },
+  { key: "preferredBranch", label: "Preferred branch / location" },
+  { key: "preferredTime", label: "Preferred time" },
+  { key: "email", label: "Email" }
+];
+/** Lead-capture field keys that map to first-class Lead columns; the rest go to formData. */
+const LEAD_CAPTURE_COLUMN_KEYS = new Set(["name", "email"]);
 const LEAD_FIELD_TYPES = new Set<LeadFormField["type"]>(["text", "phone", "email", "number", "select", "multiselect", "textarea"]);
 const LEAD_CALLBACK_CHANNELS = new Set<LeadCallbackChannel>(["whatsapp", "call", "manual"]);
 
@@ -3413,6 +3429,12 @@ export class CoreService {
     }
 
     const assistant = this.resolveAssistantConfig(context.tenantId);
+    // New person reaching out? Create/enrich a Lead. Answer-first — the bot collects
+    // details over the chat via save_lead_details. Runs whether the bot answers,
+    // hands off, or is disabled, so no top-of-funnel contact is lost.
+    if (leadCaptureEnabled(assistant)) {
+      await this.ensureLeadForConversation(context, assistant, from, profileName, trimmed);
+    }
     const wantsHuman = this.matchesHandoff(trimmed, assistant);
 
     if (!assistant.enabled || !channelEnabled(assistant, "whatsapp") || !assistantAvailable() || wantsHuman) {
@@ -3429,7 +3451,7 @@ export class CoreService {
     // the Appointments topic is on, the bot gets slot/booking tools.
     const systemPrompt = this.buildAssistantSystemPrompt(context.tenantId, assistant, "whatsapp");
     const turns = this.recentConversation(context.tenantId, from, trimmed);
-    const tools = appointmentsEnabled(assistant) ? (APPOINTMENT_TOOLS as unknown as unknown[]) : undefined;
+    const tools = this.assistantTools(assistant);
     const result = await generateAssistantReplyWithTools(systemPrompt, turns, tools, (name, input) =>
       this.runAssistantTool(context, from, profileName, name, input)
     );
@@ -3516,8 +3538,98 @@ export class CoreService {
       channels: channelsOf(config),
       topics: config.topics && config.topics.length > 0 ? config.topics : defaultAssistantTopics(),
       medical: config.medical ?? defaultMedicalScope(),
+      leadCapture: config.leadCapture ?? { enabled: false, fields: DEFAULT_LEAD_CAPTURE_FIELDS },
       available: assistantAvailable()
     };
+  }
+
+  /** The tool sets the assistant may use for this config (appointments + lead capture). */
+  private assistantTools(config: AssistantConfig): unknown[] | undefined {
+    const tools: unknown[] = [];
+    if (appointmentsEnabled(config)) tools.push(...(APPOINTMENT_TOOLS as unknown as unknown[]));
+    if (leadCaptureEnabled(config)) tools.push(...(LEAD_TOOLS as unknown as unknown[]));
+    return tools.length ? tools : undefined;
+  }
+
+  /**
+   * Ensure a Lead exists for an inbound WhatsApp contact: reuse an existing lead
+   * or skip if the number is already a patient, else create a new lead via
+   * buildLead (NOT createLead, so it does not fire new-lead campaigns — the
+   * assistant is already engaging them). Returns the lead id, or null for a patient.
+   */
+  private async ensureLeadForConversation(
+    context: RequestContext,
+    config: AssistantConfig,
+    from: string,
+    profileName: string | undefined,
+    firstMessage: string
+  ): Promise<string | null> {
+    if (this.findPatientByPhone(context.tenantId, from)) return null; // known patient — not a lead
+    const normalized = normalizePhone(from);
+    const existing = normalized
+      ? this.data.leads.find((e) => e.tenantId === context.tenantId && normalizePhone(e.phone) === normalized)
+      : undefined;
+    if (existing) return existing.id;
+    const leadConfig = await this.resolveLeadConfig(context);
+    const source = config.leadCapture?.sourceKey?.trim() || "whatsapp";
+    // Guarantee the source is a real, curated option on the board — otherwise
+    // buildLead's sanitizer would silently misattribute the lead to the first
+    // configured source (e.g. "Meta Ads") for tenants who curated their list.
+    if (!leadConfig.sources.some((s) => s.key === source)) {
+      const label = DEFAULT_LEAD_SOURCES.find((s) => s.key === source)?.label ?? "WhatsApp";
+      leadConfig.sources = [...leadConfig.sources, { key: source, label }];
+      leadConfig.updatedAt = nowIso();
+      await this.persistence.saveCollection("leadConfigs", this.data.leadConfigs);
+    }
+    const lead = this.buildLead(
+      context,
+      {
+        name: (profileName ?? "").trim() || from,
+        phone: from,
+        source,
+        intake: "whatsapp",
+        sourceDetail: "WhatsApp assistant",
+        notes: firstMessage?.trim() || undefined
+      },
+      leadConfig
+    );
+    this.data.leads.push(lead);
+    await this.persistence.saveCollection("leads", this.data.leads);
+    await this.audit(context, "lead.create", "lead", lead.id, lead.matchedPatientId, {
+      source,
+      intake: "whatsapp",
+      via: "assistant"
+    });
+    return lead.id;
+  }
+
+  /** Apply details the assistant captured to the caller's lead (create-or-update). */
+  private async captureLeadDetails(
+    context: RequestContext,
+    config: AssistantConfig,
+    from: string,
+    profileName: string | undefined,
+    details: Record<string, unknown>
+  ): Promise<string> {
+    const leadId = await this.ensureLeadForConversation(context, config, from, profileName, "");
+    if (!leadId) return "This number already belongs to a registered patient — no lead needed.";
+    const patch: UpdateLeadInput = { formData: {} };
+    const saved: string[] = [];
+    for (const key of ["name", "email", "reason", "preferredBranch", "preferredTime", "city"]) {
+      const value = details[key];
+      if (typeof value !== "string" || !value.trim()) continue;
+      const v = value.trim();
+      if (LEAD_CAPTURE_COLUMN_KEYS.has(key)) {
+        if (key === "email") patch.email = v;
+        else patch.name = v;
+      } else {
+        patch.formData![key] = v;
+      }
+      saved.push(key);
+    }
+    if (!saved.length) return "No new details to save.";
+    await this.updateLead(context, leadId, patch);
+    return `Saved lead details: ${saved.join(", ")}.`;
   }
 
   /**
@@ -3541,7 +3653,7 @@ export class CoreService {
       };
     }
     const systemPrompt = this.buildAssistantSystemPrompt(context.tenantId, config, "whatsapp");
-    const tools = appointmentsEnabled(config) ? (APPOINTMENT_TOOLS as unknown as unknown[]) : undefined;
+    const tools = this.assistantTools(config);
     const result = await generateAssistantReplyWithTools(
       systemPrompt,
       [{ role: "user", content: text }],
@@ -3638,6 +3750,28 @@ export class CoreService {
           .slice(0, 40)
       };
     }
+    if (isPlainRecord(input.leadCapture)) {
+      const lc = input.leadCapture;
+      const fields = Array.isArray(lc.fields)
+        ? lc.fields
+            .filter(isPlainRecord)
+            .map((entry) => ({
+              key:
+                typeof entry.key === "string" && entry.key.trim()
+                  ? entry.key.trim().replace(/[^a-zA-Z0-9_]/g, "_")
+                  : "field",
+              label: typeof entry.label === "string" ? entry.label.trim() : "",
+              ...(entry.required === true ? { required: true } : {})
+            }))
+            .filter((entry) => entry.label)
+            .slice(0, 20)
+        : DEFAULT_LEAD_CAPTURE_FIELDS;
+      config.leadCapture = {
+        enabled: lc.enabled === true,
+        fields: fields.length ? fields : DEFAULT_LEAD_CAPTURE_FIELDS,
+        ...(typeof lc.sourceKey === "string" && lc.sourceKey.trim() ? { sourceKey: lc.sourceKey.trim() } : {})
+      };
+    }
     config.updatedAt = nowIso();
     await this.persistence.saveCollection("assistantConfigs", this.data.assistantConfigs);
     await this.audit(context, "tenant.settings_update", "channel_config", context.tenantId, undefined, {
@@ -3710,6 +3844,17 @@ export class CoreService {
         (activeDoctors.length === 1 ? activeDoctors[0] : undefined)
       );
     };
+
+    if (name === "save_lead_details") {
+      const provided = Object.entries(input ?? {})
+        .filter(([, v]) => typeof v === "string" && (v as string).trim())
+        .map(([k]) => k);
+      if (dryRun) {
+        return provided.length ? `SIMULATED: saved ${provided.join(", ")}.` : "SIMULATED: no details provided.";
+      }
+      const assistant = this.resolveAssistantConfig(context.tenantId);
+      return this.captureLeadDetails(context, assistant, from, profileName, input ?? {});
+    }
 
     if (name === "list_doctors") {
       if (activeDoctors.length === 0) return "No doctors are configured.";
@@ -8393,6 +8538,13 @@ export class CoreService {
     if (input.sourceDetail !== undefined) {
       lead.sourceDetail =
         typeof input.sourceDetail === "string" && input.sourceDetail.trim() ? input.sourceDetail.trim() : undefined;
+    }
+    if (isPlainRecord(input.formData)) {
+      const merged: Record<string, string> = { ...(lead.formData ?? {}) };
+      for (const [k, v] of Object.entries(input.formData)) {
+        if (typeof v === "string" && v.trim()) merged[k] = v.trim();
+      }
+      lead.formData = Object.keys(merged).length ? merged : undefined;
     }
     lead.updatedAt = nowIso();
     await this.persistence.saveCollection("leads", this.data.leads);

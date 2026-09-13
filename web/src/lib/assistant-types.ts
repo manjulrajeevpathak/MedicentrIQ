@@ -34,6 +34,15 @@ export type AssistantMedicalScope = {
 
 export type AssistantChannels = { whatsapp: boolean; voice: boolean };
 
+/** One detail the assistant tries to gather from a new contact. */
+export type AssistantLeadField = { key: string; label: string; required?: boolean };
+/** Conversational lead-capture policy (answer-first; enrich a Lead over the chat). */
+export type AssistantLeadCapture = {
+  enabled: boolean;
+  fields: AssistantLeadField[];
+  sourceKey?: string;
+};
+
 export type AssistantConfig = {
   tenantId: string;
   enabled: boolean;
@@ -52,6 +61,8 @@ export type AssistantConfig = {
   medical: AssistantMedicalScope;
   /** Note appended on handoff (e.g. business hours). */
   hoursNote?: string;
+  /** Conversational lead capture from new WhatsApp contacts. */
+  leadCapture: AssistantLeadCapture;
   /** False when the platform has no ANTHROPIC_API_KEY — messages fall through to the Inbox. */
   available: boolean;
 };
@@ -67,4 +78,5 @@ export type AssistantPatch = {
   topics?: AssistantTopic[];
   medical?: AssistantMedicalScope;
   hoursNote?: string;
+  leadCapture?: AssistantLeadCapture;
 };

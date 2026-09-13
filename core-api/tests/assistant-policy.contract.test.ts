@@ -4,7 +4,8 @@ import {
   appointmentsEnabled,
   channelEnabled,
   compileAssistantSystemPrompt,
-  defaultAssistantTopics
+  defaultAssistantTopics,
+  leadCaptureEnabled
 } from "../src/domain/assistant-policy.js";
 import type { AssistantConfig } from "../src/domain/types.js";
 
@@ -67,7 +68,7 @@ describe("assistant policy compiler", () => {
     assert.equal(appointmentsEnabled(base()), false);
     const on = base({ topics: [{ id: "x", key: "appointments", label: "Appointments", mode: "answer" }] });
     assert.equal(appointmentsEnabled(on), true);
-    assert.match(compile(on), /APPOINTMENTS:.*book an appointment using your tools/s);
+    assert.match(compile(on), /APPOINTMENTS:[\s\S]*book_appointment/);
     const handoff = base({ topics: [{ id: "x", key: "appointments", label: "Appointments", mode: "handoff" }] });
     assert.equal(appointmentsEnabled(handoff), false);
   });
@@ -78,6 +79,30 @@ describe("assistant policy compiler", () => {
     const voice = compile(config, "voice");
     assert.match(voice, /VOICE call/);
     assert.ok(!voice.includes("WhatsApp formatting only"), "voice drops WhatsApp formatting rules");
+  });
+
+  it("gates lead capture and compiles an answer-first collection block", () => {
+    assert.equal(leadCaptureEnabled(base()), false);
+    assert.equal(leadCaptureEnabled(base({ leadCapture: { enabled: false, fields: [] } })), false);
+    const off = compile(base());
+    assert.ok(!off.includes("LEAD CAPTURE"), "no lead-capture block when disabled");
+
+    const on = base({
+      leadCapture: {
+        enabled: true,
+        fields: [
+          { key: "name", label: "Full name", required: true },
+          { key: "reason", label: "Reason for visit" }
+        ]
+      }
+    });
+    assert.equal(leadCaptureEnabled(on), true);
+    const prompt = compile(on);
+    assert.match(prompt, /LEAD CAPTURE:/);
+    assert.match(prompt, /answer their question first/i);
+    assert.match(prompt, /never withhold/i);
+    assert.match(prompt, /Full name, Reason for visit/);
+    assert.match(prompt, /save_lead_details/);
   });
 
   it("channelEnabled + starter defaults behave", () => {

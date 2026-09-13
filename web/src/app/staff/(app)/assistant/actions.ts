@@ -43,6 +43,19 @@ export async function saveAssistantAction(
   if (typeof patch.hoursNote === "string") body.hoursNote = patch.hoursNote;
   if (patch.channels) body.channels = patch.channels;
   if (patch.topics) body.topics = patch.topics;
+  if (patch.leadCapture) {
+    body.leadCapture = {
+      enabled: patch.leadCapture.enabled === true,
+      fields: patch.leadCapture.fields
+        .filter((f) => f.label.trim())
+        .map((f) => ({
+          key: f.key.trim(),
+          label: f.label.trim(),
+          ...(f.required ? { required: true } : {})
+        })),
+      ...(patch.leadCapture.sourceKey ? { sourceKey: patch.leadCapture.sourceKey } : {})
+    };
+  }
   if (patch.medical) {
     body.medical = {
       answerable: patch.medical.answerable

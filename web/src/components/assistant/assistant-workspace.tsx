@@ -12,6 +12,7 @@ import {
   Sparkles,
   Stethoscope,
   Trash2,
+  UserPlus,
   UserX,
   X
 } from "lucide-react";
@@ -29,6 +30,7 @@ import {
 } from "@/app/staff/(app)/assistant/actions";
 import type {
   AssistantConfig,
+  AssistantLeadField,
   AssistantMedicalTopic,
   AssistantTopic,
   AssistantTopicMode
@@ -66,6 +68,8 @@ export function AssistantWorkspace({ assistant, optOuts }: { assistant: Assistan
   const [answerable, setAnswerable] = useState<AssistantMedicalTopic[]>(assistant.medical?.answerable ?? []);
   const [handoffTopics, setHandoffTopics] = useState<string[]>(assistant.medical?.handoffTopics ?? []);
   const [handoffTopicInput, setHandoffTopicInput] = useState("");
+  const [leadCaptureOn, setLeadCaptureOn] = useState(assistant.leadCapture?.enabled ?? false);
+  const [leadFields, setLeadFields] = useState<AssistantLeadField[]>(assistant.leadCapture?.fields ?? []);
   const [saving, startSave] = useTransition();
 
   const [testMsg, setTestMsg] = useState("");
@@ -85,6 +89,12 @@ export function AssistantWorkspace({ assistant, optOuts }: { assistant: Assistan
   function updateTopic(id: string, patch: Partial<AssistantTopic>) {
     setTopics((c) => c.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }
+  function slugifyKey(label: string): string {
+    return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || `field_${Date.now()}`;
+  }
+  function updateLeadField(i: number, patch: Partial<AssistantLeadField>) {
+    setLeadFields((c) => c.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+  }
 
   function saveAll() {
     startSave(async () => {
@@ -96,7 +106,13 @@ export function AssistantWorkspace({ assistant, optOuts }: { assistant: Assistan
         hoursNote,
         handoffKeywords: keywords,
         topics: topics.filter((t) => t.label.trim()),
-        medical: { answerable, handoffTopics }
+        medical: { answerable, handoffTopics },
+        leadCapture: {
+          enabled: leadCaptureOn,
+          fields: leadFields
+            .filter((f) => f.label.trim())
+            .map((f) => ({ key: f.key.trim() || slugifyKey(f.label), label: f.label.trim(), required: f.required }))
+        }
       });
       if (!result.ok) {
         toast(result.error ?? "Could not save the policy.", "error");
@@ -106,6 +122,10 @@ export function AssistantWorkspace({ assistant, optOuts }: { assistant: Assistan
         setTopics(result.data.topics ?? topics);
         setAnswerable(result.data.medical?.answerable ?? answerable);
         setHandoffTopics(result.data.medical?.handoffTopics ?? handoffTopics);
+        if (result.data.leadCapture) {
+          setLeadCaptureOn(result.data.leadCapture.enabled);
+          setLeadFields(result.data.leadCapture.fields ?? leadFields);
+        }
       }
       toast("Assistant policy saved.", "success");
     });
@@ -382,7 +402,81 @@ export function AssistantWorkspace({ assistant, optOuts }: { assistant: Assistan
         </div>
       </Panel>
 
-      {/* 5 — Test the bot */}
+      {/* 5 — Lead capture */}
+      <Panel>
+        <SectionTitle
+          icon={<UserPlus className="size-4" />}
+          title="Lead capture"
+          subtitle="Turn new WhatsApp contacts into leads and gather their details over the chat"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => setLeadFields((c) => [...c, { key: "", label: "", required: false }])}>
+              <Plus className="size-3.5" /> Add field
+            </Button>
+          }
+        />
+        <div className="mt-4 space-y-4">
+          <label className="flex cursor-pointer items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={leadCaptureOn}
+              onChange={(e) => setLeadCaptureOn(e.target.checked)}
+              className="mt-0.5 size-4 rounded border-line-strong text-brand-600 focus:ring-brand-200"
+            />
+            <span className="text-xs text-ink">
+              Capture leads from new contacts
+              <span className="mt-0.5 block text-[11px] text-ink-muted">
+                When a new number messages, a lead is created automatically (source <b>WhatsApp</b>, stage <b>New</b>) and shows on the Leads board.
+              </span>
+            </span>
+          </label>
+
+          <div className="flex items-start gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2.5">
+            <UserPlus className="mt-0.5 size-4 shrink-0 text-ink-soft" />
+            <p className="text-[11px] text-ink-soft">
+              <b>Answer first, then ask.</b> The bot always answers the person&rsquo;s question, then gently asks for the details below over the conversation — it never withholds an answer to collect information. Details are saved onto the lead as they&rsquo;re shared.
+            </p>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-ink-soft">Details to gather</p>
+            {leadFields.length === 0 ? (
+              <p className="text-[11px] text-ink-muted">No fields yet — add ones like Name, Reason for visit, Preferred branch.</p>
+            ) : (
+              <div className="space-y-2">
+                {leadFields.map((f, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-canvas p-2.5">
+                    <Input
+                      value={f.label}
+                      onChange={(e) => updateLeadField(i, { label: e.target.value })}
+                      placeholder="Detail — e.g. Reason for visit"
+                      className="min-w-[200px] flex-1"
+                    />
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-ink-soft">
+                      <input
+                        type="checkbox"
+                        checked={f.required ?? false}
+                        onChange={(e) => updateLeadField(i, { required: e.target.checked })}
+                        className="size-3.5 rounded border-line-strong text-brand-600 focus:ring-brand-200"
+                      />
+                      Required
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setLeadFields((c) => c.filter((_, j) => j !== i))}
+                      title="Remove field"
+                      className="rounded-lg p-1 text-ink-faint hover:bg-surface-muted"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </Panel>
+
+      {/* 6 — Test the bot */}
       <Panel>
         <SectionTitle icon={<Send className="size-4" />} title="Test the bot" subtitle="Try a patient message against the saved policy. Bookings here are simulated — nothing is created." />
         <div className="mt-4 space-y-3">
