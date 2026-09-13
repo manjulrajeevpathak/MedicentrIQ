@@ -11,7 +11,7 @@ export default function NotFound() {
         That page doesn&rsquo;t exist or has moved. Head back to your daily workbench.
       </p>
       <Link
-        href="/today"
+        href="/staff/today"
         className="mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-brand-600 px-5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
       >
         <Compass className="size-4" /> Go to Today

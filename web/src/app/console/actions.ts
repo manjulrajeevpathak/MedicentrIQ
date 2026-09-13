@@ -35,7 +35,7 @@ export async function updateTenantAdminAction(
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Could not update admin." };
   }
-  revalidatePath(`/tenants/${tenantId}`);
+  revalidatePath(`/console/tenants/${tenantId}`);
   return { ok: true };
 }
 
@@ -78,12 +78,12 @@ export async function createTenantAction(
   }
 
   revalidatePath("/console");
-  redirect(`/tenants/${tenantId}`);
+  redirect(`/console/tenants/${tenantId}`);
 }
 
 export async function setPlanAction(id: string, planId: PlanId): Promise<void> {
   await updateTenant(id, { planId });
-  revalidatePath(`/tenants/${id}`);
+  revalidatePath(`/console/tenants/${id}`);
   revalidatePath("/console");
 }
 
@@ -92,7 +92,7 @@ export async function setStatusAction(
   status: TenantStatus
 ): Promise<void> {
   await updateTenant(id, { status });
-  revalidatePath(`/tenants/${id}`);
+  revalidatePath(`/console/tenants/${id}`);
   revalidatePath("/console");
 }
 
@@ -105,6 +105,6 @@ export async function setModuleOverrideAction(
   const current = await getTenant(id);
   const moduleOverrides = { ...current.moduleOverrides, [moduleKey]: enabled };
   await updateTenant(id, { moduleOverrides });
-  revalidatePath(`/tenants/${id}`);
+  revalidatePath(`/console/tenants/${id}`);
   revalidatePath("/console");
 }

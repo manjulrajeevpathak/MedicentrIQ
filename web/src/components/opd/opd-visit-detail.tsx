@@ -69,7 +69,7 @@ export function OpdVisitDetail({ visit, patient }: { visit: Visit; patient: Pati
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
-          href="/opd"
+          href="/staff/opd"
           className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted transition hover:text-ink"
         >
           <ArrowLeft className="size-3.5" /> OPD register

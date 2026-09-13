@@ -20,5 +20,5 @@ export default async function ResetPasswordPage({
   }
 
   // No token and not a forced first-login — nothing to do here.
-  redirect("/forgot-password");
+  redirect("/staff/forgot-password");
 }

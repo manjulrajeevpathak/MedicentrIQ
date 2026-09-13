@@ -17,7 +17,7 @@ export function ForgotForm() {
       <div className="space-y-4">
         <h1 className="text-base font-semibold text-ink">Check your email</h1>
         <p className="text-sm text-ink-soft">If that email exists, a reset link has been sent.</p>
-        <Link href="/login" className="inline-block text-xs text-brand-600 hover:text-brand-700">
+        <Link href="/staff/login" className="inline-block text-xs text-brand-600 hover:text-brand-700">
           Back to sign in
         </Link>
       </div>
@@ -40,7 +40,7 @@ export function ForgotForm() {
       <SubmitButton />
 
       <div className="pt-1 text-xs">
-        <Link href="/login" className="text-brand-600 hover:text-brand-700">
+        <Link href="/staff/login" className="text-brand-600 hover:text-brand-700">
           Back to sign in
         </Link>
       </div>

@@ -89,15 +89,15 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
   }
 
   if ("mfaRequired" in data && data.mfaRequired) {
-    redirect(`/login/verify?cid=${encodeURIComponent(data.challengeId)}&email=${encodeURIComponent(data.email)}`);
+    redirect(`/staff/login/verify?cid=${encodeURIComponent(data.challengeId)}&email=${encodeURIComponent(data.email)}`);
   }
 
   if ("token" in data && data.token) {
     await setSessionCookie(data.token);
     if (data.mustResetPassword) {
-      redirect("/reset-password?first=1");
+      redirect("/staff/reset-password?first=1");
     }
-    redirect("/today");
+    redirect("/staff/today");
   }
 
   return { error: "Unexpected sign-in response." };
@@ -123,7 +123,7 @@ export async function verifyOtpAction(_prev: AuthState, formData: FormData): Pro
   }
 
   await setSessionCookie(result.data.token);
-  redirect("/today");
+  redirect("/staff/today");
 }
 
 export async function forgotAction(_prev: AuthState, formData: FormData): Promise<AuthState & { ok?: boolean }> {
@@ -153,7 +153,7 @@ export async function resetPasswordAction(_prev: AuthState, formData: FormData):
     return { error: result.error ?? "Could not reset password. Try again." };
   }
 
-  redirect("/login");
+  redirect("/staff/login");
 }
 
 export async function completeFirstLoginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -166,7 +166,7 @@ export async function completeFirstLoginAction(_prev: AuthState, formData: FormD
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) {
-    redirect("/login");
+    redirect("/staff/login");
   }
 
   const result = await postJson<{ ok: boolean; token: string; expiresAt?: string }>(
@@ -177,20 +177,20 @@ export async function completeFirstLoginAction(_prev: AuthState, formData: FormD
 
   if (!result.ok || !result.data?.token) {
     if (result.status === 401) {
-      redirect("/login");
+      redirect("/staff/login");
     }
     return { error: result.error ?? "Could not set your new password. Try again." };
   }
 
   // Store the fresh, rotated token returned after the forced change.
   await setSessionCookie(result.data.token);
-  redirect("/today");
+  redirect("/staff/today");
 }
 
 export async function logoutAction() {
   const store = await cookies();
   store.delete(SESSION_COOKIE);
-  redirect("/login");
+  redirect("/staff/login");
 }
 
 function passwordPolicyError(newPassword: string, confirm: string): string | null {

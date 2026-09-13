@@ -58,7 +58,7 @@ export async function loginAction(
 
   if ("mfaRequired" in result && result.mfaRequired) {
     redirect(
-      `/login/verify?cid=${encodeURIComponent(result.challengeId)}&email=${encodeURIComponent(result.email)}`
+      `/console/login/verify?cid=${encodeURIComponent(result.challengeId)}&email=${encodeURIComponent(result.email)}`
     );
   }
 

@@ -601,7 +601,7 @@ export function TemplatesManager({
                       {/configur/i.test(metaError) ? (
                         <p className="text-[11px]">
                           <Link
-                            href="/communications/channels"
+                            href="/staff/communications/channels"
                             className="font-medium text-brand-600 hover:underline"
                           >
                             Set up WhatsApp Cloud in Admin → Channels →

@@ -47,7 +47,7 @@ export function VerifyForm({ challengeId, email }: { challengeId: string; email:
       <SubmitButton />
 
       <div className="pt-1 text-xs">
-        <Link href="/login" className="text-brand-600 hover:text-brand-700">
+        <Link href="/staff/login" className="text-brand-600 hover:text-brand-700">
           Back to sign in
         </Link>
       </div>

@@ -117,7 +117,7 @@ export function PatientsWorkspace({
             />
             {/* Actions on their own row — the 340px column can't fit them beside the title. */}
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <Link href="/opd" className="min-w-0">
+              <Link href="/staff/opd" className="min-w-0">
                 <Button size="sm" className="w-full">
                   <ClipboardPlus className="size-3.5" /> Walk-in (OPD)
                 </Button>
@@ -181,7 +181,7 @@ export function PatientsWorkspace({
         {hasSelection ? (
           <div className={cn("space-y-5", !hasSelection && "hidden lg:block")}>
             <button
-              onClick={() => router.push("/patients")}
+              onClick={() => router.push("/staff/patients")}
               className="flex items-center gap-1.5 text-sm font-medium text-ink-soft lg:hidden"
             >
               <ArrowLeft className="size-4" /> Directory
@@ -224,7 +224,7 @@ export function PatientsWorkspace({
         onCreated={(id) => {
           setComposerOpen(false);
           toast("Patient added.", "success");
-          router.push(`/patients/${id}`);
+          router.push(`/staff/patients/${id}`);
         }}
       />
     </>

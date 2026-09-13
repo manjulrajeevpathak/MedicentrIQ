@@ -124,7 +124,7 @@ export default async function DashboardPage() {
                 >
                   <td className="px-5 py-3.5">
                     <Link
-                      href={`/tenants/${t.id}`}
+                      href={`/console/tenants/${t.id}`}
                       className="font-medium text-[var(--color-ink)] hover:text-[var(--color-brand-700)]"
                     >
                       {t.displayName}
@@ -150,7 +150,7 @@ export default async function DashboardPage() {
                   </td>
                   <td className="px-5 py-3.5 text-right">
                     <Link
-                      href={`/tenants/${t.id}`}
+                      href={`/console/tenants/${t.id}`}
                       className="inline-flex text-[var(--color-ink-faint)] hover:text-[var(--color-brand-600)]"
                       aria-label={`Open ${t.displayName}`}
                     >

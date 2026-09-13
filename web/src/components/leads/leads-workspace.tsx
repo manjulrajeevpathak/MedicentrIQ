@@ -529,7 +529,7 @@ function LeadRow({
         return;
       }
       toast(result.message ?? "Converted.", "success");
-      router.push(`/patients/${result.data.id}`);
+      router.push(`/staff/patients/${result.data.id}`);
     });
   }
 
@@ -562,7 +562,7 @@ function LeadRow({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => router.push(`/patients/${lead.convertedPatientId}`)}
+            onClick={() => router.push(`/staff/patients/${lead.convertedPatientId}`)}
           >
             View patient <ArrowRight className="size-3.5" />
           </Button>

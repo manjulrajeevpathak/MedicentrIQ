@@ -32,7 +32,7 @@ export function LoginForm() {
       <SubmitButton />
 
       <div className="flex items-center justify-between pt-1 text-xs">
-        <Link href="/forgot-password" className="text-brand-600 hover:text-brand-700">
+        <Link href="/staff/forgot-password" className="text-brand-600 hover:text-brand-700">
           Forgot password?
         </Link>
       </div>
