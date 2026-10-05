@@ -75,6 +75,19 @@ function formatTime(iso: string): string {
   return `${h}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
+/** Readable day label for an appointment date (UTC, matching formatTime). */
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+}
+
 /** Bucket a wall-clock slot into Morning / Afternoon / Evening for a readable picker. */
 function slotPeriod(iso: string): "Morning" | "Afternoon" | "Evening" {
   const h = new Date(iso).getUTCHours();
@@ -135,6 +148,11 @@ function BookingTab({
   const [date, setDate] = useState(today);
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>(initialAppointments);
+  // The appointments VIEW is independent of the booking form: its own doctor +
+  // date filters (empty = all), so staff see every booking without guessing a date.
+  const [viewDoctorId, setViewDoctorId] = useState("");
+  const [viewDate, setViewDate] = useState("");
+  const [loadingView, startLoadView] = useTransition();
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   // Phone-first patient capture: look up by phone → existing patient (prefill) or new.
   const [patientId, setPatientId] = useState("");
@@ -173,35 +191,53 @@ function BookingTab({
       .sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : 0));
   }, [slots]);
 
-  function refresh(nextDoctorId: string, nextDate: string) {
+  // Booking form: load only this doctor+date's slots (the view panel is separate).
+  function loadSlots(nextDoctorId: string, nextDate: string) {
     setError(null);
     setSelectedSlot("");
     if (!nextDoctorId) {
       setSlots([]);
-      setAppointments([]);
       return;
     }
     startLoadSlots(async () => {
-      const [slotsResult, apptResult] = await Promise.all([
-        loadSlotsAction(nextDoctorId, nextDate),
-        loadAppointmentsAction(nextDoctorId, nextDate)
-      ]);
+      const slotsResult = await loadSlotsAction(nextDoctorId, nextDate);
       if (slotsResult.ok) setSlots(slotsResult.data ?? []);
       else {
         setSlots([]);
         toast(slotsResult.error ?? "Could not load slots.", "error");
       }
-      if (apptResult.ok) setAppointments(apptResult.data ?? []);
+    });
+  }
+
+  // Appointments view: independent doctor/date filters (empty = all).
+  function loadView(nextViewDoctorId: string, nextViewDate: string) {
+    startLoadView(async () => {
+      const result = await loadAppointmentsAction(nextViewDoctorId || undefined, nextViewDate || undefined);
+      if (result.ok) setAppointments(result.data ?? []);
+      else toast(result.error ?? "Could not load appointments.", "error");
     });
   }
 
   function onDoctorChange(id: string) {
     setDoctorId(id);
-    refresh(id, date);
+    loadSlots(id, date);
   }
   function onDateChange(d: string) {
     setDate(d);
-    refresh(doctorId, d);
+    loadSlots(doctorId, d);
+  }
+  function onViewDoctorChange(id: string) {
+    setViewDoctorId(id);
+    loadView(id, viewDate);
+  }
+  function onViewDateChange(d: string) {
+    setViewDate(d);
+    loadView(viewDoctorId, d);
+  }
+  function clearViewFilters() {
+    setViewDoctorId("");
+    setViewDate("");
+    loadView("", "");
   }
 
   function resetPatient() {
@@ -269,7 +305,8 @@ function BookingTab({
       setReason("");
       setSelectedSlot("");
       resetPatient();
-      refresh(doctorId, date);
+      loadSlots(doctorId, date);
+      loadView(viewDoctorId, viewDate);
     });
   }
 
@@ -283,9 +320,10 @@ function BookingTab({
         return;
       }
       toast(result.message ?? "Appointment updated.", "success");
-      // Reload slots + appointments so a freed slot (cancel / no-show) reappears
-      // as bookable, and statuses stay accurate.
-      refresh(doctorId, date);
+      // Reload slots + the appointments view so a freed slot (cancel / no-show)
+      // reappears as bookable, and statuses stay accurate.
+      loadSlots(doctorId, date);
+      loadView(viewDoctorId, viewDate);
     });
   }
 
@@ -304,6 +342,20 @@ function BookingTab({
     const map = new Map(patients.map((p) => [p.id, p.displayName]));
     return (id: string) => map.get(id) ?? id;
   }, [patients]);
+
+  // Group the (independently-filtered) appointments by day, chronologically, so
+  // each booking is visible under a clear date header regardless of the booking form.
+  const appointmentGroups = useMemo(() => {
+    const sorted = appointments.slice().sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+    const groups: { date: string; items: Appointment[] }[] = [];
+    for (const appt of sorted) {
+      const day = appt.scheduledAt.slice(0, 10);
+      const last = groups[groups.length - 1];
+      if (last && last.date === day) last.items.push(appt);
+      else groups.push({ date: day, items: [appt] });
+    }
+    return groups;
+  }, [appointments]);
 
   return (
     <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -501,87 +553,129 @@ function BookingTab({
         </div>
       </Panel>
 
-      {/* Today's appointments — sticky panel with its own scroll so a long list
-          doesn't stretch the page or the booking column. */}
+      {/* Appointments — INDEPENDENT of the booking form: its own doctor + date
+          filters (empty = all), grouped by day so every booking is visible. */}
       <Panel padded={false} className="flex flex-col overflow-hidden lg:sticky lg:top-6 lg:max-h-[calc(100vh-7rem)]">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line p-4">
-          <SectionTitle
-            icon={<CalendarDays className="size-4" />}
-            title="Appointments"
-            subtitle={doctorId ? `${doctorName(doctorId)} · ${date}` : "Select a doctor"}
-          />
-          <Button variant="outline" size="sm" onClick={sendConfirmations} disabled={sending}>
-            <Send className="size-3.5" /> {sending ? "Sending…" : "Send doctor confirmations"}
-          </Button>
+        <div className="shrink-0 space-y-3 border-b border-line p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SectionTitle
+              icon={<CalendarDays className="size-4" />}
+              title="Appointments"
+              subtitle={
+                viewDoctorId || viewDate
+                  ? `${viewDoctorId ? doctorName(viewDoctorId) : "All doctors"} · ${viewDate ? formatDate(`${viewDate}T00:00:00Z`) : "all dates"}`
+                  : "All doctors · all dates"
+              }
+            />
+            <Button variant="outline" size="sm" onClick={sendConfirmations} disabled={sending}>
+              <Send className="size-3.5" /> {sending ? "Sending…" : "Send doctor confirmations"}
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[160px] flex-1">
+              <label htmlFor="view-doctor" className="mb-1 block text-[11px] font-medium text-ink-muted">Doctor</label>
+              <select
+                id="view-doctor"
+                value={viewDoctorId}
+                onChange={(e) => onViewDoctorChange(e.target.value)}
+                className="h-9 w-full rounded-lg border border-line-strong bg-surface px-2.5 text-xs text-ink focus-visible:border-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+              >
+                <option value="">All doctors</option>
+                {doctors.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="min-w-[150px]">
+              <label htmlFor="view-date" className="mb-1 block text-[11px] font-medium text-ink-muted">Date</label>
+              <Input id="view-date" type="date" value={viewDate} onChange={(e) => onViewDateChange(e.target.value)} className="h-9" />
+            </div>
+            {viewDoctorId || viewDate ? (
+              <Button variant="subtle" size="sm" onClick={clearViewFilters}>
+                <X className="size-3.5" /> Clear
+              </Button>
+            ) : null}
+          </div>
         </div>
 
-        {appointments.length === 0 ? (
+        {loadingView ? (
+          <p className="py-10 text-center text-xs text-ink-muted">Loading appointments…</p>
+        ) : appointments.length === 0 ? (
           <EmptyState
             icon={<CalendarDays className="size-5" />}
             title="No appointments"
-            description="Booked appointments for this doctor and date will appear here."
+            description={viewDoctorId || viewDate ? "No appointments match these filters." : "Booked appointments will appear here."}
           />
         ) : (
-          <ul className="flex-1 divide-y divide-line overflow-y-auto">
-            {appointments
-              .slice()
-              .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
-              .map((appointment) => {
-                const busy = busyAppointmentId === appointment.id;
-                // Cancelled / no-show can be re-opened back to Scheduled. Completed is final.
-                const reopenable = ["cancelled", "no_show"].includes(appointment.status);
-                const done = appointment.status === "completed";
-                // No-show is only offered once the appointment day has passed (give the
-                // patient the whole day to walk in to OPD first).
-                const dayPassed = appointment.scheduledAt.slice(0, 10) < today;
-                return (
-                  <li key={appointment.id} className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-ink">{patientName(appointment.patientId)}</p>
-                        <p className="mt-0.5 text-xs text-ink-muted">
-                          {formatTime(appointment.scheduledAt)} · {appointment.durationMinutes} min
-                          {appointment.branchId ? ` · ${branchName(appointment.branchId)}` : ""}
-                        </p>
-                        {appointment.reason ? (
-                          <p className="mt-1 text-xs text-ink-soft">{appointment.reason}</p>
-                        ) : null}
-                        {appointment.rescheduledBy === "patient" ? (
-                          <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
-                            <UserCheck className="size-3" /> Rescheduled by patient
-                          </span>
-                        ) : null}
-                      </div>
-                      <Badge tone={statusTone[appointment.status]} dot>
-                        {APPOINTMENT_STATUS_LABELS[appointment.status]}
-                      </Badge>
-                    </div>
-                    {reopenable ? (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                        <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "scheduled")}>
-                          <RotateCcw className="size-3.5" /> Reopen
-                        </Button>
-                        <span className="text-[11px] text-ink-faint">Re-opens to Scheduled.</span>
-                      </div>
-                    ) : done ? null : (
-                      <div className="mt-2.5 flex flex-wrap gap-1.5">
-                        <Button variant="outline" size="sm" disabled={busy} onClick={() => setRescheduleFor(appointment)}>
-                          <CalendarClock className="size-3.5" /> Reschedule
-                        </Button>
-                        {dayPassed ? (
-                          <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "no_show")}>
-                            No-show
-                          </Button>
-                        ) : null}
-                        <Button variant="subtle" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "cancelled")}>
-                          Cancel
-                        </Button>
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-          </ul>
+          <div className="flex-1 overflow-y-auto">
+            {appointmentGroups.map((group) => (
+              <div key={group.date}>
+                <p className="sticky top-0 z-10 bg-surface-muted px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                  {formatDate(`${group.date}T00:00:00Z`)} · {group.items.length}
+                </p>
+                <ul className="divide-y divide-line">
+                  {group.items.map((appointment) => {
+                    const busy = busyAppointmentId === appointment.id;
+                    // Cancelled / no-show can be re-opened back to Scheduled. Completed is final.
+                    const reopenable = ["cancelled", "no_show"].includes(appointment.status);
+                    const done = appointment.status === "completed";
+                    // No-show is only offered once the appointment day has passed (give the
+                    // patient the whole day to walk in to OPD first).
+                    const dayPassed = appointment.scheduledAt.slice(0, 10) < today;
+                    return (
+                      <li key={appointment.id} className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-ink">{patientName(appointment.patientId)}</p>
+                            <p className="mt-0.5 text-xs text-ink-muted">
+                              {formatTime(appointment.scheduledAt)} · {appointment.durationMinutes} min
+                              {appointment.doctorId ? ` · ${doctorName(appointment.doctorId)}` : ""}
+                              {appointment.branchId ? ` · ${branchName(appointment.branchId)}` : ""}
+                            </p>
+                            {appointment.reason ? (
+                              <p className="mt-1 text-xs text-ink-soft">{appointment.reason}</p>
+                            ) : null}
+                            {appointment.rescheduledBy === "patient" ? (
+                              <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
+                                <UserCheck className="size-3" /> Rescheduled by patient
+                              </span>
+                            ) : null}
+                          </div>
+                          <Badge tone={statusTone[appointment.status]} dot>
+                            {APPOINTMENT_STATUS_LABELS[appointment.status]}
+                          </Badge>
+                        </div>
+                        {reopenable ? (
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                            <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "scheduled")}>
+                              <RotateCcw className="size-3.5" /> Reopen
+                            </Button>
+                            <span className="text-[11px] text-ink-faint">Re-opens to Scheduled.</span>
+                          </div>
+                        ) : done ? null : (
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            <Button variant="outline" size="sm" disabled={busy} onClick={() => setRescheduleFor(appointment)}>
+                              <CalendarClock className="size-3.5" /> Reschedule
+                            </Button>
+                            {dayPassed ? (
+                              <Button variant="outline" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "no_show")}>
+                                No-show
+                              </Button>
+                            ) : null}
+                            <Button variant="subtle" size="sm" disabled={busy} onClick={() => changeStatus(appointment, "cancelled")}>
+                              Cancel
+                            </Button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
         )}
       </Panel>
 
@@ -591,7 +685,8 @@ function BookingTab({
           onClose={() => setRescheduleFor(null)}
           onDone={() => {
             setRescheduleFor(null);
-            refresh(doctorId, date);
+            loadSlots(doctorId, date);
+            loadView(viewDoctorId, viewDate);
           }}
         />
       ) : null}

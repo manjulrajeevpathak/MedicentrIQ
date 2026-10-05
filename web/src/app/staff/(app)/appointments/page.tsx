@@ -37,13 +37,12 @@ export default async function AccessPage() {
   const patients = patientsResult.ok ? patientsResult.data : [];
   const branches = me.branches;
 
-  // Seed the day's appointments for the first active doctor (the default
-  // selection on the client). The client refetches when the selection changes.
+  // Seed ALL appointments (across doctors and dates). The view panel is
+  // independent of the booking form, so staff see every booking without having
+  // to guess a date; the booking form still defaults to the first active doctor.
   const firstDoctor = doctors.find((d) => d.status === "active") ?? doctors[0];
-  const initialAppointmentsResult = firstDoctor
-    ? await fetchAppointments({ doctorId: firstDoctor.id, date: today })
-    : null;
-  const initialAppointments = initialAppointmentsResult?.ok ? initialAppointmentsResult.data : [];
+  const initialAppointmentsResult = await fetchAppointments({});
+  const initialAppointments = initialAppointmentsResult.ok ? initialAppointmentsResult.data : [];
 
   return (
     <AccessWorkspace

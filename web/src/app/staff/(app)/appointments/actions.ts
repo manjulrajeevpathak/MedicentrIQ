@@ -34,10 +34,11 @@ export async function loadSlotsAction(
 }
 
 export async function loadAppointmentsAction(
-  doctorId: string,
-  date: string
+  doctorId?: string,
+  date?: string
 ): Promise<ActionState<Appointment[]>> {
-  const result = await fetchAppointments({ doctorId: doctorId || undefined, date });
+  // Both filters optional — omit either (or both) to view across doctors / all dates.
+  const result = await fetchAppointments({ doctorId: doctorId || undefined, date: date || undefined });
   if (!result.ok) {
     return { ok: false, error: result.error ?? "Could not load appointments." };
   }
