@@ -1025,11 +1025,30 @@ export type DoctorWorkingWindow = {
   branchId?: string;
 };
 
+/**
+ * Public-facing doctor profile shown to patients and surfaced to the WhatsApp
+ * assistant — EXCEPT `registrationNumber`, which is internal (compliance) and is
+ * never sent to patients or the bot. All fields optional; `graduationYear` is a
+ * 4-digit year (experience is derived from it at display time, never stored).
+ */
+export type DoctorProfile = {
+  designation?: string;
+  qualifications?: string[];
+  graduationYear?: number;
+  expertise?: string[];
+  languages?: string[];
+  bio?: string;
+  /** Medical-council registration number — INTERNAL; not surfaced to patients/assistant. */
+  registrationNumber?: string;
+};
+
 export type Doctor = {
   id: string;
   tenantId: string;
   displayName: string;
   specialty?: string;
+  /** Public profile + bio (qualifications, graduation year, expertise, languages, bio). */
+  profile?: DoctorProfile;
   branchIds: string[];
   /** Phone used for the daily confirm message. */
   phone?: string;

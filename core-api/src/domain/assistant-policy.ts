@@ -66,7 +66,16 @@ export const leadCaptureEnabled = (config: AssistantConfig): boolean => config.l
 export type CompileParams = {
   orgName: string;
   branches: { displayName: string; city?: string; address?: string; phone?: string; mapUrl?: string; timings?: string }[];
-  doctors: { displayName: string; specialty?: string }[];
+  doctors: {
+    displayName: string;
+    specialty?: string;
+    designation?: string;
+    qualifications?: string[];
+    graduationYear?: number;
+    expertise?: string[];
+    languages?: string[];
+    bio?: string;
+  }[];
   config: AssistantConfig;
   channel: AssistantChannel;
 };
@@ -135,9 +144,18 @@ export const compileAssistantSystemPrompt = (params: CompileParams): string => {
     lines.push(`Clinic timings (the ONLY source for opening hours / days open — never invent hours): ${timings}`);
   }
   if ((usesLive("doctors") || usesLive("slots")) && doctors.length > 0) {
-    lines.push(
-      "Doctors:\n" + doctors.map((d) => `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}`).join("\n")
-    );
+    const thisYear = new Date().getUTCFullYear();
+    const describeDoctor = (d: CompileParams["doctors"][number]): string => {
+      const head = `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}${d.designation ? ` — ${d.designation}` : ""}`;
+      const details: string[] = [];
+      if (d.qualifications?.length) details.push(`Qualifications: ${d.qualifications.join(", ")}`);
+      if (d.graduationYear) details.push(`~${Math.max(0, thisYear - d.graduationYear)} years' experience (qualified ${d.graduationYear})`);
+      if (d.expertise?.length) details.push(`Special interests: ${d.expertise.join(", ")}`);
+      if (d.languages?.length) details.push(`Speaks: ${d.languages.join(", ")}`);
+      if (d.bio) details.push(d.bio);
+      return details.length ? `${head}\n  ${details.join("\n  ")}` : head;
+    };
+    lines.push("Doctors (share this when asked about a doctor):\n" + doctors.map(describeDoctor).join("\n"));
   }
 
   if (appointmentsEnabled(config)) {

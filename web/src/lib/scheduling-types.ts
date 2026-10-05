@@ -17,10 +17,22 @@ export type WeeklyHours = Record<string, ScheduleWindow[]>;
 
 export type DoctorStatus = "active" | "inactive";
 
+/** Public doctor profile. `registrationNumber` is internal — never shown to patients/assistant. */
+export type DoctorProfile = {
+  designation?: string;
+  qualifications?: string[];
+  graduationYear?: number;
+  expertise?: string[];
+  languages?: string[];
+  bio?: string;
+  registrationNumber?: string;
+};
+
 export type Doctor = {
   id: string;
   displayName: string;
   specialty?: string;
+  profile?: DoctorProfile;
   branchIds: string[];
   slotMinutes: number;
   /** Patients bookable per slot (default 1). */

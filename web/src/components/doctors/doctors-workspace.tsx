@@ -112,6 +112,13 @@ export function DoctorsWorkspace({ doctors, branches }: Props) {
                         ? doctor.branchIds.map(branchName).join(", ")
                         : "No branches assigned"}
                     </p>
+                    {doctor.profile?.designation || doctor.profile?.qualifications?.length ? (
+                      <p className="mt-1 text-[11px] text-ink-faint">
+                        {[doctor.profile?.designation, doctor.profile?.qualifications?.join(", ")]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Button
@@ -347,12 +354,24 @@ function EditDoctorForm({
       setError("Name is required.");
       return;
     }
+    // Profile & bio — comma-separated lists are split; the server validates/trims.
+    const gradRaw = String(fd.get("graduationYear") ?? "").trim();
+    const profile = {
+      designation: String(fd.get("designation") ?? "").trim() || undefined,
+      qualifications: parseList(String(fd.get("qualifications") ?? "")),
+      graduationYear: /^\d{4}$/.test(gradRaw) ? Number(gradRaw) : undefined,
+      expertise: parseList(String(fd.get("expertise") ?? "")),
+      languages: parseList(String(fd.get("languages") ?? "")),
+      bio: String(fd.get("bio") ?? "").trim() || undefined,
+      registrationNumber: String(fd.get("registrationNumber") ?? "").trim() || undefined
+    };
     startTransition(async () => {
       const result = await updateDoctorAction(doctor.id, {
         displayName,
         specialty: specialty || undefined,
         phone: phone || undefined,
-        branchIds
+        branchIds,
+        profile
       });
       if (!result.ok) {
         setError(result.error ?? "Could not update the doctor.");
@@ -409,6 +428,94 @@ function EditDoctorForm({
           </div>
         )}
       </fieldset>
+
+      <div className="space-y-3.5 border-t border-line pt-3.5">
+        <p className="text-xs font-semibold text-ink">
+          Profile &amp; bio <span className="font-normal text-ink-muted">— shown to patients and the WhatsApp assistant</span>
+        </p>
+        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+          <Field label="Designation" htmlFor={`ed-desig-${doctor.id}`}>
+            <Input
+              id={`ed-desig-${doctor.id}`}
+              name="designation"
+              defaultValue={doctor.profile?.designation ?? ""}
+              placeholder="Senior Consultant — Cataract & Cornea"
+              disabled={pending}
+            />
+          </Field>
+          <Field label="Year of graduation" htmlFor={`ed-grad-${doctor.id}`}>
+            <Input
+              id={`ed-grad-${doctor.id}`}
+              name="graduationYear"
+              type="number"
+              inputMode="numeric"
+              min={1950}
+              max={new Date().getFullYear()}
+              defaultValue={doctor.profile?.graduationYear ?? ""}
+              placeholder="2008"
+              disabled={pending}
+            />
+          </Field>
+        </div>
+        <Field
+          label="Qualifications"
+          htmlFor={`ed-qual-${doctor.id}`}
+          hint="Comma-separated, e.g. MBBS, MS (Ophthalmology), Fellowship in Cornea"
+        >
+          <Input
+            id={`ed-qual-${doctor.id}`}
+            name="qualifications"
+            defaultValue={(doctor.profile?.qualifications ?? []).join(", ")}
+            placeholder="MBBS, MS (Ophthalmology)"
+            disabled={pending}
+          />
+        </Field>
+        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+          <Field label="Areas of expertise" htmlFor={`ed-exp-${doctor.id}`} hint="Comma-separated">
+            <Input
+              id={`ed-exp-${doctor.id}`}
+              name="expertise"
+              defaultValue={(doctor.profile?.expertise ?? []).join(", ")}
+              placeholder="Cataract, Cornea, LASIK"
+              disabled={pending}
+            />
+          </Field>
+          <Field label="Languages" htmlFor={`ed-lang-${doctor.id}`} hint="Comma-separated">
+            <Input
+              id={`ed-lang-${doctor.id}`}
+              name="languages"
+              defaultValue={(doctor.profile?.languages ?? []).join(", ")}
+              placeholder="English, Hindi"
+              disabled={pending}
+            />
+          </Field>
+        </div>
+        <Field label="Bio" htmlFor={`ed-bio-${doctor.id}`} hint="Shown when a patient asks about this doctor.">
+          <textarea
+            id={`ed-bio-${doctor.id}`}
+            name="bio"
+            defaultValue={doctor.profile?.bio ?? ""}
+            rows={4}
+            disabled={pending}
+            placeholder="Dr. … has over 15 years of experience in…"
+            className="w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink outline-none placeholder:text-ink-faint transition focus-visible:border-brand-400 focus-visible:ring-2 focus-visible:ring-brand-200 resize-y"
+          />
+        </Field>
+        <Field
+          label="Registration number"
+          htmlFor={`ed-reg-${doctor.id}`}
+          hint="Internal only — never shown to patients or the assistant."
+        >
+          <Input
+            id={`ed-reg-${doctor.id}`}
+            name="registrationNumber"
+            defaultValue={doctor.profile?.registrationNumber ?? ""}
+            placeholder="e.g. DMC/12345"
+            disabled={pending}
+          />
+        </Field>
+      </div>
+
       {error ? <p className="text-xs font-medium text-[var(--color-critical)]">{error}</p> : null}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onSaved} disabled={pending}>
@@ -631,6 +738,14 @@ function ScheduleEditor({
       </div>
     </div>
   );
+}
+
+/** Split a comma-separated field into a trimmed, non-empty list. */
+function parseList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Coerce a weeklyHours map (keys may be numbers or strings) into our shape. */

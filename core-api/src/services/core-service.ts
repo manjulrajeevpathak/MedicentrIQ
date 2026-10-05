@@ -69,6 +69,7 @@ import type {
   ClinicalCondition,
   ClinicalRecord,
   Doctor,
+  DoctorProfile,
   DoctorSlot,
   DoctorWorkingWindow,
   DocumentMetadata,
@@ -727,6 +728,40 @@ const sanitizeSlotCapacity = (value: unknown): number => {
 /** Read a doctor's per-slot capacity, defaulting legacy records (no field) to 1. */
 const doctorSlotCapacity = (doctor: Doctor): number =>
   doctor.slotCapacity && doctor.slotCapacity > 0 ? doctor.slotCapacity : 1;
+
+/** Validate/trim a public doctor profile. Returns undefined when nothing usable
+ *  is present (so an empty profile is stored as absent rather than an empty shell). */
+const sanitizeDoctorProfile = (value: unknown): DoctorProfile | undefined => {
+  if (!isPlainRecord(value)) return undefined;
+  const str = (v: unknown, max: number): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
+  const list = (v: unknown, maxItems: number, maxLen: number): string[] | undefined => {
+    if (!Array.isArray(v)) return undefined;
+    const arr = v
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .map((x) => x.trim().slice(0, maxLen))
+      .slice(0, maxItems);
+    return arr.length ? arr : undefined;
+  };
+  const rawYear =
+    typeof value.graduationYear === "number"
+      ? value.graduationYear
+      : typeof value.graduationYear === "string" && /^\d{4}$/.test(value.graduationYear.trim())
+        ? Number(value.graduationYear.trim())
+        : undefined;
+  const nowYear = new Date().getUTCFullYear();
+  const graduationYear = rawYear && rawYear >= 1950 && rawYear <= nowYear ? rawYear : undefined;
+  const profile: DoctorProfile = {
+    ...(str(value.designation, 120) ? { designation: str(value.designation, 120) } : {}),
+    ...(list(value.qualifications, 15, 120) ? { qualifications: list(value.qualifications, 15, 120) } : {}),
+    ...(graduationYear ? { graduationYear } : {}),
+    ...(list(value.expertise, 20, 60) ? { expertise: list(value.expertise, 20, 60) } : {}),
+    ...(list(value.languages, 15, 40) ? { languages: list(value.languages, 15, 40) } : {}),
+    ...(str(value.bio, 1500) ? { bio: str(value.bio, 1500) } : {}),
+    ...(str(value.registrationNumber, 60) ? { registrationNumber: str(value.registrationNumber, 60) } : {})
+  };
+  return Object.keys(profile).length ? profile : undefined;
+};
 
 /** "HH:MM" → minutes-since-midnight, or null if malformed/out of range. */
 const parseHhMm = (value: unknown): number | null => {
@@ -3911,7 +3946,17 @@ export class CoreService {
     const prompt = compileAssistantSystemPrompt({
       orgName: org?.displayName ?? "this hospital",
       branches: branches.map((b) => ({ displayName: b.displayName, city: b.city, address: b.address, phone: b.phone, mapUrl: b.mapUrl, timings: b.timings })),
-      doctors: doctors.map((d) => ({ displayName: d.displayName, specialty: d.specialty })),
+      // Public profile only — registrationNumber is deliberately never sent to the bot.
+      doctors: doctors.map((d) => ({
+        displayName: d.displayName,
+        specialty: d.specialty,
+        designation: d.profile?.designation,
+        qualifications: d.profile?.qualifications,
+        graduationYear: d.profile?.graduationYear,
+        expertise: d.profile?.expertise,
+        languages: d.profile?.languages,
+        bio: d.profile?.bio
+      })),
       config,
       channel
     });
@@ -3967,7 +4012,21 @@ export class CoreService {
 
     if (name === "list_doctors") {
       if (activeDoctors.length === 0) return "No doctors are configured.";
-      return activeDoctors.map((d) => `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}`).join("\n");
+      const thisYear = new Date().getUTCFullYear();
+      return activeDoctors
+        .map((d) => {
+          const p = d.profile;
+          let line = `- ${d.displayName}${d.specialty ? ` (${d.specialty})` : ""}${p?.designation ? ` — ${p.designation}` : ""}`;
+          const bits: string[] = [];
+          if (p?.qualifications?.length) bits.push(p.qualifications.join(", "));
+          if (p?.graduationYear) bits.push(`~${Math.max(0, thisYear - p.graduationYear)} yrs exp`);
+          if (p?.expertise?.length) bits.push(`focus: ${p.expertise.join(", ")}`);
+          if (p?.languages?.length) bits.push(`speaks: ${p.languages.join(", ")}`);
+          if (bits.length) line += ` — ${bits.join("; ")}`;
+          if (p?.bio) line += `\n  ${p.bio}`;
+          return line; // registrationNumber intentionally omitted
+        })
+        .join("\n");
     }
 
     if (name === "list_available_slots") {
@@ -5994,6 +6053,7 @@ export class CoreService {
       tenantId: context.tenantId,
       displayName,
       specialty: typeof input.specialty === "string" ? input.specialty : undefined,
+      profile: sanitizeDoctorProfile(input.profile),
       branchIds,
       phone: typeof input.phone === "string" ? input.phone : undefined,
       slotMinutes: sanitizeSlotMinutes(input.slotMinutes),
@@ -6018,6 +6078,11 @@ export class CoreService {
     }
     if (typeof input.specialty === "string") {
       doctor.specialty = input.specialty;
+    }
+    // Replace the whole profile when provided (the editor sends the full object),
+    // so clearing a field removes it; an empty profile becomes absent.
+    if (input.profile !== undefined) {
+      doctor.profile = sanitizeDoctorProfile(input.profile);
     }
     if (typeof input.phone === "string") {
       doctor.phone = input.phone;

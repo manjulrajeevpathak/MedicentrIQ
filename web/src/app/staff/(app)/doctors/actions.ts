@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { coreApi } from "@/lib/users-api";
-import type { Doctor, WeeklyHours } from "@/lib/scheduling-types";
+import type { Doctor, DoctorProfile, WeeklyHours } from "@/lib/scheduling-types";
 
 /**
  * Doctor-management server actions. Each reads the session bearer (via
@@ -24,6 +24,7 @@ export async function createDoctorAction(input: {
   slotMinutes?: number;
   slotCapacity?: number;
   phone?: string;
+  profile?: DoctorProfile;
 }): Promise<ActionState<Doctor>> {
   if (!input.displayName.trim()) return { ok: false, error: "Enter a doctor name." };
 
@@ -35,7 +36,8 @@ export async function createDoctorAction(input: {
       branchIds: input.branchIds,
       ...(input.slotMinutes ? { slotMinutes: input.slotMinutes } : {}),
       ...(input.slotCapacity ? { slotCapacity: input.slotCapacity } : {}),
-      ...(input.phone ? { phone: input.phone } : {})
+      ...(input.phone ? { phone: input.phone } : {}),
+      ...(input.profile ? { profile: input.profile } : {})
     }
   });
   if (!result.ok) {
@@ -54,6 +56,7 @@ export async function updateDoctorAction(
     phone?: string;
     branchIds?: string[];
     status?: Doctor["status"];
+    profile?: DoctorProfile;
   }
 ): Promise<ActionState<Doctor>> {
   const result = await coreApi<Doctor>(`/doctors/${encodeURIComponent(id)}`, {
