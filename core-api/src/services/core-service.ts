@@ -913,7 +913,8 @@ const NOTIFICATION_DEFAULTS = {
       "Hi {{patientName}}, a friendly reminder that your appointment with {{doctorName}} is on {{date}} at {{time}}. Please arrive about 10 minutes early and bring your glasses or previous prescriptions. To confirm or reschedule, tap here: {{confirmLink}}. We look forward to seeing you."
   },
   reminder3h: {
-    body: "Hi {{patientName}}, your appointment with {{doctorName}} is coming up at {{time}}. See you at {{branch}}."
+    body:
+      "Hi {{patientName}}, your appointment with {{doctorName}} at {{branch}} is coming up today at {{time}}. Please arrive about 10 minutes early and bring your glasses or previous prescriptions. We look forward to seeing you soon."
   },
   cancelled: {
     body: "Hi {{patientName}}, your appointment with {{doctorName}} on {{date}} at {{time}} has been cancelled. Call us to rebook."
