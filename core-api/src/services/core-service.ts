@@ -5014,11 +5014,17 @@ export class CoreService {
           }
         : null;
 
+    const leadsNew = this.data.leads.filter(
+      (lead) => lead.tenantId === context.tenantId && lead.stage === "new"
+    ).length;
+
     return {
       generatedAt: nowIso(),
       source: "core-api",
       entitlements: { planId: tenant?.planId ?? null, enabledModules },
       sessionUser,
+      // New (un-triaged) lead count — drives the sidebar "Leads" badge.
+      leadsNew,
       // Real tenant identity + the branches this user can actually see — so the
       // staff console header reflects the logged-in hospital, not a demo default.
       tenant: tenant ? { id: tenant.id, displayName: tenant.displayName } : null,

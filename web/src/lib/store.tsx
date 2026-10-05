@@ -25,7 +25,7 @@ export type NewPatientInput = {
 type AppContextValue = {
   data: DashboardData;
   branch: { id: string; name: string };
-  badges: { workbench: number; inbox: number; access: number; continuity: number };
+  badges: { workbench: number; inbox: number; access: number; continuity: number; leads: number };
   patientIdByName: (name: string) => string | undefined;
 
   /** Adds a patient to the directory + Patient 360 and returns the new id. */
@@ -245,7 +245,8 @@ export function AppProvider({ initial, children }: { initial: DashboardData; chi
       workbench: data.workbench.filter((w) => w.priority === "critical" || w.priority === "high").length,
       inbox: data.inbox.filter((c) => c.status === "new" || c.status === "escalated").length,
       access: data.accessQueue.filter((r) => r.state !== "confirmed").length,
-      continuity: data.followUpQueue.filter((f) => f.risk === "critical" || f.risk === "high").length
+      continuity: data.followUpQueue.filter((f) => f.risk === "critical" || f.risk === "high").length,
+      leads: data.leadsNew ?? 0
     }),
     [data]
   );

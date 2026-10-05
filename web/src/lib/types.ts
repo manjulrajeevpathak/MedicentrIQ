@@ -328,4 +328,6 @@ export type DashboardData = {
   followUpQueue: FollowUpQueueItem[];
   serviceStatus: ServiceStatus[];
   auditEvents: AuditEvent[];
+  /** New (un-triaged) lead count — drives the sidebar "Leads" badge. */
+  leadsNew: number;
 };

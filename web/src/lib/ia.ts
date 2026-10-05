@@ -48,7 +48,7 @@ export type NavItem = {
   /** Entitlement module that gates this surface. */
   module: ModuleKey;
   requires?: PermissionKey;
-  badgeKey?: "inbox" | "access" | "continuity" | "workbench";
+  badgeKey?: "inbox" | "access" | "continuity" | "workbench" | "leads";
   /** Placeholder for a not-yet-built surface — shown, labelled "Soon", non-clickable. */
   comingSoon?: boolean;
   /** Hidden from nav + command palette (the route still resolves if reached directly). */
@@ -80,7 +80,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Growth",
     items: [
-      { href: "/staff/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads" },
+      { href: "/staff/leads", label: "Leads", icon: Sprout, description: "Camp, web-form and referral leads → patients", module: "leads", badgeKey: "leads" },
       { href: "/staff/campaigns", label: "Campaigns", icon: Megaphone, description: "WhatsApp templates and broadcasts", module: "campaigns", requires: "campaign:send" },
       { href: "/staff/journeys", label: "Journeys", icon: Route, description: "Specialty journey & protocol packs", module: "journeys", requires: "journey:manage" },
       { href: "/staff/continuity", label: "Continuity", icon: Activity, description: "Follow-up journeys and patients at risk of falling out of care", module: "continuity", requires: "followup:manage", badgeKey: "continuity" }

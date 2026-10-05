@@ -19,6 +19,7 @@ export type NavBadges = {
   inbox: number;
   access: number;
   continuity: number;
+  leads: number;
 };
 
 export function AppShell({ children }: { children: ReactNode }) {

@@ -151,7 +151,8 @@ export const emptyDashboardData: DashboardData = {
   accessQueue: [],
   followUpQueue: [],
   serviceStatus: [],
-  auditEvents: []
+  auditEvents: [],
+  leadsNew: 0
 };
 
 const minsAgo = (m: number) => new Date(Date.now() - m * 60 * 1000).toISOString();
@@ -865,5 +866,6 @@ export const mockDashboardData: DashboardData = {
       scope: demoTenant.id
     }
   ],
-  auditEvents: mockAuditEvents
+  auditEvents: mockAuditEvents,
+  leadsNew: 2
 };

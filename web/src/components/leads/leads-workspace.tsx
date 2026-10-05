@@ -110,6 +110,8 @@ export function LeadsWorkspace({
   // The lead whose 360 drawer is open (null = closed). Shared by Board, List and Tasks.
   const [detailLeadId, setDetailLeadId] = useState<string | null>(null);
 
+  const newLeadCount = leads.filter((lead) => lead.stage === (stages[0]?.key ?? "new")).length;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -118,7 +120,13 @@ export function LeadsWorkspace({
             <Sprout className="size-4" />
           </span>
           <div>
-            <h1 className="text-sm font-semibold tracking-tight text-ink">Leads</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-semibold tracking-tight text-ink">Leads</h1>
+              <span className="text-xs font-medium text-ink-muted">
+                {leads.length} {leads.length === 1 ? "lead" : "leads"}
+                {newLeadCount > 0 ? <span className="text-brand-700"> · {newLeadCount} new</span> : null}
+              </span>
+            </div>
             <p className="mt-0.5 text-xs text-ink-muted">
               Camp, web-form and referral leads — move them through your funnel and convert.
             </p>
