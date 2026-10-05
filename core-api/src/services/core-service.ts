@@ -900,12 +900,14 @@ const firstName = (name: string): string => name.trim().split(/\s+/)[0] || "ther
  * {{patientName}} {{doctorName}} {{date}} {{time}} {{branch}} {{mapLink}} {{confirmLink}}.
  */
 const NOTIFICATION_DEFAULTS = {
+  // NOTE: a WhatsApp template body must NOT end with a variable, so links sit
+  // mid-sentence with trailing text — otherwise Meta rejects with "Invalid parameter".
   booked: {
     body:
-      "Hi {{patientName}}, your appointment with {{doctorName}} is booked for {{date}} at {{time}} at {{branch}}. Tap to confirm: {{confirmLink}}"
+      "Hi {{patientName}}, your appointment with {{doctorName}} is booked for {{date}} at {{time}} at {{branch}}. Tap to confirm: {{confirmLink}} — we look forward to seeing you."
   },
   reminder24h: {
-    body: "Reminder, {{patientName}}: your appointment with {{doctorName}} is on {{date}} at {{time}}. Confirm: {{confirmLink}}"
+    body: "Reminder, {{patientName}}: your appointment with {{doctorName}} is on {{date}} at {{time}}. Confirm here: {{confirmLink}} and reply if you need to reschedule."
   },
   reminder3h: {
     body: "Hi {{patientName}}, your appointment with {{doctorName}} is coming up at {{time}}. See you at {{branch}}."
@@ -915,7 +917,7 @@ const NOTIFICATION_DEFAULTS = {
   },
   rescheduled: {
     body:
-      "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. {{mapLink}}"
+      "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. Directions: {{mapLink}} — see you then."
   }
 } as const;
 

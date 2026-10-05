@@ -15,12 +15,29 @@ const GRAPH_VERSION = "v23.0";
 export type WhatsAppCloudCreds = { phoneNumberId: string; accessToken: string };
 export type SendResult = { ok: true; providerId?: string } | { ok: false; error: string };
 
-type GraphError = { error?: { message?: string; code?: number; error_subcode?: number } };
+type GraphError = {
+  error?: {
+    message?: string;
+    code?: number;
+    error_subcode?: number;
+    /** Meta's human-readable specifics — far more useful than the generic message. */
+    error_user_title?: string;
+    error_user_msg?: string;
+    error_data?: { details?: string };
+  };
+};
 
 const graphUrl = (path: string) => `${GRAPH_BASE}/${GRAPH_VERSION}/${path}`;
 
-const graphErrorText = (result: GraphError, status: number): string =>
-  String(result.error?.message ?? `WhatsApp Cloud API responded with ${status}.`);
+const graphErrorText = (result: GraphError, status: number): string => {
+  const e = result.error;
+  if (!e) return `WhatsApp Cloud API responded with ${status}.`;
+  const base = e.message ?? `WhatsApp Cloud API responded with ${status}.`;
+  // Meta hides the real reason (e.g. "Body text cannot end with a variable")
+  // in these fields — surface it instead of just "Invalid parameter".
+  const detail = e.error_user_msg || e.error_data?.details || e.error_user_title;
+  return detail && !base.includes(detail) ? `${base}: ${detail}` : base;
+};
 
 /** Free-form text message — only delivered inside the 24h service window. */
 export const sendWhatsAppCloudText = async (
