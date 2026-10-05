@@ -247,3 +247,26 @@
   --radius-card: 1rem;
   font-feature-settings: "cv02" "cv03" "cv04" "cv11";
 }
+
+/* ── Consistent <select> chevron across every app surface ────────────────────
+   Native selects render the arrow jammed in the far-right corner and vary by
+   browser. Replace it with one tidy chevron placed 0.75rem from the edge with
+   matching right padding. Left unlayered so it beats Tailwind's px-* utilities
+   on the padding-right; theme-aware via --select-chevron. Excludes list boxes. */
+:root {
+  --select-chevron: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='16'%20height='16'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%236e747e'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='m6%209%206%206%206-6'/%3E%3C/svg%3E");
+}
+.dark {
+  --select-chevron: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='16'%20height='16'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%238d93a0'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='m6%209%206%206%206-6'/%3E%3C/svg%3E");
+}
+
+select:not([multiple]):not([size]) {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem 1rem;
+  padding-right: 2.25rem;
+}
