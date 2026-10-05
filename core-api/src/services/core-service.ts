@@ -900,14 +900,17 @@ const firstName = (name: string): string => name.trim().split(/\s+/)[0] || "ther
  * {{patientName}} {{doctorName}} {{date}} {{time}} {{branch}} {{mapLink}} {{confirmLink}}.
  */
 const NOTIFICATION_DEFAULTS = {
-  // NOTE: a WhatsApp template body must NOT end with a variable, so links sit
-  // mid-sentence with trailing text — otherwise Meta rejects with "Invalid parameter".
+  // NOTE two Meta template rules baked into these bodies: (1) a body must NOT end
+  // with a variable (links sit mid-sentence with trailing text), and (2) Meta caps
+  // the variable-to-text ratio ("too many variables for its length") — so keep
+  // plenty of fixed words around the tokens.
   booked: {
     body:
-      "Hi {{patientName}}, your appointment with {{doctorName}} is booked for {{date}} at {{time}} at {{branch}}. Tap to confirm: {{confirmLink}} — we look forward to seeing you."
+      "Hi {{patientName}}, your appointment with {{doctorName}} at {{branch}} is confirmed for {{date}} at {{time}}. Please arrive about 10 minutes early and bring any glasses or previous eye records you have. You can confirm or reschedule your visit here: {{confirmLink}}. We look forward to seeing you."
   },
   reminder24h: {
-    body: "Reminder, {{patientName}}: your appointment with {{doctorName}} is on {{date}} at {{time}}. Confirm here: {{confirmLink}} and reply if you need to reschedule."
+    body:
+      "Hi {{patientName}}, a friendly reminder that your appointment with {{doctorName}} is on {{date}} at {{time}}. Please arrive about 10 minutes early and bring your glasses or previous prescriptions. To confirm or reschedule, tap here: {{confirmLink}}. We look forward to seeing you."
   },
   reminder3h: {
     body: "Hi {{patientName}}, your appointment with {{doctorName}} is coming up at {{time}}. See you at {{branch}}."
@@ -917,7 +920,7 @@ const NOTIFICATION_DEFAULTS = {
   },
   rescheduled: {
     body:
-      "Hi {{patientName}}, your appointment with {{doctorName}} is rescheduled to {{date}} at {{time}} at {{branch}}. Directions: {{mapLink}} — see you then."
+      "Hi {{patientName}}, your appointment with {{doctorName}} at {{branch}} has been rescheduled to {{date}} at {{time}}. Please arrive about 10 minutes early and carry any previous eye records. You can find directions to the clinic here: {{mapLink}}. Thank you, and see you then."
   }
 } as const;
 
