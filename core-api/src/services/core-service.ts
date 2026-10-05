@@ -3513,6 +3513,10 @@ export class CoreService {
     if (leadCaptureEnabled(assistant)) {
       await this.ensureLeadForConversation(context, assistant, from, profileName, trimmed);
     }
+    // Surface EVERY inbound conversation in the Unified Inbox — not just handoffs —
+    // so staff can see all chats. Bot-handled threads stay "triaged"; the handoff
+    // branches below escalate the same thread to "new" (needs a human).
+    await this.recordInboundInteraction(context, from, trimmed, profileName, { needsHuman: false });
     const wantsHuman = this.matchesHandoff(trimmed, assistant);
 
     if (!assistant.enabled || !channelEnabled(assistant, "whatsapp") || !assistantAvailable() || wantsHuman) {
@@ -3547,12 +3551,19 @@ export class CoreService {
     }
   }
 
-  /** Create an Inbox interaction for a WhatsApp conversation needing a human. */
-  private async createInboxHandoff(
+  /**
+   * Record an inbound WhatsApp conversation in the Unified Inbox so staff see
+   * EVERY chat — not only the ones handed off. One open interaction per phone
+   * (append, don't flood). A bot-handled conversation stays "triaged" (visible,
+   * not flagged for action); `needsHuman` creates it as — or escalates it to —
+   * "new" so it surfaces as needing a reply.
+   */
+  private async recordInboundInteraction(
     context: RequestContext,
     from: string,
     text: string,
-    profileName?: string
+    profileName: string | undefined,
+    opts: { needsHuman: boolean }
   ): Promise<void> {
     const normalized = normalizePhone(from);
     const patient = this.findPatientByPhone(context.tenantId, from);
@@ -3570,6 +3581,10 @@ export class CoreService {
       // must stay a single message — never a concatenated transcript.
       open.body = text;
       open.receivedAt = nowIso();
+      if (opts.needsHuman && open.status !== "new") {
+        open.status = "new"; // escalate a bot-handled thread to needs-a-human
+        open.urgency = "high";
+      }
       await this.persistence.saveCollection("interactions", this.data.interactions);
       return;
     }
@@ -3579,16 +3594,26 @@ export class CoreService {
       ...(patient ? { patientId: patient.id } : {}),
       channel: "whatsapp",
       direction: "inbound",
-      status: "new",
+      status: opts.needsHuman ? "new" : "triaged",
       subject: `WhatsApp from ${profileName || patient?.displayName || from}`,
       body: text,
       from,
-      urgency: "medium",
+      urgency: opts.needsHuman ? "high" : "medium",
       receivedAt: nowIso(),
       createdTaskIds: []
     };
     this.data.interactions.push(interaction);
     await this.persistence.saveCollection("interactions", this.data.interactions);
+  }
+
+  /** A WhatsApp conversation that needs a human — create or escalate its thread. */
+  private async createInboxHandoff(
+    context: RequestContext,
+    from: string,
+    text: string,
+    profileName?: string
+  ): Promise<void> {
+    await this.recordInboundInteraction(context, from, text, profileName, { needsHuman: true });
   }
 
   // ---- WhatsApp assistant (hospital-controlled chatbot) ----------------------
